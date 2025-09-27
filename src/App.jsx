@@ -7,6 +7,7 @@ const MAX_WEEKS = 10
 const SLOT_INTERVAL_MINUTES = 30
 const START_HOUR = 8
 const END_HOUR = 17
+const STUDENTS_PER_ROOM = 25
 
 function formatTimeLabel(totalMinutes) {
   const hour24 = Math.floor(totalMinutes / 60)
@@ -120,27 +121,27 @@ function computeSlotSummaries(assignments, courseLookup, week) {
       const courses = weekAssignments[day]?.[slot.id] ?? []
       const isStartSlot = courses.length > 0
 
-      let studentCount = 0
-      let roomCount = 0
       const seenStudentIds = new Set()
 
       if (isStartSlot) {
         courses.forEach((courseId) => {
           const course = courseLookup[courseId]
           if (!course) return
-          studentCount += course.studentCount
           course.students.forEach((student) => {
             seenStudentIds.add(student.id)
           })
-          roomCount += course.roomsNeeded
         })
       }
 
+      const uniqueStudentCount = seenStudentIds.size
+      const roomCount = isStartSlot && uniqueStudentCount > 0 ? Math.ceil(uniqueStudentCount / STUDENTS_PER_ROOM) : 0
+      const invigilatorCount = roomCount * 2
+
       summary[day][slot.id] = {
-        studentCount,
-        uniqueStudents: seenStudentIds.size,
+        studentCount: uniqueStudentCount,
+        uniqueStudents: uniqueStudentCount,
         roomCount,
-        invigilatorCount: roomCount * 2,
+        invigilatorCount,
         isStartSlot,
       }
     })
@@ -262,15 +263,22 @@ function computeSummary(assignments, courseLookup) {
     days.forEach((day) => {
       timeSlots.forEach((slot) => {
         const courseIds = weekAssignments?.[day]?.[slot.id] ?? []
+        if (!courseIds.length) {
+          return
+        }
+        const slotStudentIds = new Set()
         courseIds.forEach((courseId) => {
           const course = courseLookup[courseId]
           if (!course) return
           scheduledCourseIds.add(courseId)
           course.students.forEach((student) => {
             studentIds.add(student.id)
+            slotStudentIds.add(student.id)
           })
-          roomCount += course.roomsNeeded
         })
+        if (slotStudentIds.size > 0) {
+          roomCount += Math.ceil(slotStudentIds.size / STUDENTS_PER_ROOM)
+        }
       })
     })
   })
@@ -458,7 +466,7 @@ function App() {
 
       const parsedCourses = Array.from(coursesMap.values()).map((course) => {
         const studentCount = course.students.length
-        const roomsNeeded = studentCount ? Math.max(1, Math.ceil(studentCount / 25)) : 0
+        const roomsNeeded = studentCount ? Math.max(1, Math.ceil(studentCount / STUDENTS_PER_ROOM)) : 0
         return {
           id: course.id,
           code: course.code,
@@ -514,7 +522,7 @@ function App() {
         const students = group.students.slice()
         students.sort((a, b) => a.name.localeCompare(b.name))
         const studentCount = students.length
-        const roomsNeeded = studentCount ? Math.max(1, Math.ceil(studentCount / 25)) : 0
+        const roomsNeeded = studentCount ? Math.max(1, Math.ceil(studentCount / STUDENTS_PER_ROOM)) : 0
 
         return {
           id: group.id,
@@ -857,7 +865,7 @@ function App() {
                               onDragLeave={(event) => handleDragLeaveSlot(event, day, slotIndex)}
                               onDrop={(event) => handleDrop(day, slot.id, slotIndex, event)}
                               className={cellClassNames.join(' ')}
-                              title={conflictMessages.join('\\n')}
+                              title={conflictMessages.join('\n')}
                             >
                               <div className="slot-content">
                                 <div className="slot-summary">
@@ -903,7 +911,6 @@ function App() {
                                             <p>{course.title}</p>
                                             <footer>
                                               <span>{course.studentCount} students</span>
-                                              <span>{course.roomsNeeded} room{course.roomsNeeded === 1 ? '' : 's'}</span>
                                             </footer>
                                           </article>
                                         )
@@ -919,7 +926,6 @@ function App() {
                                             <p>{course.title}</p>
                                             <footer>
                                               <span>{course.studentCount} students</span>
-                                              <span>{course.roomsNeeded} room{course.roomsNeeded === 1 ? '' : 's'}</span>
                                             </footer>
                                           </article>
                                         )
