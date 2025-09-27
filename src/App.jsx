@@ -3,21 +3,58 @@ import * as XLSX from 'xlsx'
 import './App.css'
 
 const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-const weeks = [1, 2, 3, 4, 5]
+const MAX_WEEKS = 10
+const SLOT_INTERVAL_MINUTES = 30
+const START_HOUR = 8
+const END_HOUR = 17
 
-const timeSlots = Array.from({ length: 9 }, (_, index) => {
-  const hour = 8 + index
-  const nextHour = hour + 1
-  return {
-    id: `${String(hour).padStart(2, '0')}:00`,
-    label: `${formatHour(hour)} - ${formatHour(nextHour)}`,
-  }
-})
+function formatTimeLabel(totalMinutes) {
+  const hour24 = Math.floor(totalMinutes / 60)
+  const minute = totalMinutes % 60
+  const suffix = hour24 >= 12 ? 'PM' : 'AM'
+  const hour12 = ((hour24 + 11) % 12) + 1
+  const paddedMinute = minute.toString().padStart(2, '0')
+  return `${hour12}:${paddedMinute} ${suffix}`
+}
 
-function formatHour(hour) {
-  const displayHour = hour % 12 === 0 ? 12 : hour % 12
-  const suffix = hour >= 12 ? 'PM' : 'AM'
-  return `${displayHour}:00 ${suffix}`
+const timeSlots = []
+for (let minutes = START_HOUR * 60; minutes <= (END_HOUR * 60) - SLOT_INTERVAL_MINUTES; minutes += SLOT_INTERVAL_MINUTES) {
+  const hour = Math.floor(minutes / 60)
+  const minute = minutes % 60
+  const id = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`
+  timeSlots.push({
+    id,
+    label: formatTimeLabel(minutes),
+  })
+}
+
+function StudentIcon() {
+  return (
+    <svg className="slot-summary__icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+      <circle cx="8" cy="9" r="3" fill="currentColor" />
+      <circle cx="16" cy="9" r="3" fill="currentColor" fillOpacity="0.6" />
+      <path d="M4 20c0-3 3.8-5.5 8-5.5s8 2.5 8 5.5v1H4z" fill="currentColor" />
+    </svg>
+  )
+}
+
+function RoomIcon() {
+  return (
+    <svg className="slot-summary__icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+      <path d="M4 21V10.2L12 4l8 6.2V21h-5.5v-6.5h-5V21H4z" fill="currentColor" />
+      <rect x="11" y="12.5" width="2" height="3.5" fill="currentColor" />
+    </svg>
+  )
+}
+
+function InvigilatorIcon() {
+  return (
+    <svg className="slot-summary__icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="7" r="3.5" fill="currentColor" />
+      <path d="M6.5 21v-3.2c0-3.5 2.9-6.3 5.5-6.3s5.5 2.8 5.5 6.3V21H6.5z" fill="currentColor" />
+      <path d="M11.2 11.6h1.6l0.9 2.3-1.7 2.4-1.7-2.4 0.9-2.3z" fill="#ffffff" />
+    </svg>
+  )
 }
 
 function createEmptyDaySlotMap() {
@@ -31,9 +68,9 @@ function createEmptyDaySlotMap() {
   return map
 }
 
-function buildEmptyAssignments() {
+function buildEmptyAssignments(weekList) {
   const empty = {}
-  weeks.forEach((week) => {
+  weekList.forEach((week) => {
     empty[week] = createEmptyDaySlotMap()
   })
   return empty
@@ -41,15 +78,19 @@ function buildEmptyAssignments() {
 
 function cloneAssignments(assignments) {
   const clone = {}
-  weeks.forEach((week) => {
+
+  Object.entries(assignments || {}).forEach(([weekKey, weekAssignments]) => {
+    const week = Number(weekKey)
     clone[week] = {}
     days.forEach((day) => {
       clone[week][day] = {}
       timeSlots.forEach((slot) => {
-        clone[week][day][slot.id] = [...(assignments[week]?.[day]?.[slot.id] ?? [])]
+        const sourceList = weekAssignments?.[day]?.[slot.id] ?? []
+        clone[week][day][slot.id] = [...sourceList]
       })
     })
   })
+
   return clone
 }
 
@@ -75,53 +116,61 @@ function computeSlotSummaries(assignments, courseLookup, week) {
   const summary = createEmptyDaySlotMap()
 
   days.forEach((day) => {
-    timeSlots.forEach((slot) => {
+    timeSlots.forEach((slot, slotIndex) => {
       const courses = weekAssignments[day]?.[slot.id] ?? []
+      const isStartSlot = courses.length > 0
+
       let studentCount = 0
       let roomCount = 0
       const seenStudentIds = new Set()
 
-      courses.forEach((courseId) => {
-        const course = courseLookup[courseId]
-        if (!course) return
-        studentCount += course.studentCount
-        course.students.forEach((student) => {
-          seenStudentIds.add(student.id)
+      if (isStartSlot) {
+        courses.forEach((courseId) => {
+          const course = courseLookup[courseId]
+          if (!course) return
+          studentCount += course.studentCount
+          course.students.forEach((student) => {
+            seenStudentIds.add(student.id)
+          })
+          roomCount += course.roomsNeeded
         })
-        roomCount += course.roomsNeeded
-      })
-
-      const invigilatorCount = roomCount * 2
+      }
 
       summary[day][slot.id] = {
         studentCount,
         uniqueStudents: seenStudentIds.size,
         roomCount,
-        invigilatorCount,
+        invigilatorCount: roomCount * 2,
+        isStartSlot,
       }
     })
   })
 
   return summary
 }
+
 function computeConflicts(assignments, courseLookup, studentDirectory) {
   const byWeek = {}
   const overallMessages = new Set()
 
-  weeks.forEach((week) => {
+  const weekKeys = Object.keys(assignments || {}).map((value) => Number(value)).sort((a, b) => a - b)
+
+  weekKeys.forEach((week) => {
     const weekConflicts = createEmptyDaySlotMap()
     byWeek[week] = weekConflicts
     const studentDayCounts = {}
     const weekAssignments = assignments[week] || {}
 
     days.forEach((day) => {
-      timeSlots.forEach((slot) => {
-        const courses = weekAssignments[day]?.[slot.id] ?? []
-        if (courses.length === 0) return
+      timeSlots.forEach((slot, slotIndex) => {
+        const startCourses = weekAssignments[day]?.[slot.id] ?? []
+        if (!startCourses.length && slotIndex === 0) {
+          return
+        }
 
         const slotStudentCourses = new Map()
 
-        courses.forEach((courseId) => {
+        const addCourseToSlotMap = (courseId) => {
           const course = courseLookup[courseId]
           if (!course) return
           course.students.forEach((student) => {
@@ -129,13 +178,30 @@ function computeConflicts(assignments, courseLookup, studentDirectory) {
               slotStudentCourses.set(student.id, new Set())
             }
             slotStudentCourses.get(student.id).add(course.code || course.title || courseId)
+          })
+        }
 
+        startCourses.forEach((courseId) => {
+          addCourseToSlotMap(courseId)
+          const course = courseLookup[courseId]
+          if (!course) return
+          course.students.forEach((student) => {
             if (!studentDayCounts[student.id]) {
               studentDayCounts[student.id] = {}
             }
             studentDayCounts[student.id][day] = (studentDayCounts[student.id][day] || 0) + 1
           })
         })
+
+        if (slotIndex > 0) {
+          const previousSlotId = timeSlots[slotIndex - 1].id
+          const previousCourses = weekAssignments[day]?.[previousSlotId] ?? []
+          previousCourses.forEach((courseId) => addCourseToSlotMap(courseId))
+        }
+
+        if (slotStudentCourses.size === 0) {
+          return
+        }
 
         slotStudentCourses.forEach((courseSet, studentId) => {
           if (courseSet.size > 1) {
@@ -186,79 +252,48 @@ function computeConflicts(assignments, courseLookup, studentDirectory) {
     byWeek,
   }
 }
+
 function computeSummary(assignments, courseLookup) {
-
   const scheduledCourseIds = new Set()
-
   const studentIds = new Set()
-
   let roomCount = 0
 
-
-
-  weeks.forEach((week) => {
-
-    const weekAssignments = assignments[week] || {}
-
+  Object.values(assignments || {}).forEach((weekAssignments) => {
     days.forEach((day) => {
-
       timeSlots.forEach((slot) => {
-
-        const courseIds = weekAssignments[day]?.[slot.id] ?? []
-
+        const courseIds = weekAssignments?.[day]?.[slot.id] ?? []
         courseIds.forEach((courseId) => {
-
           const course = courseLookup[courseId]
-
           if (!course) return
-
           scheduledCourseIds.add(courseId)
-
           course.students.forEach((student) => {
-
             studentIds.add(student.id)
-
           })
-
           roomCount += course.roomsNeeded
-
         })
-
       })
-
     })
-
   })
-
-
 
   const invigilators = roomCount * 2
 
-
-
   return {
-
     totalCourses: scheduledCourseIds.size,
-
     totalStudents: studentIds.size,
-
     totalRooms: roomCount,
-
     totalInvigilators: invigilators,
-
   }
-
 }
 
-
-
 function App() {
+  const [weeks, setWeeks] = useState(() => [1])
+  const [assignments, setAssignments] = useState(() => buildEmptyAssignments([1]))
+  const [selectedWeek, setSelectedWeek] = useState(1)
   const [courses, setCourses] = useState([])
   const [studentDirectory, setStudentDirectory] = useState({})
-  const [assignments, setAssignments] = useState(() => buildEmptyAssignments())
-  const [selectedWeek, setSelectedWeek] = useState(weeks[0])
   const [uploadError, setUploadError] = useState('')
   const [courseSearch, setCourseSearch] = useState('')
+  const [hoverTarget, setHoverTarget] = useState(null)
 
   const courseLookup = useMemo(() => {
     const lookup = {}
@@ -278,6 +313,32 @@ function App() {
     [assignments, courseLookup, studentDirectory]
   )
 
+  const occupiedSlotIds = useMemo(() => {
+    const result = new Set()
+    const weekAssignments = assignments[selectedWeek] || {}
+
+    timeSlots.forEach((slot, index) => {
+      const hasCourseInColumn = days.some((day) => {
+        const dayAssignments = weekAssignments[day] || {}
+        const slotCourses = dayAssignments[slot.id] || []
+        if (slotCourses.length > 0) {
+          return true
+        }
+        const previousSlotId = index > 0 ? timeSlots[index - 1].id : null
+        if (!previousSlotId) {
+          return false
+        }
+        const trailingCourses = dayAssignments[previousSlotId] || []
+        return trailingCourses.some((courseId) => !slotCourses.includes(courseId))
+      })
+
+      if (hasCourseInColumn) {
+        result.add(slot.id)
+      }
+    })
+
+    return result
+  }, [assignments, selectedWeek])
   const summary = useMemo(
     () => computeSummary(assignments, courseLookup),
     [assignments, courseLookup]
@@ -285,15 +346,16 @@ function App() {
 
   const assignedCourseIds = useMemo(() => {
     const ids = new Set()
-    weeks.forEach((week) => {
-      const weekAssignments = assignments[week] || {}
+
+    Object.values(assignments || {}).forEach((weekAssignments) => {
       days.forEach((day) => {
         timeSlots.forEach((slot) => {
-          const courseIds = weekAssignments[day]?.[slot.id] ?? []
+          const courseIds = weekAssignments?.[day]?.[slot.id] ?? []
           courseIds.forEach((courseId) => ids.add(courseId))
         })
       })
     })
+
     return ids
   }, [assignments])
 
@@ -466,29 +528,85 @@ function App() {
         }
       })
 
+      const initialWeeks = [1]
+      setWeeks(initialWeeks)
       setCourses(groupedCourses)
       setCourseSearch('')
       setStudentDirectory(studentNames)
-      setAssignments(buildEmptyAssignments())
-      setSelectedWeek(weeks[0])
+      setAssignments(buildEmptyAssignments(initialWeeks))
+      setSelectedWeek(initialWeeks[0])
     } catch (error) {
       console.error(error)
       setUploadError(error.message || 'Failed to read the provided file.')
     }
   }
 
-  const handleDrop = (day, slotId, event) => {
+  const updateHoverTarget = (day, slotIndex) => {
+    if (slotIndex > timeSlots.length - 2) {
+      setHoverTarget(null)
+      return
+    }
+    setHoverTarget((previous) => {
+      if (previous && previous.day === day && previous.slotIndex === slotIndex) {
+        return previous
+      }
+      return { day, slotIndex }
+    })
+  }
+
+  const handleDragEnterSlot = (event, day, slotIndex) => {
+    updateHoverTarget(day, slotIndex)
+  }
+
+  const handleDragOverSlot = (event, day, slotIndex) => {
     event.preventDefault()
+    updateHoverTarget(day, slotIndex)
+  }
+
+  const handleDragLeaveSlot = (event, day, slotIndex) => {
+    const relatedTarget = event.relatedTarget
+    if (relatedTarget) {
+      const relatedCell =
+        typeof relatedTarget.closest === 'function'
+          ? relatedTarget.closest('td[data-slot-index]')
+          : null
+      if (relatedCell) {
+        const relatedDay = relatedCell.getAttribute('data-day')
+        const relatedSlotIndex = Number(relatedCell.getAttribute('data-slot-index'))
+        if (
+          relatedDay === day &&
+          (relatedSlotIndex === slotIndex || relatedSlotIndex === slotIndex + 1)
+        ) {
+          return
+        }
+      }
+    }
+    setHoverTarget((previous) => {
+      if (!previous) {
+        return previous
+      }
+      if (previous.day === day && previous.slotIndex === slotIndex) {
+        return null
+      }
+      return previous
+    })
+  }
+
+  const handleDrop = (day, slotId, slotIndex, event) => {
+    event.preventDefault()
+    setHoverTarget(null)
     const courseId = event.dataTransfer.getData('text/plain')
     if (!courseId || !courseLookup[courseId]) return
+    if (slotIndex === undefined || slotIndex > timeSlots.length - 2) return
 
     setAssignments((previous) => {
       const next = cloneAssignments(previous)
 
-      weeks.forEach((existingWeek) => {
+      Object.keys(next).forEach((weekKey) => {
+        const weekAssignments = next[weekKey]
         days.forEach((existingDay) => {
           timeSlots.forEach((slot) => {
-            const list = next[existingWeek][existingDay][slot.id]
+            const list = weekAssignments[existingDay][slot.id]
             const index = list.indexOf(courseId)
             if (index !== -1) {
               list.splice(index, 1)
@@ -498,7 +616,9 @@ function App() {
       })
 
       const targetWeek = next[selectedWeek] || createEmptyDaySlotMap()
-      next[selectedWeek] = targetWeek
+      if (!next[selectedWeek]) {
+        next[selectedWeek] = targetWeek
+      }
       const targetList = targetWeek[day][slotId]
       if (!targetList.includes(courseId)) {
         targetList.push(courseId)
@@ -516,23 +636,61 @@ function App() {
     })
   }
 
+  const addWeek = () => {
+    setWeeks((previousWeeks) => {
+      if (previousWeeks.length >= MAX_WEEKS) {
+        return previousWeeks
+      }
+
+      const nextWeekNumber = previousWeeks.length ? Math.max(...previousWeeks) + 1 : 1
+      if (previousWeeks.includes(nextWeekNumber)) {
+        return previousWeeks
+      }
+
+      setAssignments((previousAssignments) => {
+        if (previousAssignments?.[nextWeekNumber]) {
+          return previousAssignments
+        }
+        return {
+          ...previousAssignments,
+          [nextWeekNumber]: createEmptyDaySlotMap(),
+        }
+      })
+
+      setSelectedWeek(nextWeekNumber)
+      return [...previousWeeks, nextWeekNumber]
+    })
+  }
+
   const resetSchedule = () => {
-    setAssignments(buildEmptyAssignments())
-    setSelectedWeek(weeks[0])
+    setAssignments(buildEmptyAssignments(weeks))
+    setSelectedWeek(weeks[0] ?? 1)
   }
 
   const renderWeekTabs = (position) => (
     <div className={`week-tabs week-tabs--${position}`}>
-      {weeks.map((week) => (
+      <div className="week-tabs__list">
+        {weeks.map((week) => (
+          <button
+            key={week}
+            type="button"
+            className={week === selectedWeek ? 'is-active' : ''}
+            onClick={() => setSelectedWeek(week)}
+          >
+            Week {week}
+          </button>
+        ))}
+      </div>
+      {position === 'top' ? (
         <button
-          key={week}
           type="button"
-          className={week === selectedWeek ? 'is-active' : ''}
-          onClick={() => setSelectedWeek(week)}
+          className="week-tabs__add"
+          onClick={addWeek}
+          disabled={weeks.length >= MAX_WEEKS}
         >
-          Week {week}
+          + Add Week
         </button>
-      ))}
+      ) : null}
     </div>
   )
 
@@ -620,18 +778,14 @@ function App() {
                         event.dataTransfer.setData('text/plain', course.id)
                         event.dataTransfer.effectAllowed = 'move'
                       }}
+                      onDragEnd={() => setHoverTarget(null)}
                     >
                       <div className="course-code">{course.code}</div>
                       <div className="course-title">{course.title}</div>
                       <div className="course-meta">
-                        {course.studentCount} student{course.studentCount === 1 ? '' : 's'} | {course.roomsNeeded} room{course.roomsNeeded === 1 ? '' : 's'}
+                        {course.studentCount} student{course.studentCount === 1 ? '' : 's'}
                       </div>
-                      {course.sections && course.sections.length ? (
-                        <div className="course-meta course-meta--secondary">
-                          Sections: {course.sections.join(', ')}
-                        </div>
-                      ) : null}
-                      {!course.sections?.length && course.crns && course.crns.length ? (
+                      { course.crns && course.crns.length ? (
                         <div className="course-meta course-meta--secondary">
                           CRNs: {course.crns.join(', ')}
                         </div>
@@ -651,74 +805,127 @@ function App() {
                   <thead>
                     <tr>
                       <th>Day / Time</th>
-                      {timeSlots.map((slot) => (
-                        <th key={slot.id}>{slot.label}</th>
-                      ))}
+                      {timeSlots.map((slot) => {
+                        const slotIsOccupied = occupiedSlotIds.has(slot.id)
+                        const headerClassName = ['slot-column', slotIsOccupied ? 'slot-column--occupied' : 'slot-column--empty'].join(' ')
+                        return (
+                          <th key={slot.id} className={headerClassName}>
+                            {slot.label}
+                          </th>
+                        )
+                      })}
                     </tr>
                   </thead>
                   <tbody>
                     {days.map((day) => (
                       <tr key={day}>
                         <th scope="row">{day}</th>
-                        {timeSlots.map((slot) => {
+                        {timeSlots.map((slot, slotIndex) => {
                           const weekAssignments = assignments[selectedWeek] || {}
                           const dayAssignments = weekAssignments[day] || {}
                           const slotCourses = dayAssignments[slot.id] || []
+                          const previousSlotId = slotIndex > 0 ? timeSlots[slotIndex - 1].id : null
+                          const trailingCourses = previousSlotId ? dayAssignments[previousSlotId] || [] : []
+                          const trailingOnlyCourses = trailingCourses.filter((courseId) => !slotCourses.includes(courseId))
+                          const hasAnyCourses = slotCourses.length > 0 || trailingOnlyCourses.length > 0
+                          const slotIsOccupied = occupiedSlotIds.has(slot.id)
                           const conflictMessages = conflicts.byWeek?.[selectedWeek]?.[day]?.[slot.id] ?? []
-                          const { studentCount, roomCount, invigilatorCount } = slotSummaries[day][slot.id]
-                          const slotBadgeTitle = `Week ${selectedWeek}: ${studentCount} students | ${roomCount} rooms | ${invigilatorCount} invigilators`
-
+                          const { studentCount, roomCount, invigilatorCount, isStartSlot } = slotSummaries[day][slot.id]
+                          const cellClassNames = [
+                            'slot-column',
+                            slotIsOccupied ? 'slot-column--occupied' : 'slot-column--empty',
+                          ]
+                          if (hoverTarget && hoverTarget.day === day) {
+                            const isHoverStart = hoverTarget.slotIndex === slotIndex
+                            const isHoverContinuation =
+                              hoverTarget.slotIndex < timeSlots.length - 1 &&
+                              hoverTarget.slotIndex + 1 === slotIndex
+                            if (isHoverStart || isHoverContinuation) {
+                              cellClassNames.push('is-hovered')
+                            }
+                          }
+                          if (conflictMessages.length) {
+                            cellClassNames.push('has-conflict')
+                          }
                           return (
                             <td
                               key={slot.id}
-                              onDragOver={(event) => event.preventDefault()}
-                              onDrop={(event) => handleDrop(day, slot.id, event)}
-                              className={conflictMessages.length ? 'has-conflict' : ''}
-                              title={conflictMessages.join('\n')}
+                              data-day={day}
+                              data-slot-index={slotIndex}
+                              onDragOver={(event) => handleDragOverSlot(event, day, slotIndex)}
+                              onDragEnter={(event) => handleDragEnterSlot(event, day, slotIndex)}
+                              onDragLeave={(event) => handleDragLeaveSlot(event, day, slotIndex)}
+                              onDrop={(event) => handleDrop(day, slot.id, slotIndex, event)}
+                              className={cellClassNames.join(' ')}
+                              title={conflictMessages.join('\\n')}
                             >
                               <div className="slot-content">
-                                <div className="slot-badge" title={slotBadgeTitle}>
-                                  <span className="slot-badge__item" aria-label={`${studentCount} students`}>
-                                    <span className="slot-badge__icon slot-badge__icon--students" aria-hidden="true" />
-                                    <span className="slot-badge__value">{studentCount}</span>
-                                  </span>
-                                  <span className="slot-badge__item" aria-label={`${roomCount} rooms`}>
-                                    <span className="slot-badge__icon slot-badge__icon--rooms" aria-hidden="true" />
-                                    <span className="slot-badge__value">{roomCount}</span>
-                                  </span>
-                                  <span className="slot-badge__item" aria-label={`${invigilatorCount} invigilators`}>
-                                    <span className="slot-badge__icon slot-badge__icon--invigilators" aria-hidden="true" />
-                                    <span className="slot-badge__value">{invigilatorCount}</span>
-                                  </span>
+                                <div className="slot-summary">
+                                  {isStartSlot ? (
+                                    <>
+                                      <span className="slot-summary__item slot-summary__item--students" title="Students starting in this slot">
+                                        <StudentIcon />
+                                        {studentCount}
+                                      </span>
+                                      <span className="slot-summary__item slot-summary__item--rooms" title="Rooms needed for this slot">
+                                        <RoomIcon />
+                                        {roomCount}
+                                      </span>
+                                      <span className="slot-summary__item slot-summary__item--invigilators" title="Invigilators needed for this slot">
+                                        <InvigilatorIcon />
+                                        {invigilatorCount}
+                                      </span>
+                                    </>
+                                  ) : hasAnyCourses ? (
+                                    <span className="slot-summary__status" title="Exam continues from the previous slot">Exam in progress</span>
+                                  ) : (
+                                    <span className="slot-summary__empty">Drop course here</span>
+                                  )}
                                 </div>
                                 <div className="slot-courses">
-                                  {slotCourses.length ? (
-                                    slotCourses.map((courseId) => {
-                                      const course = courseLookup[courseId]
-                                      if (!course) return null
-                                      return (
-                                        <article key={courseId} className="scheduled-course">
-                                          <header>
-                                            <span className="course-code">{course.code}</span>
-                                            <button
-                                              type="button"
-                                              onClick={() => handleRemoveCourse(day, slot.id, courseId)}
-                                              aria-label={`Remove ${course.code} from ${day} at ${slot.label}`}
-                                            >
-                                              X
-                                            </button>
-                                          </header>
-                                          <p>{course.title}</p>
-                                          <footer>
-                                            <span>{course.studentCount} students</span>
-                                            <span>{course.roomsNeeded} room{course.roomsNeeded === 1 ? '' : 's'}</span>
-                                          </footer>
-                                        </article>
-                                      )
-                                    })
-                                  ) : (
-                                    <p className="slot-placeholder">Drop course here</p>
-                                  )}
+                                  {hasAnyCourses ? (
+                                    <>
+                                      {slotCourses.map((courseId) => {
+                                        const course = courseLookup[courseId]
+                                        if (!course) return null
+                                        return (
+                                          <article key={courseId} className="scheduled-course">
+                                            <header>
+                                              <span className="course-code">{course.code}</span>
+                                              <button
+                                                type="button"
+                                                onClick={() => handleRemoveCourse(day, slot.id, courseId)}
+                                                aria-label={`Remove ${course.code} from ${day} at ${slot.label}`}
+                                              >
+                                                X
+                                              </button>
+                                            </header>
+                                            <p>{course.title}</p>
+                                            <footer>
+                                              <span>{course.studentCount} students</span>
+                                              <span>{course.roomsNeeded} room{course.roomsNeeded === 1 ? '' : 's'}</span>
+                                            </footer>
+                                          </article>
+                                        )
+                                      })}
+                                      {trailingOnlyCourses.map((courseId) => {
+                                        const course = courseLookup[courseId]
+                                        if (!course) return null
+                                        return (
+                                          <article key={`${courseId}-ghost-${slot.id}`} className="scheduled-course scheduled-course--ghost">
+                                            <header>
+                                              <span className="course-code">{course.code}</span>
+                                            </header>
+                                            <p>{course.title}</p>
+                                            <footer>
+                                              <span>{course.studentCount} students</span>
+                                              <span>{course.roomsNeeded} room{course.roomsNeeded === 1 ? '' : 's'}</span>
+                                            </footer>
+                                          </article>
+                                        )
+                                      })}
+                                    </>
+                                  ) : null}
                                 </div>
                               </div>
                             </td>

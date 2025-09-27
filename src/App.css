@@ -267,9 +267,17 @@
 .week-tabs {
   display: flex;
   justify-content: center;
-  gap: 0.5rem;
+  align-items: center;
+  gap: 0.75rem;
   flex-wrap: wrap;
   margin: 0 0 1rem 0;
+}
+
+.week-tabs__list {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .week-tabs--bottom {
@@ -296,6 +304,24 @@
   background-color: #2563eb;
   border-color: #2563eb;
   color: #ffffff;
+}
+
+.week-tabs__add {
+  border-style: dashed;
+  border-color: #2563eb;
+  background-color: #f8fafc;
+  color: #2563eb;
+}
+
+.week-tabs__add:hover {
+  background-color: #dbeafe;
+}
+
+.week-tabs__add:disabled {
+  border-color: #cbd5e1;
+  color: #94a3b8;
+  background-color: #f1f5f9;
+  cursor: not-allowed;
 }
 
 .conflicts {
@@ -361,18 +387,90 @@
   background-color: #f8fafc;
   text-align: left;
   padding: 0.75rem;
-  width: 140px;
 }
 
 .timetable td {
   position: relative;
-  min-width: 180px;
-  height: 220px;
+  min-width: 120px;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+.timetable th.slot-column,
+.timetable td.slot-column {
+  transition: width 0.25s ease;
+}
+
+.timetable th.slot-column--empty,
+.timetable td.slot-column--empty {
+  width: 70px;
+  min-width: 70px;
+  max-width: 160px;
+}
+
+.timetable th.slot-column--occupied,
+.timetable td.slot-column--occupied {
+  width: 240px;
+  min-width: 220px;
+  max-width: 320px;
+}
+
+
+.timetable td.is-hovered {
+  background-color: #e0f2fe;
+  box-shadow: inset 0 0 0 2px #2563eb;
 }
 
 .timetable td.has-conflict {
   background-color: #fef2f2;
   border-color: #fca5a5;
+}
+
+.slot-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  color: #1f2933;
+  min-height: 1.5rem;
+}
+
+.slot-summary span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.slot-summary__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 600;
+}
+
+.slot-summary__item--students {
+  color: #2563eb;
+}
+
+.slot-summary__item--rooms {
+  color: #0ea5e9;
+}
+
+.slot-summary__item--invigilators {
+  color: #14b8a6;
+}
+
+.slot-summary__icon {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+}
+
+.slot-summary__status {
+  color: #334155;
+  font-weight: 500;
+}
+.slot-summary__empty {
+  color: #94a3b8;
 }
 
 .slot-content {
@@ -381,56 +479,23 @@
   flex-direction: column;
   gap: 0.75rem;
   padding: 0.75rem;
+  position: relative;
+  overflow: visible;
 }
 
-.slot-badge {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: nowrap;
-}
 
-.slot-badge__item {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  color: #1f2933;
-  font-size: 0.9rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
 
-.slot-badge__icon {
-  width: 1.1rem;
-  height: 1.1rem;
-  flex-shrink: 0;
-  background-size: contain;
-  background-repeat: no-repeat;
-  background-position: center;
-}
 
-.slot-badge__value {
-  line-height: 1;
-}
 
-.slot-badge__icon--students {
-  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20viewBox%3D%270%200%2024%2024%27%3E%3Cpath%20fill%3D%27%25231f2933%27%20d%3D%27M7%2010a3%203%200%20100-6%203%203%200%20000%206zm10%200a3%203%200%20100-6%203%203%200%20000%206z%27/%3E%3Cpath%20fill%3D%27%25231f2933%27%20d%3D%27M12%2012a4%204%200%20100-8%204%204%200%20000%208z%27/%3E%3Cpath%20fill%3D%27%25231f2933%27%20d%3D%27M12%2013c-4%200-7%202.015-7%204.5V20h14v-2.5C19%2015.015%2016%2013%2012%2013z%27/%3E%3Cpath%20fill%3D%27%25231f2933%27%20d%3D%27M4%2012.5C4%2011.12%205.79%2010%208%2010c.7%200%201.36.12%201.95.34A6.01%206.01%200%20006%2015H2v-.5c0-1.07.82-2.02%202-2.5z%27/%3E%3Cpath%20fill%3D%27%25231f2933%27%20d%3D%27M20%2012.5c0-1.38-1.79-2.5-4-2.5-.7%200-1.36.12-1.95.34A6.01%206.01%200%200118%2015h4v-.5c0-1.07-.82-2.02-2-2.5z%27/%3E%3C/svg%3E");
-}
 
-.slot-badge__icon--rooms {
-  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27%25231f2933%27%3E%3Cpath%20d%3D%27M4%203h16v18H4V3zm4%202v4h4V5H8zm0%206v4h4v-4H8zm6-6v4h4V5h-4zm0%206v4h4v-4h-4z%27/%3E%3C/svg%3E");
-}
 
-.slot-badge__icon--invigilators {
-  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20viewBox%3D%270%200%2024%2024%27%3E%3Cpath%20fill%3D%27%25231f2933%27%20d%3D%27M12%2012c2.21%200%204-1.79%204-4s-1.79-4-4-4-4%201.79-4%204%201.79%204%204%204z%27/%3E%3Cpath%20fill%3D%27%25231f2933%27%20d%3D%27M16.5%2014h-2.75L12%2016.75%2010.25%2014H7.5C5.57%2014%204%2015.57%204%2017.5V22h16v-4.5C20%2015.57%2018.43%2014%2016.5%2014z%27/%3E%3Cpath%20fill%3D%27%25231f2933%27%20d%3D%27M12%2015l-1%202%201%202%201-2-1-2z%27/%3E%3C/svg%3E");
-}
 
 .slot-courses {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  overflow-y: auto;
+  overflow: visible;
+  position: relative;
 }
 
 .slot-placeholder {
@@ -447,6 +512,18 @@
   background: linear-gradient(135deg, rgba(59, 130, 246, 0.12), rgba(99, 102, 241, 0.12));
   display: grid;
   gap: 0.5rem;
+  position: relative;
+  pointer-events: none;
+}
+
+.scheduled-course button {
+  pointer-events: auto;
+}
+
+.scheduled-course--ghost {
+  opacity: 0.55;
+  border-style: dashed;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(99, 102, 241, 0.08));
 }
 
 .scheduled-course header {
