@@ -2117,36 +2117,6 @@ function App() {
               </section>
 
               {renderWeekTabs("bottom")}
-
-              <section className="report">
-                <h2>Schedule Report</h2>
-
-                <div className="report-grid">
-                  <div>
-                    <span>Total courses scheduled</span>
-
-                    <strong>{summary.totalCourses}</strong>
-                  </div>
-
-                  <div>
-                    <span>Total students scheduled</span>
-
-                    <strong>{summary.totalStudents}</strong>
-                  </div>
-
-                  <div>
-                    <span>Total rooms needed</span>
-
-                    <strong>{summary.totalRooms}</strong>
-                  </div>
-
-                  <div>
-                    <span>Invigilators required</span>
-
-                    <strong>{summary.totalInvigilators}</strong>
-                  </div>
-                </div>
-              </section>
             </main>
           </div>
         </>
