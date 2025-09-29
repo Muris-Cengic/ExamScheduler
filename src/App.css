@@ -33,6 +33,35 @@
   align-items: center;
 }
 
+.start-date-control {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 15rem;
+  margin-right: 5rem;
+}
+
+.start-date-control label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.start-date-control input {
+  padding: 0.55rem 0.75rem;
+  border: 1px solid #d2d6dc;
+  border-radius: 0.5rem;
+  font-size: 0.95rem;
+  color: #1f2937;
+  background-color: #ffffff;
+}
+
+.start-date-control input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
 .file-input {
   position: relative;
   overflow: hidden;

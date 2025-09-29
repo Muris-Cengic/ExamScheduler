@@ -31,6 +31,72 @@ function downloadBlob(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
+function alignDateToMonday(date) {
+  const result = new Date(date);
+  const day = result.getDay();
+  const diff = (day + 6) % 7;
+  result.setDate(result.getDate() - diff);
+  return result;
+}
+
+function formatDateToISO(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getDefaultStartDate() {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() + 14);
+  return alignDateToMonday(date);
+}
+
+function getDefaultStartDateISO() {
+  return formatDateToISO(getDefaultStartDate());
+}
+
+function parseISODateString(value) {
+  if (!value) {
+    return null;
+  }
+
+  const [yearStr, monthStr, dayStr] = value.split("-");
+  const year = Number.parseInt(yearStr, 10);
+  const month = Number.parseInt(monthStr, 10);
+  const day = Number.parseInt(dayStr, 10);
+
+  if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day)) {
+    return null;
+  }
+
+  const date = new Date(year, month - 1, day);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function addDays(date, amount) {
+  const result = new Date(date);
+  result.setDate(result.getDate() + amount);
+  return result;
+}
+
+const invigilatorDateFormatter = new Intl.DateTimeFormat(undefined, {
+  weekday: "long",
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+});
+
+function formatDateForInvigilator(date) {
+  return invigilatorDateFormatter.format(date);
+}
+
 function formatTimeLabel(totalMinutes) {
   const hour24 = Math.floor(totalMinutes / 60);
 
@@ -544,6 +610,8 @@ function computeSummary(assignments, courseLookup) {
 }
 
 function App() {
+  const [startDate, setStartDate] = useState(() => getDefaultStartDateISO());
+
   const [weeks, setWeeks] = useState(() => [1]);
 
   const [assignments, setAssignments] = useState(() =>
@@ -687,6 +755,13 @@ function App() {
       return haystack.includes(query);
     });
   }, [availableCourses, courseSearch]);
+
+  const handleStartDateChange = (event) => {
+    const rawValue = event.target.value;
+    const parsed = parseISODateString(rawValue);
+    const aligned = parsed ? alignDateToMonday(parsed) : getDefaultStartDate();
+    setStartDate(formatDateToISO(aligned));
+  };
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
@@ -1300,17 +1375,24 @@ function App() {
     return templateHeadersRef.current;
   };
 
-  const buildWorkbookForWeek = (week, templateHeaders) => {
+  const buildWorkbookForWeek = (week, templateHeaders, baseStartDate) => {
     const weekAssignments = assignments[week];
     if (!weekAssignments) {
       return null;
     }
 
+    const safeStartDate = alignDateToMonday(
+      baseStartDate ?? getDefaultStartDate(),
+    );
+    const weekStartDate = addDays(safeStartDate, (week - 1) * 7);
+
     const invigilatorRows = [];
     const dayRowsMap = new Map();
 
-    days.forEach((day) => {
+    days.forEach((day, dayIndex) => {
       const dayAssignments = weekAssignments[day] || {};
+      const dayDate = addDays(weekStartDate, dayIndex);
+      const formattedDate = formatDateForInvigilator(dayDate);
 
       timeSlots.forEach((slot) => {
         const courseIds = dayAssignments[slot.id] || [];
@@ -1484,7 +1566,7 @@ function App() {
             courseCodeLabel,
             courseTitleLabel,
             String(room.students.length),
-            day,
+            formattedDate,
             timeRange,
             instructorLabel,
             roomName,
@@ -1578,7 +1660,6 @@ function App() {
 
     return workbook;
   };
-
   const handleExportSchedule = async () => {
     setExportError("");
 
@@ -1592,11 +1673,19 @@ function App() {
 
     try {
       const templateHeaders = await getTemplateHeaders();
+      const parsedStartDate = parseISODateString(startDate);
+      const baseStartDate = alignDateToMonday(
+        parsedStartDate ?? getDefaultStartDate(),
+      );
 
       const exportedFiles = [];
 
       for (const week of weeks) {
-        const workbook = buildWorkbookForWeek(week, templateHeaders);
+        const workbook = buildWorkbookForWeek(
+          week,
+          templateHeaders,
+          baseStartDate,
+        );
 
         if (!workbook) {
           continue;
@@ -1741,6 +1830,16 @@ function App() {
         </div>
 
         <div className="app__actions">
+          <div className="start-date-control">
+            <label htmlFor="start-date-input">Week 1 start date</label>
+            <input
+              id="start-date-input"
+              type="date"
+              value={startDate}
+              onChange={handleStartDateChange}
+            />
+          </div>
+
           <label className="file-input">
             <input
               type="file"
