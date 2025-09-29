@@ -4,7 +4,7 @@
   margin: 0 auto;
   padding: clamp(1rem, 2vw + 1rem, 2.5rem);
   color: #1f2933;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
   box-sizing: border-box;
 }
 
@@ -52,7 +52,7 @@
   background-color: #1d4ed8;
 }
 
-.file-input input[type='file'] {
+.file-input input[type="file"] {
   position: absolute;
   inset: 0;
   opacity: 0;
@@ -67,7 +67,9 @@
   color: #1f2933;
   font-weight: 600;
   cursor: pointer;
-  transition: background-color 0.2s ease, color 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
 }
 
 .app__actions button:disabled {
@@ -225,7 +227,9 @@
   cursor: grab;
   display: grid;
   gap: 0.35rem;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .course-list li:active {
@@ -292,7 +296,10 @@
   color: #1f2933;
   font-weight: 600;
   cursor: pointer;
-  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease;
 }
 
 .week-tabs button:hover {
@@ -330,6 +337,8 @@
   border: 1px solid #e4e7eb;
   background-color: #ffffff;
   box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+  max-height: 400px;
+  overflow-y: auto;
 }
 
 .conflicts--full {
@@ -392,7 +401,9 @@
 .timetable td {
   position: relative;
   min-width: 120px;
-  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 .timetable th.slot-column,
 .timetable td.slot-column {
@@ -412,7 +423,6 @@
   min-width: 220px;
   max-width: 320px;
 }
-
 
 .timetable td.is-hovered {
   background-color: #e0f2fe;
@@ -483,13 +493,6 @@
   overflow: visible;
 }
 
-
-
-
-
-
-
-
 .slot-courses {
   display: flex;
   flex-direction: column;
@@ -509,7 +512,11 @@
   border: 1px solid #d2d6dc;
   border-radius: 0.65rem;
   padding: 0.75rem;
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.12), rgba(99, 102, 241, 0.12));
+  background: linear-gradient(
+    135deg,
+    rgba(59, 130, 246, 0.12),
+    rgba(99, 102, 241, 0.12)
+  );
   display: grid;
   gap: 0.5rem;
   position: relative;
@@ -523,7 +530,11 @@
 .scheduled-course--ghost {
   opacity: 0.55;
   border-style: dashed;
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(99, 102, 241, 0.08));
+  background: linear-gradient(
+    135deg,
+    rgba(59, 130, 246, 0.08),
+    rgba(99, 102, 241, 0.08)
+  );
 }
 
 .scheduled-course header {
