@@ -2185,14 +2185,13 @@ function App() {
           <h1>Exam Scheduling Helper</h1>
 
           <p>
-            Upload your student enrolment file to start building the exam
-            timetable.
+            Upload student enrolment file to start building the exam timetable.
           </p>
         </div>
 
         <div className="app__actions">
           <div className="start-date-control">
-            <label htmlFor="start-date-input">Week 1 start date</label>
+            <label htmlFor="start-date-input">Select exam start date:</label>
             <input
               id="start-date-input"
               type="date"
@@ -2275,7 +2274,7 @@ function App() {
               </label>
 
               <label>
-                <span>Students per room</span>
+                <span>#Students per room</span>
                 <input
                   type="number"
                   min="1"
@@ -2289,7 +2288,7 @@ function App() {
               </label>
 
               <label>
-                <span>Invigilator placeholders</span>
+                <span>#Invigilators</span>
                 <input
                   type="number"
                   min="1"
@@ -2317,11 +2316,11 @@ function App() {
       {courses.length ? (
         <section className="overview">
           <div>
-            <strong>Courses loaded:</strong> {courses.length}
+            <strong>#Courses:</strong> {courses.length}
           </div>
 
           <div>
-            <strong>Unique students:</strong> {totalUniqueStudentsAcrossCourses}
+            <strong>#Students:</strong> {totalUniqueStudentsAcrossCourses}
           </div>
         </section>
       ) : (
