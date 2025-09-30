@@ -17,6 +17,8 @@ const END_HOUR = 17;
 
 const STUDENTS_PER_ROOM = 25;
 
+const INVIGILATOR_PLACEHOLDER_COUNT = 15;
+
 const XLSX_MIME_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -95,6 +97,111 @@ const invigilatorDateFormatter = new Intl.DateTimeFormat(undefined, {
 
 function formatDateForInvigilator(date) {
   return invigilatorDateFormatter.format(date);
+}
+
+function generateInvigilatorPlaceholders(
+  count = INVIGILATOR_PLACEHOLDER_COUNT,
+) {
+  return Array.from({ length: count }, (_, index) => {
+    const number = String(index + 1).padStart(2, "0");
+    return `Invigilator ${number}`;
+  });
+}
+
+function assignInvigilatorsToRows(totalRows, placeholders, roomNames = []) {
+  const primaryPool = placeholders.map((name, index) => ({
+    name,
+    primaryCount: 0,
+    roomUsage: new Map(),
+    order: index,
+  }));
+
+  const backupPool = placeholders.map((name, index) => ({
+    name,
+    backupCount: 0,
+    primaryCount: 0,
+    order: index,
+  }));
+
+  const selectPrimary = (roomName, excluded = new Set()) => {
+    return (
+      primaryPool
+        .filter((candidate) => !excluded.has(candidate.name))
+        .sort((a, b) => {
+          if (a.primaryCount !== b.primaryCount) {
+            return a.primaryCount - b.primaryCount;
+          }
+
+          const aRoom = a.roomUsage.get(roomName) ?? 0;
+          const bRoom = b.roomUsage.get(roomName) ?? 0;
+          if (aRoom !== bRoom) {
+            return aRoom - bRoom;
+          }
+
+          return a.order - b.order;
+        })[0] ?? null
+    );
+  };
+
+  const selectBackup = (excluded = new Set()) => {
+    return (
+      backupPool
+        .filter((candidate) => !excluded.has(candidate.name))
+        .sort((a, b) => {
+          if (a.backupCount !== b.backupCount) {
+            return a.backupCount - b.backupCount;
+          }
+
+          if (a.primaryCount !== b.primaryCount) {
+            return a.primaryCount - b.primaryCount;
+          }
+
+          return a.order - b.order;
+        })[0] ?? null
+    );
+  };
+
+  const assignments = [];
+
+  for (let index = 0; index < totalRows; index += 1) {
+    const roomName = roomNames[index] ?? "";
+    const primaryExclusions = new Set();
+
+    const primaryOne = selectPrimary(roomName, primaryExclusions);
+    if (primaryOne) {
+      primaryOne.primaryCount += 1;
+      primaryOne.roomUsage.set(
+        roomName,
+        (primaryOne.roomUsage.get(roomName) ?? 0) + 1,
+      );
+      primaryExclusions.add(primaryOne.name);
+    }
+
+    const primaryTwo = selectPrimary(roomName, primaryExclusions);
+    if (primaryTwo) {
+      primaryTwo.primaryCount += 1;
+      primaryTwo.roomUsage.set(
+        roomName,
+        (primaryTwo.roomUsage.get(roomName) ?? 0) + 1,
+      );
+      primaryExclusions.add(primaryTwo.name);
+    }
+
+    const backupExclusions = new Set(primaryExclusions);
+    const backup = selectBackup(backupExclusions);
+    if (backup) {
+      backup.backupCount += 1;
+    }
+
+    assignments.push({
+      primaryOne: primaryOne?.name ?? "",
+      primaryTwo: primaryTwo?.name ?? "",
+      backup: backup?.name ?? "",
+      roomName,
+    });
+  }
+
+  return { assignments, placeholderOrder: placeholders };
 }
 
 function formatTimeLabel(totalMinutes) {
@@ -1607,6 +1714,21 @@ function App() {
       return null;
     }
 
+    const placeholders = generateInvigilatorPlaceholders();
+    const roomNamesForRows = invigilatorRows.map((row) => row[7] || "");
+    const { assignments: invigilatorAssignments, placeholderOrder } =
+      assignInvigilatorsToRows(
+        invigilatorRows.length,
+        placeholders,
+        roomNamesForRows,
+      );
+
+    const poolSheetName = normaliseSheetName(`Week ${week} Invigilator Pool`);
+    const placeholderRowMap = new Map();
+    (placeholderOrder || placeholders).forEach((name, index) => {
+      placeholderRowMap.set(name, index + 2);
+    });
+
     const workbook = XLSX.utils.book_new();
 
     const invSheetData = [
@@ -1619,10 +1741,78 @@ function App() {
     ];
     const invSheet = XLSX.utils.aoa_to_sheet(invSheetData);
 
+    invigilatorAssignments.forEach((assignment, index) => {
+      const sheetRowIndex = index + 1;
+
+      const setFormula = (columnIndex, name) => {
+        if (!name) {
+          return;
+        }
+
+        const rowNumber = placeholderRowMap.get(name);
+        if (!rowNumber) {
+          return;
+        }
+
+        const cellAddress = XLSX.utils.encode_cell({
+          c: columnIndex,
+          r: sheetRowIndex,
+        });
+
+        invSheet[cellAddress] = {
+          t: "s",
+          v: name,
+          f: `'${poolSheetName}'!A${rowNumber}`,
+        };
+      };
+
+      setFormula(8, assignment.primaryOne);
+      setFormula(9, assignment.primaryTwo);
+      setFormula(10, assignment.backup);
+    });
+
+    const invSheetName = normaliseSheetName(`Week ${week} Invigilators`);
+
+    XLSX.utils.book_append_sheet(workbook, invSheet, invSheetName);
+
+    const primaryColumnLetterOne = XLSX.utils.encode_col(8);
+    const primaryColumnLetterTwo = XLSX.utils.encode_col(9);
+    const backupColumnLetter = XLSX.utils.encode_col(10);
+
+    const placeholderSheetData = [
+      ["Invigilator", "Primary assignments", "Backup assignments"],
+      ...(placeholderOrder || placeholders).map((name, index) => {
+        const rowNumber = index + 2;
+        const primaryFormula = `=COUNTIF('${invSheetName}'!$${primaryColumnLetterOne}:$${primaryColumnLetterOne},A${rowNumber})+COUNTIF('${invSheetName}'!$${primaryColumnLetterTwo}:$${primaryColumnLetterTwo},A${rowNumber})`;
+        const backupFormula = `=COUNTIF('${invSheetName}'!$${backupColumnLetter}:$${backupColumnLetter},A${rowNumber})`;
+
+        return [name, { f: primaryFormula }, { f: backupFormula }];
+      }),
+    ];
+    const placeholderSheet = XLSX.utils.aoa_to_sheet(placeholderSheetData);
+
+    XLSX.utils.book_append_sheet(workbook, placeholderSheet, poolSheetName);
+
+    const roomColumnLetter = XLSX.utils.encode_col(7);
+    const roomNames = Array.from(
+      new Set(invigilatorRows.map((row) => row[7]).filter(Boolean)),
+    ).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+
+    const roomPoolData = [
+      ["Room", "Assignments"],
+      ...roomNames.map((roomName, index) => {
+        const rowNumber = index + 2;
+        const formula = `=COUNTIF('${invSheetName}'!$${roomColumnLetter}:$${roomColumnLetter},A${rowNumber})`;
+
+        return [roomName, { f: formula }];
+      }),
+    ];
+    const roomPoolSheet = XLSX.utils.aoa_to_sheet(roomPoolData);
+
     XLSX.utils.book_append_sheet(
       workbook,
-      invSheet,
-      normaliseSheetName(`Week ${week} Invigilators`),
+      roomPoolSheet,
+      normaliseSheetName(`Week ${week} Room Pool`),
     );
 
     dayRowsMap.forEach((rows, day) => {
@@ -1650,6 +1840,25 @@ function App() {
 
       const sheetData = [[...templateHeaders.studentHeader], ...sortedRows];
       const sheet = XLSX.utils.aoa_to_sheet(sheetData);
+
+      sortedRows.forEach((row, rowIndex) => {
+        const roomName = row[6];
+        if (!roomName) {
+          return;
+        }
+
+        const roomRowNumber = roomRowMap.get(roomName);
+        if (!roomRowNumber) {
+          return;
+        }
+
+        const cellAddress = XLSX.utils.encode_cell({ c: 6, r: rowIndex + 1 });
+        sheet[cellAddress] = {
+          t: "s",
+          v: roomName,
+          f: `'${roomPoolSheetName}'!A${roomRowNumber}`,
+        };
+      });
 
       XLSX.utils.book_append_sheet(
         workbook,
