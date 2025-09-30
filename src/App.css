@@ -31,6 +31,7 @@
   display: flex;
   gap: 0.75rem;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .start-date-control {
@@ -639,4 +640,81 @@ code {
   background-color: #e2e8f0;
   padding: 0.1rem 0.3rem;
   border-radius: 0.35rem;
+}
+.settings-panel {
+  flex: 1 1 clamp(240px, 40vw, 360px);
+  border: 1px solid #d2d6dc;
+  border-radius: 0.65rem;
+  padding: 0.6rem 0.9rem;
+  background-color: #f8fafc;
+  color: #1f2933;
+}
+
+.settings-panel summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-weight: 600;
+  cursor: pointer;
+  margin: 0;
+  list-style: none;
+}
+
+.settings-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-panel summary::after {
+  content: "\25BC";
+  font-size: 0.85rem;
+  color: #475569;
+  transition: transform 0.2s ease;
+}
+
+.settings-panel[open] summary::after {
+  transform: rotate(-180deg);
+}
+
+.settings-panel__grid {
+  margin-top: 0.75rem;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.settings-panel__grid label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.settings-panel__grid label span {
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.settings-panel__grid input {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #d7dde6;
+  border-radius: 0.45rem;
+  font-size: 0.95rem;
+  color: #1f2933;
+  background-color: #ffffff;
+}
+
+.settings-panel__grid input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+}
+
+.settings-panel__grid input::-webkit-outer-spin-button,
+.settings-panel__grid input::-webkit-inner-spin-button {
+  margin: 0;
+}
+
+.settings-panel__grid input[type="number"] {
+  -moz-appearance: textfield;
 }

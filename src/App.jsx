@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
@@ -9,15 +9,15 @@ const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 
 const MAX_WEEKS = 10;
 
-const SLOT_INTERVAL_MINUTES = 30;
+const DEFAULT_SLOT_INTERVAL_MINUTES = 30;
 
-const START_HOUR = 8;
+const DEFAULT_START_HOUR = 8;
 
-const END_HOUR = 17;
+const DEFAULT_END_HOUR = 17;
 
-const STUDENTS_PER_ROOM = 25;
+const DEFAULT_STUDENTS_PER_ROOM = 25;
 
-const INVIGILATOR_PLACEHOLDER_COUNT = 15;
+const DEFAULT_INVIGILATOR_PLACEHOLDER_COUNT = 15;
 
 const XLSX_MIME_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -100,7 +100,7 @@ function formatDateForInvigilator(date) {
 }
 
 function generateInvigilatorPlaceholders(
-  count = INVIGILATOR_PLACEHOLDER_COUNT,
+  count = DEFAULT_INVIGILATOR_PLACEHOLDER_COUNT,
 ) {
   return Array.from({ length: count }, (_, index) => {
     const number = String(index + 1).padStart(2, "0");
@@ -211,25 +211,40 @@ function formatTimeLabel(totalMinutes) {
   return `${hour12}:${paddedMinute} ${suffix}`;
 }
 
-const timeSlots = [];
+function buildTimeSlots(startHour, endHour, slotIntervalMinutes) {
+  const slots = [];
 
-for (
-  let minutes = START_HOUR * 60;
-  minutes <= END_HOUR * 60 - SLOT_INTERVAL_MINUTES;
-  minutes += SLOT_INTERVAL_MINUTES
-) {
-  const hour = Math.floor(minutes / 60);
+  if (
+    Number.isFinite(startHour) &&
+    Number.isFinite(endHour) &&
+    Number.isFinite(slotIntervalMinutes) &&
+    slotIntervalMinutes > 0 &&
+    endHour > startHour
+  ) {
+    for (
+      let minutes = startHour * 60;
+      minutes <= endHour * 60 - slotIntervalMinutes;
+      minutes += slotIntervalMinutes
+    ) {
+      const hour = Math.floor(minutes / 60);
+      const minute = minutes % 60;
+      const id = `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
 
-  const minute = minutes % 60;
+      slots.push({
+        id,
+        label: formatTimeLabel(minutes),
+      });
+    }
+  }
 
-  const id = `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
-
-  timeSlots.push({
-    id,
-
-    label: formatTimeLabel(minutes),
-  });
+  return slots;
 }
+
+const DEFAULT_TIME_SLOTS = buildTimeSlots(
+  DEFAULT_START_HOUR,
+  DEFAULT_END_HOUR,
+  DEFAULT_SLOT_INTERVAL_MINUTES,
+);
 
 function StudentIcon() {
   return (
@@ -295,7 +310,7 @@ function InvigilatorIcon() {
   );
 }
 
-function createEmptyDaySlotMap() {
+function createEmptyDaySlotMap(timeSlots) {
   const map = {};
 
   days.forEach((day) => {
@@ -309,17 +324,19 @@ function createEmptyDaySlotMap() {
   return map;
 }
 
-function buildEmptyAssignments(weekList) {
+
+function buildEmptyAssignments(weekList, timeSlots) {
   const empty = {};
 
   weekList.forEach((week) => {
-    empty[week] = createEmptyDaySlotMap();
+    empty[week] = createEmptyDaySlotMap(timeSlots);
   });
 
   return empty;
 }
 
-function cloneAssignments(assignments) {
+
+function cloneAssignments(assignments, timeSlots) {
   const clone = {};
 
   Object.entries(assignments || {}).forEach(([weekKey, weekAssignments]) => {
@@ -340,6 +357,32 @@ function cloneAssignments(assignments) {
 
   return clone;
 }
+
+function reshapeAssignments(assignments, timeSlots) {
+  const weekKeys = Object.keys(assignments || {}).map((value) => Number(value));
+  const reshaped = {};
+
+  weekKeys.forEach((week) => {
+    const weekAssignments = assignments?.[week] || {};
+    reshaped[week] = {};
+
+    days.forEach((day) => {
+      const dayAssignments = weekAssignments?.[day] || {};
+      reshaped[week][day] = {};
+
+      timeSlots.forEach((slot) => {
+        const existing = Array.isArray(dayAssignments[slot.id])
+          ? dayAssignments[slot.id]
+          : [];
+        reshaped[week][day][slot.id] = [...existing];
+      });
+    });
+  });
+
+  return reshaped;
+}
+
+
 
 function formatStudentReference(studentId, directory) {
   const rawName = (directory[studentId] || "").trim();
@@ -455,13 +498,14 @@ function normaliseSheetName(base) {
   return base.length <= 31 ? base : base.slice(0, 31);
 }
 
-function computeSlotSummaries(assignments, courseLookup, week) {
+function computeSlotSummaries(assignments, courseLookup, week, timeSlots, studentsPerRoom) {
   const weekAssignments = assignments[week] || {};
 
-  const summary = createEmptyDaySlotMap();
+  const summary = createEmptyDaySlotMap(timeSlots);
+  const studentsPerRoomSafe = Math.max(1, Number(studentsPerRoom) || 1);
 
   days.forEach((day) => {
-    timeSlots.forEach((slot, slotIndex) => {
+    timeSlots.forEach((slot) => {
       const courses = weekAssignments[day]?.[slot.id] ?? [];
 
       const isStartSlot = courses.length > 0;
@@ -484,7 +528,7 @@ function computeSlotSummaries(assignments, courseLookup, week) {
 
       const roomCount =
         isStartSlot && uniqueStudentCount > 0
-          ? Math.ceil(uniqueStudentCount / STUDENTS_PER_ROOM)
+          ? Math.ceil(uniqueStudentCount / studentsPerRoomSafe)
           : 0;
 
       const invigilatorCount = roomCount * 2;
@@ -506,7 +550,8 @@ function computeSlotSummaries(assignments, courseLookup, week) {
   return summary;
 }
 
-function computeConflicts(assignments, courseLookup, studentDirectory) {
+
+function computeConflicts(assignments, courseLookup, studentDirectory, timeSlots) {
   const byWeek = {};
 
   const overallMessages = new Set();
@@ -516,7 +561,7 @@ function computeConflicts(assignments, courseLookup, studentDirectory) {
     .sort((a, b) => a - b);
 
   weekKeys.forEach((week) => {
-    const weekConflicts = createEmptyDaySlotMap();
+    const weekConflicts = createEmptyDaySlotMap(timeSlots);
 
     byWeek[week] = weekConflicts;
 
@@ -657,12 +702,14 @@ function computeConflicts(assignments, courseLookup, studentDirectory) {
   };
 }
 
-function computeSummary(assignments, courseLookup) {
+
+function computeSummary(assignments, courseLookup, timeSlots, studentsPerRoom) {
   const scheduledCourseIds = new Set();
 
   const studentIds = new Set();
 
   let roomCount = 0;
+  const studentsPerRoomSafe = Math.max(1, Number(studentsPerRoom) || 1);
 
   Object.values(assignments || {}).forEach((weekAssignments) => {
     days.forEach((day) => {
@@ -690,7 +737,7 @@ function computeSummary(assignments, courseLookup) {
         });
 
         if (slotStudentIds.size > 0) {
-          roomCount += Math.ceil(slotStudentIds.size / STUDENTS_PER_ROOM);
+          roomCount += Math.ceil(slotStudentIds.size / studentsPerRoomSafe);
         }
       });
     });
@@ -709,13 +756,30 @@ function computeSummary(assignments, courseLookup) {
   };
 }
 
+
 function App() {
+  const [settings, setSettings] = useState({
+    slotIntervalMinutes: DEFAULT_SLOT_INTERVAL_MINUTES,
+    startHour: DEFAULT_START_HOUR,
+    endHour: DEFAULT_END_HOUR,
+    studentsPerRoom: DEFAULT_STUDENTS_PER_ROOM,
+    invigilatorPlaceholderCount: DEFAULT_INVIGILATOR_PLACEHOLDER_COUNT,
+  });
+
+  const {
+    slotIntervalMinutes,
+    startHour,
+    endHour,
+    studentsPerRoom,
+    invigilatorPlaceholderCount,
+  } = settings;
+
   const [startDate, setStartDate] = useState(() => getDefaultStartDateISO());
 
   const [weeks, setWeeks] = useState(() => [1]);
 
   const [assignments, setAssignments] = useState(() =>
-    buildEmptyAssignments([1]),
+    buildEmptyAssignments([1], DEFAULT_TIME_SLOTS),
   );
 
   const [selectedWeek, setSelectedWeek] = useState(1);
@@ -736,6 +800,22 @@ function App() {
 
   const [exportError, setExportError] = useState("");
 
+  const timeSlots = useMemo(
+    () => buildTimeSlots(startHour, endHour, slotIntervalMinutes),
+    [startHour, endHour, slotIntervalMinutes],
+  );
+
+  useEffect(() => {
+    setAssignments((previous) => reshapeAssignments(previous, timeSlots));
+  }, [timeSlots]);
+
+  const studentsPerRoomCapacity = Math.max(1, Number(studentsPerRoom) || 1);
+
+  const invigilatorPlaceholderTotal = Math.max(
+    1,
+    Number(invigilatorPlaceholderCount) || 1,
+  );
+
   const courseLookup = useMemo(() => {
     const lookup = {};
 
@@ -747,15 +827,26 @@ function App() {
   }, [courses]);
 
   const slotSummaries = useMemo(
-    () => computeSlotSummaries(assignments, courseLookup, selectedWeek),
-
-    [assignments, courseLookup, selectedWeek],
+    () =>
+      computeSlotSummaries(
+        assignments,
+        courseLookup,
+        selectedWeek,
+        timeSlots,
+        studentsPerRoomCapacity,
+      ),
+    [assignments, courseLookup, selectedWeek, timeSlots, studentsPerRoomCapacity],
   );
 
   const conflicts = useMemo(
-    () => computeConflicts(assignments, courseLookup, studentDirectory),
-
-    [assignments, courseLookup, studentDirectory],
+    () =>
+      computeConflicts(
+        assignments,
+        courseLookup,
+        studentDirectory,
+        timeSlots,
+      ),
+    [assignments, courseLookup, studentDirectory, timeSlots],
   );
 
   const occupiedSlotIds = useMemo(() => {
@@ -792,12 +883,17 @@ function App() {
     });
 
     return result;
-  }, [assignments, selectedWeek]);
+  }, [assignments, selectedWeek, timeSlots]);
 
   const summary = useMemo(
-    () => computeSummary(assignments, courseLookup),
-
-    [assignments, courseLookup],
+    () =>
+      computeSummary(
+        assignments,
+        courseLookup,
+        timeSlots,
+        studentsPerRoomCapacity,
+      ),
+    [assignments, courseLookup, timeSlots, studentsPerRoomCapacity],
   );
 
   const assignedCourseIds = useMemo(() => {
@@ -814,7 +910,7 @@ function App() {
     });
 
     return ids;
-  }, [assignments]);
+  }, [assignments, timeSlots]);
 
   const orderedCourses = useMemo(() => {
     return [...courses].sort((a, b) => {
@@ -861,6 +957,52 @@ function App() {
     const parsed = parseISODateString(rawValue);
     const aligned = parsed ? alignDateToMonday(parsed) : getDefaultStartDate();
     setStartDate(formatDateToISO(aligned));
+  };
+
+  const handleNumericSettingChange = (key, options = {}) => (event) => {
+    const rawValue = Number.parseInt(event.target.value, 10);
+
+    if (Number.isNaN(rawValue)) {
+      return;
+    }
+
+    const { min, max } = options;
+
+    let value = rawValue;
+
+    if (typeof min === "number") {
+      value = Math.max(min, value);
+    }
+
+    if (typeof max === "number") {
+      value = Math.min(max, value);
+    }
+
+    setSettings((previous) => {
+      const next = { ...previous, [key]: value };
+
+      if (key === "startHour" && value >= next.endHour) {
+        next.endHour = Math.min(23, value + 1);
+      }
+
+      if (key === "endHour" && value <= next.startHour) {
+        next.startHour = Math.max(0, value - 1);
+      }
+
+      if (key === "slotIntervalMinutes" && value <= 0) {
+        next.slotIntervalMinutes = DEFAULT_SLOT_INTERVAL_MINUTES;
+      }
+
+      if (key === "studentsPerRoom" && value <= 0) {
+        next.studentsPerRoom = 1;
+      }
+
+      if (key === "invigilatorPlaceholderCount" && value <= 0) {
+        next.invigilatorPlaceholderCount = 1;
+      }
+
+      return next;
+    });
   };
 
   const handleFileUpload = async (event) => {
@@ -1033,7 +1175,7 @@ function App() {
         const studentCount = students.length;
 
         const roomsNeeded = studentCount
-          ? Math.max(1, Math.ceil(studentCount / STUDENTS_PER_ROOM))
+          ? Math.max(1, Math.ceil(studentCount / studentsPerRoomCapacity))
           : 0;
 
         return {
@@ -1212,7 +1354,7 @@ function App() {
           const studentCount = students.length;
 
           const roomsNeeded = studentCount
-            ? Math.max(1, Math.ceil(studentCount / STUDENTS_PER_ROOM))
+            ? Math.max(1, Math.ceil(studentCount / studentsPerRoomCapacity))
             : 0;
 
           const crnDetails = Array.from(group.crnDetails.entries())
@@ -1263,7 +1405,7 @@ function App() {
 
       setStudentDirectory(studentNames);
 
-      setAssignments(buildEmptyAssignments(initialWeeks));
+      setAssignments(buildEmptyAssignments(initialWeeks, timeSlots));
 
       setSelectedWeek(initialWeeks[0]);
     } catch (error) {
@@ -1353,7 +1495,7 @@ function App() {
     if (slotIndex === undefined || slotIndex > timeSlots.length - 2) return;
 
     setAssignments((previous) => {
-      const next = cloneAssignments(previous);
+      const next = cloneAssignments(previous, timeSlots);
 
       Object.keys(next).forEach((weekKey) => {
         const weekAssignments = next[weekKey];
@@ -1371,7 +1513,7 @@ function App() {
         });
       });
 
-      const targetWeek = next[selectedWeek] || createEmptyDaySlotMap();
+      const targetWeek = next[selectedWeek] || createEmptyDaySlotMap(timeSlots);
 
       if (!next[selectedWeek]) {
         next[selectedWeek] = targetWeek;
@@ -1389,7 +1531,7 @@ function App() {
 
   const handleRemoveCourse = (day, slotId, courseId) => {
     setAssignments((previous) => {
-      const next = cloneAssignments(previous);
+      const next = cloneAssignments(previous, timeSlots);
 
       next[selectedWeek][day][slotId] = next[selectedWeek][day][slotId].filter(
         (id) => id !== courseId,
@@ -1601,7 +1743,7 @@ function App() {
         const ensureRoom = () => {
           if (
             !currentRoom ||
-            currentRoom.students.length >= STUDENTS_PER_ROOM
+            currentRoom.students.length >= studentsPerRoomCapacity
           ) {
             currentRoom = {
               students: [],
@@ -1621,7 +1763,7 @@ function App() {
             ensureRoom();
 
             const availableSpots =
-              STUDENTS_PER_ROOM - currentRoom.students.length;
+              studentsPerRoomCapacity - currentRoom.students.length;
             const portion = remaining.splice(0, availableSpots);
 
             portion.forEach((studentEntry) => {
@@ -1707,7 +1849,7 @@ function App() {
       return null;
     }
 
-    const placeholders = generateInvigilatorPlaceholders();
+    const placeholders = generateInvigilatorPlaceholders(invigilatorPlaceholderTotal);
     const roomNamesForRows = invigilatorRows.map((row) => row[7] || "");
     const { assignments: invigilatorAssignments } = assignInvigilatorsToRows(
       invigilatorRows.length,
@@ -1982,7 +2124,7 @@ function App() {
         return {
           ...previousAssignments,
 
-          [nextWeekNumber]: createEmptyDaySlotMap(),
+          [nextWeekNumber]: createEmptyDaySlotMap(timeSlots),
         };
       });
 
@@ -1993,7 +2135,7 @@ function App() {
   };
 
   const resetSchedule = () => {
-    setAssignments(buildEmptyAssignments(weeks));
+    setAssignments(buildEmptyAssignments(weeks, timeSlots));
 
     setSelectedWeek(weeks[0] ?? 1);
   };
@@ -2084,6 +2226,83 @@ function App() {
           >
             Clear Timetable
           </button>
+
+          <details className="settings-panel">
+            <summary>Settings</summary>
+
+            <div className="settings-panel__grid">
+              <label>
+                <span>Slot interval (minutes)</span>
+                <input
+                  type="number"
+                  min="5"
+                  max="240"
+                  step="5"
+                  value={slotIntervalMinutes}
+                  onChange={handleNumericSettingChange(
+                    "slotIntervalMinutes",
+                    { min: 5, max: 240 },
+                  )}
+                />
+              </label>
+
+              <label>
+                <span>Start hour</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="22"
+                  value={startHour}
+                  onChange={handleNumericSettingChange(
+                    "startHour",
+                    { min: 0, max: 22 },
+                  )}
+                />
+              </label>
+
+              <label>
+                <span>End hour</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="23"
+                  value={endHour}
+                  onChange={handleNumericSettingChange(
+                    "endHour",
+                    { min: 1, max: 23 },
+                  )}
+                />
+              </label>
+
+              <label>
+                <span>Students per room</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="500"
+                  value={studentsPerRoom}
+                  onChange={handleNumericSettingChange(
+                    "studentsPerRoom",
+                    { min: 1, max: 500 },
+                  )}
+                />
+              </label>
+
+              <label>
+                <span>Invigilator placeholders</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="200"
+                  value={invigilatorPlaceholderCount}
+                  onChange={handleNumericSettingChange(
+                    "invigilatorPlaceholderCount",
+                    { min: 1, max: 200 },
+                  )}
+                />
+              </label>
+            </div>
+          </details>
         </div>
       </header>
 
