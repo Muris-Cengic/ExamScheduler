@@ -123,43 +123,37 @@ function assignInvigilatorsToRows(totalRows, placeholders, roomNames = []) {
     order: index,
   }));
 
-  const selectPrimary = (roomName, excluded = new Set()) => {
-    return (
-      primaryPool
-        .filter((candidate) => !excluded.has(candidate.name))
-        .sort((a, b) => {
-          if (a.primaryCount !== b.primaryCount) {
-            return a.primaryCount - b.primaryCount;
-          }
+  const selectPrimary = (roomName, excluded = new Set()) =>
+    primaryPool
+      .filter((candidate) => !excluded.has(candidate.name))
+      .sort((a, b) => {
+        if (a.primaryCount !== b.primaryCount) {
+          return a.primaryCount - b.primaryCount;
+        }
 
-          const aRoom = a.roomUsage.get(roomName) ?? 0;
-          const bRoom = b.roomUsage.get(roomName) ?? 0;
-          if (aRoom !== bRoom) {
-            return aRoom - bRoom;
-          }
+        const aRoom = a.roomUsage.get(roomName) ?? 0;
+        const bRoom = b.roomUsage.get(roomName) ?? 0;
+        if (aRoom !== bRoom) {
+          return aRoom - bRoom;
+        }
 
-          return a.order - b.order;
-        })[0] ?? null
-    );
-  };
+        return a.order - b.order;
+      })[0] ?? null;
 
-  const selectBackup = (excluded = new Set()) => {
-    return (
-      backupPool
-        .filter((candidate) => !excluded.has(candidate.name))
-        .sort((a, b) => {
-          if (a.backupCount !== b.backupCount) {
-            return a.backupCount - b.backupCount;
-          }
+  const selectBackup = (excluded = new Set()) =>
+    backupPool
+      .filter((candidate) => !excluded.has(candidate.name))
+      .sort((a, b) => {
+        if (a.backupCount !== b.backupCount) {
+          return a.backupCount - b.backupCount;
+        }
 
-          if (a.primaryCount !== b.primaryCount) {
-            return a.primaryCount - b.primaryCount;
-          }
+        if (a.primaryCount !== b.primaryCount) {
+          return a.primaryCount - b.primaryCount;
+        }
 
-          return a.order - b.order;
-        })[0] ?? null
-    );
-  };
+        return a.order - b.order;
+      })[0] ?? null;
 
   const assignments = [];
 
@@ -201,9 +195,8 @@ function assignInvigilatorsToRows(totalRows, placeholders, roomNames = []) {
     });
   }
 
-  return { assignments, placeholderOrder: placeholders };
+  return { assignments };
 }
-
 function formatTimeLabel(totalMinutes) {
   const hour24 = Math.floor(totalMinutes / 60);
 
@@ -1716,16 +1709,15 @@ function App() {
 
     const placeholders = generateInvigilatorPlaceholders();
     const roomNamesForRows = invigilatorRows.map((row) => row[7] || "");
-    const { assignments: invigilatorAssignments, placeholderOrder } =
-      assignInvigilatorsToRows(
-        invigilatorRows.length,
-        placeholders,
-        roomNamesForRows,
-      );
+    const { assignments: invigilatorAssignments } = assignInvigilatorsToRows(
+      invigilatorRows.length,
+      placeholders,
+      roomNamesForRows,
+    );
 
     const poolSheetName = normaliseSheetName(`Week ${week} Invigilator Pool`);
     const placeholderRowMap = new Map();
-    (placeholderOrder || placeholders).forEach((name, index) => {
+    placeholders.forEach((name, index) => {
       placeholderRowMap.set(name, index + 2);
     });
 
@@ -1740,6 +1732,17 @@ function App() {
       ),
     ];
     const invSheet = XLSX.utils.aoa_to_sheet(invSheetData);
+
+    const invSheetName = normaliseSheetName(`Week ${week} Invigilators`);
+    const roomPoolSheetName = normaliseSheetName(`Week ${week} Room Pool`);
+
+    const uniqueRoomNames = Array.from(
+      new Set(roomNamesForRows.filter((room) => room && room.trim())),
+    ).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    const roomRowMap = new Map();
+    uniqueRoomNames.forEach((roomName, index) => {
+      roomRowMap.set(roomName, index + 2);
+    });
 
     invigilatorAssignments.forEach((assignment, index) => {
       const sheetRowIndex = index + 1;
@@ -1769,9 +1772,23 @@ function App() {
       setFormula(8, assignment.primaryOne);
       setFormula(9, assignment.primaryTwo);
       setFormula(10, assignment.backup);
-    });
 
-    const invSheetName = normaliseSheetName(`Week ${week} Invigilators`);
+      const roomName = assignment.roomName;
+      if (roomName) {
+        const roomRowNumber = roomRowMap.get(roomName);
+        if (roomRowNumber) {
+          const roomCellAddress = XLSX.utils.encode_cell({
+            c: 7,
+            r: sheetRowIndex,
+          });
+          invSheet[roomCellAddress] = {
+            t: "s",
+            v: roomName,
+            f: `='${roomPoolSheetName}'!A${roomRowNumber}`,
+          };
+        }
+      }
+    });
 
     XLSX.utils.book_append_sheet(workbook, invSheet, invSheetName);
 
@@ -1781,7 +1798,7 @@ function App() {
 
     const placeholderSheetData = [
       ["Invigilator", "Primary assignments", "Backup assignments"],
-      ...(placeholderOrder || placeholders).map((name, index) => {
+      ...placeholders.map((name, index) => {
         const rowNumber = index + 2;
         const primaryFormula = `=COUNTIF('${invSheetName}'!$${primaryColumnLetterOne}:$${primaryColumnLetterOne},A${rowNumber})+COUNTIF('${invSheetName}'!$${primaryColumnLetterTwo}:$${primaryColumnLetterTwo},A${rowNumber})`;
         const backupFormula = `=COUNTIF('${invSheetName}'!$${backupColumnLetter}:$${backupColumnLetter},A${rowNumber})`;
@@ -1794,13 +1811,10 @@ function App() {
     XLSX.utils.book_append_sheet(workbook, placeholderSheet, poolSheetName);
 
     const roomColumnLetter = XLSX.utils.encode_col(7);
-    const roomNames = Array.from(
-      new Set(invigilatorRows.map((row) => row[7]).filter(Boolean)),
-    ).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
 
     const roomPoolData = [
       ["Room", "Assignments"],
-      ...roomNames.map((roomName, index) => {
+      ...uniqueRoomNames.map((roomName, index) => {
         const rowNumber = index + 2;
         const formula = `=COUNTIF('${invSheetName}'!$${roomColumnLetter}:$${roomColumnLetter},A${rowNumber})`;
 
@@ -1809,11 +1823,7 @@ function App() {
     ];
     const roomPoolSheet = XLSX.utils.aoa_to_sheet(roomPoolData);
 
-    XLSX.utils.book_append_sheet(
-      workbook,
-      roomPoolSheet,
-      normaliseSheetName(`Week ${week} Room Pool`),
-    );
+    XLSX.utils.book_append_sheet(workbook, roomPoolSheet, roomPoolSheetName);
 
     dayRowsMap.forEach((rows, day) => {
       const sortedRows = rows
@@ -1842,7 +1852,7 @@ function App() {
       const sheet = XLSX.utils.aoa_to_sheet(sheetData);
 
       sortedRows.forEach((row, rowIndex) => {
-        const roomName = row[6];
+        const roomName = row[5];
         if (!roomName) {
           return;
         }
@@ -1852,11 +1862,11 @@ function App() {
           return;
         }
 
-        const cellAddress = XLSX.utils.encode_cell({ c: 6, r: rowIndex + 1 });
+        const cellAddress = XLSX.utils.encode_cell({ c: 5, r: rowIndex + 1 });
         sheet[cellAddress] = {
           t: "s",
           v: roomName,
-          f: `'${roomPoolSheetName}'!A${roomRowNumber}`,
+          f: `='${roomPoolSheetName}'!A${roomRowNumber}`,
         };
       });
 
@@ -2434,3 +2444,4 @@ function App() {
 }
 
 export default App;
+
