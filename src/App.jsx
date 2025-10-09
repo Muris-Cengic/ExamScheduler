@@ -2293,18 +2293,17 @@ function App() {
 
             <div className="settings-panel__grid">
               <label>
-                <span>Slot interval (minutes)</span>
-                <input
-                  type="number"
-                  min="5"
-                  max="240"
-                  step="5"
+                <span>Slot interval</span>
+                <select
                   value={slotIntervalMinutes}
                   onChange={handleNumericSettingChange(
                     "slotIntervalMinutes",
-                    { min: 5, max: 240 },
+                    { min: 30, max: 60 },
                   )}
-                />
+                >
+                  <option value={30}>30 minutes</option>
+                  <option value={60}>1 hour</option>
+                </select>
               </label>
 
               <label>

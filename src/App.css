@@ -695,7 +695,8 @@ code {
   color: #1f2937;
 }
 
-.settings-panel__grid input {
+.settings-panel__grid input,
+.settings-panel__grid select {
   padding: 0.5rem 0.65rem;
   border: 1px solid #d7dde6;
   border-radius: 0.45rem;
@@ -704,7 +705,8 @@ code {
   background-color: #ffffff;
 }
 
-.settings-panel__grid input:focus {
+.settings-panel__grid input:focus,
+.settings-panel__grid select:focus {
   outline: none;
   border-color: #2563eb;
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
