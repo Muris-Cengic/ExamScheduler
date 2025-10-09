@@ -19,6 +19,8 @@ const DEFAULT_STUDENTS_PER_ROOM = 25;
 
 const DEFAULT_INVIGILATOR_PLACEHOLDER_COUNT = 15;
 
+const DEFAULT_EXAM_DURATION_MINUTES = 60;
+
 const XLSX_MIME_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -438,10 +440,13 @@ function parseSlotIdToMinutes(slotId) {
   return Number.parseInt(hour, 10) * 60 + Number.parseInt(minute, 10);
 }
 
-function formatSlotRange(slotId) {
+function formatSlotRange(
+  slotId,
+  durationMinutes = DEFAULT_EXAM_DURATION_MINUTES,
+) {
   const startMinutes = parseSlotIdToMinutes(slotId);
 
-  const endMinutes = startMinutes + 60;
+  const endMinutes = startMinutes + durationMinutes;
 
   return `${formatTimeLabel(startMinutes)} - ${formatTimeLabel(endMinutes)}`;
 }
@@ -556,6 +561,7 @@ function computeConflicts(
   courseLookup,
   studentDirectory,
   timeSlots,
+  slotsPerExam,
   studentsPerRoom,
   availableInvigilators,
 ) {
@@ -568,6 +574,7 @@ function computeConflicts(
     0,
     Number(availableInvigilators) || 0,
   );
+  const slotsPerExamSafe = Math.max(1, Number(slotsPerExam) || 1);
 
   const weekKeys = Object.keys(assignments || {})
     .map((value) => Number(value))
@@ -638,23 +645,24 @@ function computeConflicts(
           });
         });
 
-        if (slotIndex > 0) {
-          const previousSlotId = timeSlots[slotIndex - 1].id;
+        for (let offset = 1; offset < slotsPerExamSafe; offset += 1) {
+          const previousIndex = slotIndex - offset;
 
+          if (previousIndex < 0) {
+            break;
+          }
+
+          const previousSlotId = timeSlots[previousIndex].id;
           const previousCourses = weekAssignments[day]?.[previousSlotId] ?? [];
 
-          previousCourses.forEach((courseId) => addCourseToSlotMap(courseId));
+          previousCourses.forEach((courseId) => {
+            addCourseToSlotMap(courseId);
+            addCourseStudents(courseId);
+          });
         }
 
         if (slotStudentCourses.size === 0) {
           return;
-        }
-
-        if (capacityStudentIds.size === 0 && slotIndex > 0) {
-          const previousSlotId = timeSlots[slotIndex - 1].id;
-          const previousCourses = weekAssignments[day]?.[previousSlotId] ?? [];
-
-          previousCourses.forEach((courseId) => addCourseStudents(courseId));
         }
 
         if (capacityStudentIds.size > 0) {
@@ -817,6 +825,7 @@ function App() {
     endHour: DEFAULT_END_HOUR,
     studentsPerRoom: DEFAULT_STUDENTS_PER_ROOM,
     invigilatorPlaceholderCount: DEFAULT_INVIGILATOR_PLACEHOLDER_COUNT,
+    examDurationMinutes: DEFAULT_EXAM_DURATION_MINUTES,
   });
 
   const {
@@ -825,6 +834,7 @@ function App() {
     endHour,
     studentsPerRoom,
     invigilatorPlaceholderCount,
+    examDurationMinutes,
   } = settings;
 
   const [startDate, setStartDate] = useState(() => getDefaultStartDateISO());
@@ -869,6 +879,21 @@ function App() {
     Number(invigilatorPlaceholderCount) || 1,
   );
 
+  const examDurationMinutesValue = useMemo(() => {
+    const rawDuration =
+      Number(examDurationMinutes) || DEFAULT_EXAM_DURATION_MINUTES;
+    return Math.max(slotIntervalMinutes, rawDuration);
+  }, [examDurationMinutes, slotIntervalMinutes]);
+
+  const slotsPerExam = useMemo(() => {
+    return Math.max(
+      1,
+      Math.ceil(
+        examDurationMinutesValue / Math.max(1, Number(slotIntervalMinutes) || 1),
+      ),
+    );
+  }, [examDurationMinutesValue, slotIntervalMinutes]);
+
   const courseLookup = useMemo(() => {
     const lookup = {};
 
@@ -898,6 +923,7 @@ function App() {
         courseLookup,
         studentDirectory,
         timeSlots,
+        slotsPerExam,
         studentsPerRoomCapacity,
         invigilatorPlaceholderTotal,
       ),
@@ -905,6 +931,7 @@ function App() {
       assignments,
       courseLookup,
       studentDirectory,
+      slotsPerExam,
       studentsPerRoomCapacity,
       invigilatorPlaceholderTotal,
       timeSlots,
@@ -926,17 +953,22 @@ function App() {
           return true;
         }
 
-        const previousSlotId = index > 0 ? timeSlots[index - 1].id : null;
+        for (let offset = 1; offset < slotsPerExam; offset += 1) {
+          const previousIndex = index - offset;
 
-        if (!previousSlotId) {
-          return false;
+          if (previousIndex < 0) {
+            break;
+          }
+
+          const previousSlotId = timeSlots[previousIndex].id;
+          const trailingCourses = dayAssignments[previousSlotId] || [];
+
+          if (trailingCourses.length > 0) {
+            return true;
+          }
         }
 
-        const trailingCourses = dayAssignments[previousSlotId] || [];
-
-        return trailingCourses.some(
-          (courseId) => !slotCourses.includes(courseId),
-        );
+        return false;
       });
 
       if (hasCourseInColumn) {
@@ -945,7 +977,7 @@ function App() {
     });
 
     return result;
-  }, [assignments, selectedWeek, timeSlots]);
+  }, [assignments, selectedWeek, slotsPerExam, timeSlots]);
 
   const summary = useMemo(
     () =>
@@ -1055,12 +1087,30 @@ function App() {
         next.slotIntervalMinutes = DEFAULT_SLOT_INTERVAL_MINUTES;
       }
 
+      if (key === "slotIntervalMinutes" && value > 0) {
+        if (next.examDurationMinutes < value) {
+          next.examDurationMinutes = value;
+        }
+      }
+
       if (key === "studentsPerRoom" && value <= 0) {
         next.studentsPerRoom = 1;
       }
 
       if (key === "invigilatorPlaceholderCount" && value <= 0) {
         next.invigilatorPlaceholderCount = 1;
+      }
+
+      if (key === "examDurationMinutes" && value <= 0) {
+        next.examDurationMinutes = DEFAULT_EXAM_DURATION_MINUTES;
+      }
+
+      if (
+        key === "examDurationMinutes" &&
+        value < next.slotIntervalMinutes &&
+        next.slotIntervalMinutes > 0
+      ) {
+        next.examDurationMinutes = next.slotIntervalMinutes;
       }
 
       return next;
@@ -1478,7 +1528,14 @@ function App() {
   };
 
   const updateHoverTarget = (day, slotIndex) => {
-    if (slotIndex > timeSlots.length - 2) {
+    const maxStartIndex = timeSlots.length - slotsPerExam;
+
+    if (
+      slotsPerExam < 1 ||
+      timeSlots.length === 0 ||
+      maxStartIndex < 0 ||
+      slotIndex > maxStartIndex
+    ) {
       setHoverTarget(null);
 
       return;
@@ -1525,7 +1582,18 @@ function App() {
 
         if (
           relatedDay === day &&
-          (relatedSlotIndex === slotIndex || relatedSlotIndex === slotIndex + 1)
+          hoverTarget &&
+          hoverTarget.day === day &&
+          relatedSlotIndex >= hoverTarget.slotIndex &&
+          relatedSlotIndex < hoverTarget.slotIndex + slotsPerExam
+        ) {
+          return;
+        }
+
+        if (
+          relatedDay === day &&
+          relatedSlotIndex >= slotIndex &&
+          relatedSlotIndex < slotIndex + slotsPerExam
         ) {
           return;
         }
@@ -1554,8 +1622,6 @@ function App() {
 
     if (!courseId || !courseLookup[courseId]) return;
 
-    if (slotIndex === undefined || slotIndex > timeSlots.length - 2) return;
-
     setAssignments((previous) => {
       const next = cloneAssignments(previous, timeSlots);
 
@@ -1579,6 +1645,56 @@ function App() {
 
       if (!next[selectedWeek]) {
         next[selectedWeek] = targetWeek;
+      }
+
+      const maxStartIndex = timeSlots.length - slotsPerExam;
+
+      if (
+        slotsPerExam < 1 ||
+        timeSlots.length === 0 ||
+        maxStartIndex < 0 ||
+        slotIndex === undefined ||
+        slotIndex > maxStartIndex
+      ) {
+        return previous;
+      }
+
+      const rangeHasConflict = (() => {
+        for (let offset = 0; offset < slotsPerExam; offset += 1) {
+          const candidateIndex = slotIndex + offset;
+
+          if (candidateIndex >= timeSlots.length) {
+            return true;
+          }
+
+          const candidateSlotId = timeSlots[candidateIndex].id;
+          const candidateCourses = targetWeek[day][candidateSlotId] || [];
+
+          if (candidateCourses.length > 0) {
+            return true;
+          }
+
+          for (let back = 1; back < slotsPerExam; back += 1) {
+            const previousIndex = candidateIndex - back;
+
+            if (previousIndex < 0) {
+              break;
+            }
+
+            const previousSlotId = timeSlots[previousIndex].id;
+            const previousCourses = targetWeek[day][previousSlotId] || [];
+
+            if (previousCourses.length > 0) {
+              return true;
+            }
+          }
+        }
+
+        return false;
+      })();
+
+      if (rangeHasConflict) {
+        return previous;
       }
 
       const targetList = targetWeek[day][slotId];
@@ -1679,7 +1795,12 @@ function App() {
     return templateHeadersRef.current;
   };
 
-  const buildWorkbookForWeek = (week, templateHeaders, baseStartDate) => {
+  const buildWorkbookForWeek = (
+    week,
+    templateHeaders,
+    baseStartDate,
+    examDurationMinutesArg,
+  ) => {
     const weekAssignments = assignments[week];
     if (!weekAssignments) {
       return null;
@@ -1704,7 +1825,7 @@ function App() {
           return;
         }
 
-        const timeRange = formatSlotRange(slot.id);
+        const timeRange = formatSlotRange(slot.id, examDurationMinutesArg);
         const timeSortKey = parseSlotIdToMinutes(slot.id);
 
         const sortedCourseIds = [...courseIds].sort((a, b) => {
@@ -2307,6 +2428,20 @@ function App() {
               </label>
 
               <label>
+                <span>Exam duration</span>
+                <select
+                  value={examDurationMinutes}
+                  onChange={handleNumericSettingChange(
+                    "examDurationMinutes",
+                    { min: 60, max: 120 },
+                  )}
+                >
+                  <option value={60}>1 hour</option>
+                  <option value={120}>2 hours</option>
+                </select>
+              </label>
+
+              <label>
                 <span>Start hour</span>
                 <input
                   type="number"
@@ -2511,16 +2646,27 @@ function App() {
 
                           const slotCourses = dayAssignments[slot.id] || [];
 
-                          const previousSlotId =
-                            slotIndex > 0 ? timeSlots[slotIndex - 1].id : null;
+                          const trailingCourseSet = new Set();
 
-                          const trailingCourses = previousSlotId
-                            ? dayAssignments[previousSlotId] || []
-                            : [];
+                          for (let offset = 1; offset < slotsPerExam; offset += 1) {
+                            const previousIndex = slotIndex - offset;
 
-                          const trailingOnlyCourses = trailingCourses.filter(
-                            (courseId) => !slotCourses.includes(courseId),
-                          );
+                            if (previousIndex < 0) {
+                              break;
+                            }
+
+                            const previousSlotId = timeSlots[previousIndex].id;
+                            const previousCourses =
+                              dayAssignments[previousSlotId] || [];
+
+                            previousCourses.forEach((courseId) => {
+                              if (!slotCourses.includes(courseId)) {
+                                trailingCourseSet.add(courseId);
+                              }
+                            });
+                          }
+
+                          const trailingOnlyCourses = Array.from(trailingCourseSet);
 
                           const hasAnyCourses =
                             slotCourses.length > 0 ||
@@ -2548,17 +2694,13 @@ function App() {
                               : "slot-column--empty",
                           ];
 
-                          if (hoverTarget && hoverTarget.day === day) {
-                            const isHoverStart =
-                              hoverTarget.slotIndex === slotIndex;
-
-                            const isHoverContinuation =
-                              hoverTarget.slotIndex < timeSlots.length - 1 &&
-                              hoverTarget.slotIndex + 1 === slotIndex;
-
-                            if (isHoverStart || isHoverContinuation) {
-                              cellClassNames.push("is-hovered");
-                            }
+                          if (
+                            hoverTarget &&
+                            hoverTarget.day === day &&
+                            hoverTarget.slotIndex <= slotIndex &&
+                            slotIndex < hoverTarget.slotIndex + slotsPerExam
+                          ) {
+                            cellClassNames.push("is-hovered");
                           }
 
                           if (conflictMessages.length) {
@@ -2723,4 +2865,8 @@ function App() {
 }
 
 export default App;
+
+
+
+
 
