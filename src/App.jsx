@@ -24,6 +24,8 @@ const DEFAULT_EXAM_DURATION_MINUTES = 60;
 const XLSX_MIME_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
+const TIMETABLE_MANIFEST_VERSION = 1;
+
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -33,6 +35,10 @@ function downloadBlob(blob, filename) {
   anchor.click();
   document.body.removeChild(anchor);
   URL.revokeObjectURL(url);
+}
+
+function isPlainObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function alignDateToMonday(date) {
@@ -858,6 +864,7 @@ function App() {
   const [hoverTarget, setHoverTarget] = useState(null);
 
   const templateHeadersRef = useRef(null);
+  const loadInputRef = useRef(null);
 
   const [isExporting, setIsExporting] = useState(false);
 
@@ -2204,6 +2211,366 @@ function App() {
 
     return workbook;
   };
+  const handleSaveTimetable = () => {
+    if (!courses.length) {
+      return;
+    }
+
+    const now = new Date();
+    const snapshot = {
+      version: TIMETABLE_MANIFEST_VERSION,
+      savedAt: now.toISOString(),
+      settings: { ...settings },
+      startDate,
+      weeks: [...weeks],
+      assignments: cloneAssignments(assignments, timeSlots),
+      selectedWeek,
+      courses,
+      studentDirectory,
+      courseSearch,
+    };
+
+    const blob = new Blob([JSON.stringify(snapshot, null, 2)], {
+      type: "application/json",
+    });
+    const datePart = now.toISOString().slice(0, 10);
+    const filename = `Exam_Timetable_${datePart}.json`;
+
+    downloadBlob(blob, filename);
+  };
+
+  const handleTriggerLoadTimetable = () => {
+    loadInputRef.current?.click();
+  };
+
+  const handleLoadTimetable = async (event) => {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+
+      if (!isPlainObject(parsed)) {
+        throw new Error("The selected file is not a valid timetable.");
+      }
+
+      if (parsed.version !== TIMETABLE_MANIFEST_VERSION) {
+        throw new Error("This timetable file version is not supported.");
+      }
+
+      const rawSettings = isPlainObject(parsed.settings) ? parsed.settings : {};
+      const numericOrNull = (value) => {
+        const number = Number(value);
+        return Number.isFinite(number) ? number : null;
+      };
+
+      const slotIntervalCandidate = numericOrNull(
+        rawSettings.slotIntervalMinutes,
+      );
+      const allowedSlotIntervals = [30, 60];
+      const slotIntervalMinutesSafe = allowedSlotIntervals.includes(
+        slotIntervalCandidate,
+      )
+        ? slotIntervalCandidate
+        : DEFAULT_SLOT_INTERVAL_MINUTES;
+
+      const startHourCandidate = numericOrNull(rawSettings.startHour);
+      const startHourSafe =
+        startHourCandidate !== null &&
+        startHourCandidate >= 0 &&
+        startHourCandidate <= 22
+          ? Math.floor(startHourCandidate)
+          : DEFAULT_START_HOUR;
+
+      const endHourCandidate = numericOrNull(rawSettings.endHour);
+      let endHourSafe =
+        endHourCandidate !== null &&
+        endHourCandidate > startHourSafe &&
+        endHourCandidate <= 23
+          ? Math.floor(endHourCandidate)
+          : DEFAULT_END_HOUR;
+
+      if (endHourSafe <= startHourSafe) {
+        endHourSafe = Math.max(startHourSafe + 1, DEFAULT_END_HOUR);
+      }
+
+      const studentsPerRoomCandidate = numericOrNull(
+        rawSettings.studentsPerRoom,
+      );
+      const studentsPerRoomSafe =
+        studentsPerRoomCandidate && studentsPerRoomCandidate > 0
+          ? Math.max(1, Math.floor(studentsPerRoomCandidate))
+          : DEFAULT_STUDENTS_PER_ROOM;
+
+      const invigilatorCandidate = numericOrNull(
+        rawSettings.invigilatorPlaceholderCount,
+      );
+      const invigilatorPlaceholderCountSafe =
+        invigilatorCandidate && invigilatorCandidate > 0
+          ? Math.max(1, Math.floor(invigilatorCandidate))
+          : DEFAULT_INVIGILATOR_PLACEHOLDER_COUNT;
+
+      const examDurationCandidate = numericOrNull(
+        rawSettings.examDurationMinutes,
+      );
+      const allowedExamDurations = [60, 120];
+      let examDurationMinutesSafe = allowedExamDurations.includes(
+        examDurationCandidate,
+      )
+        ? examDurationCandidate
+        : DEFAULT_EXAM_DURATION_MINUTES;
+
+      if (examDurationMinutesSafe < slotIntervalMinutesSafe) {
+        examDurationMinutesSafe = slotIntervalMinutesSafe;
+      }
+
+      const sanitizedSettings = {
+        slotIntervalMinutes: slotIntervalMinutesSafe,
+        startHour: startHourSafe,
+        endHour: endHourSafe,
+        studentsPerRoom: studentsPerRoomSafe,
+        invigilatorPlaceholderCount: invigilatorPlaceholderCountSafe,
+        examDurationMinutes: examDurationMinutesSafe,
+      };
+
+      const rawWeeks = Array.isArray(parsed.weeks) ? parsed.weeks : [];
+      const normalisedWeeks = Array.from(
+        new Set(
+          rawWeeks
+            .map((value) => Number(value))
+            .filter(
+              (value) =>
+                Number.isInteger(value) && value >= 1 && value <= MAX_WEEKS,
+            ),
+        ),
+      ).sort((a, b) => a - b);
+
+      if (!normalisedWeeks.length) {
+        throw new Error("The timetable file does not contain any weeks.");
+      }
+
+      const rawAssignments = isPlainObject(parsed.assignments)
+        ? parsed.assignments
+        : {};
+      const normalisedAssignments = {};
+
+      normalisedWeeks.forEach((week) => {
+        const weekAssignments =
+          rawAssignments[String(week)] ??
+          rawAssignments[Number.isInteger(week) ? week : ""] ??
+          {};
+        normalisedAssignments[week] = {};
+
+        days.forEach((day) => {
+          const dayAssignments = isPlainObject(weekAssignments[day])
+            ? weekAssignments[day]
+            : {};
+          const slots = {};
+
+          Object.entries(dayAssignments).forEach(([slotId, value]) => {
+            if (!Array.isArray(value)) {
+              return;
+            }
+
+            const courseIds = value
+              .map((courseId) => (typeof courseId === "string" ? courseId : ""))
+              .filter(Boolean);
+
+            slots[slotId] = courseIds;
+          });
+
+          normalisedAssignments[week][day] = slots;
+        });
+      });
+
+      const reconstructedTimeSlots = buildTimeSlots(
+        sanitizedSettings.startHour,
+        sanitizedSettings.endHour,
+        sanitizedSettings.slotIntervalMinutes,
+      );
+
+      const reshapedAssignments = reshapeAssignments(
+        normalisedAssignments,
+        reconstructedTimeSlots,
+      );
+
+      const rawCourses = Array.isArray(parsed.courses) ? parsed.courses : [];
+      const normalisedCourses = rawCourses.reduce((list, course) => {
+        if (!isPlainObject(course)) {
+          return list;
+        }
+
+        const courseId = course.id ? String(course.id) : "";
+        if (!courseId) {
+          return list;
+        }
+
+        const courseCode = course.code ? String(course.code) : courseId;
+        const courseTitle = course.title ? String(course.title) : courseCode;
+
+        const sections = Array.isArray(course.sections)
+          ? course.sections
+              .map((section) => String(section))
+              .filter(Boolean)
+          : [];
+
+        const crns = Array.isArray(course.crns)
+          ? course.crns.map((crn) => String(crn)).filter(Boolean)
+          : [];
+
+        const instructors = Array.isArray(course.instructors)
+          ? course.instructors
+              .map((instructor) => String(instructor))
+              .filter(Boolean)
+          : [];
+
+        const students = Array.isArray(course.students)
+          ? course.students
+              .filter((student) => isPlainObject(student))
+              .map((student) => {
+                const studentId = student.id ? String(student.id) : "";
+                if (!studentId) {
+                  return null;
+                }
+
+                return {
+                  id: studentId,
+                  name: student.name ? String(student.name) : "",
+                  crn: student.crn ? String(student.crn) : "",
+                };
+              })
+              .filter(Boolean)
+          : [];
+
+        const studentCountValue = (() => {
+          const value = numericOrNull(course.studentCount);
+          if (value === null) {
+            return students.length;
+          }
+          return Math.max(0, Math.floor(value));
+        })();
+
+        const roomsNeededValue = (() => {
+          const value = numericOrNull(course.roomsNeeded);
+          if (value === null) {
+            return studentCountValue
+              ? Math.max(1, Math.ceil(studentCountValue / studentsPerRoomSafe))
+              : 0;
+          }
+          return Math.max(0, Math.floor(value));
+        })();
+
+        const crnDetails = Array.isArray(course.crnDetails)
+          ? course.crnDetails
+              .filter((detail) => isPlainObject(detail))
+              .map((detail) => {
+                const detailStudents = Array.isArray(detail.students)
+                  ? detail.students
+                      .filter((student) => isPlainObject(student))
+                      .map((student) => {
+                        const studentId = student.id ? String(student.id) : "";
+                        if (!studentId) {
+                          return null;
+                        }
+
+                        return {
+                          id: studentId,
+                          name: student.name ? String(student.name) : "",
+                          crn: student.crn ? String(student.crn) : "",
+                        };
+                      })
+                      .filter(Boolean)
+                  : [];
+
+                return {
+                  crn: detail.crn ? String(detail.crn) : "",
+                  instructor: detail.instructor
+                    ? String(detail.instructor)
+                    : "",
+                  students: detailStudents,
+                };
+              })
+          : [];
+
+        list.push({
+          id: courseId,
+          code: courseCode,
+          title: courseTitle,
+          sections,
+          crns,
+          students,
+          studentCount: studentCountValue,
+          roomsNeeded: roomsNeededValue,
+          instructors,
+          primaryInstructor: course.primaryInstructor
+            ? String(course.primaryInstructor)
+            : instructors[0] || "",
+          crnDetails,
+        });
+
+        return list;
+      }, []);
+
+      const rawDirectory = isPlainObject(parsed.studentDirectory)
+        ? parsed.studentDirectory
+        : {};
+      const normalisedStudentDirectory = {};
+
+      Object.entries(rawDirectory).forEach(([key, value]) => {
+        if (typeof key !== "string") {
+          return;
+        }
+
+        if (value === undefined || value === null) {
+          return;
+        }
+
+        normalisedStudentDirectory[key] = String(value);
+      });
+
+      const startDateValue = String(parsed.startDate || "").trim();
+      const startDateCandidate =
+        parseISODateString(startDateValue) !== null
+          ? startDateValue
+          : getDefaultStartDateISO();
+
+      const selectedWeekCandidate = Number(parsed.selectedWeek);
+      const selectedWeekSafe = normalisedWeeks.includes(selectedWeekCandidate)
+        ? selectedWeekCandidate
+        : normalisedWeeks[0];
+
+      const savedCourseSearch =
+        typeof parsed.courseSearch === "string" ? parsed.courseSearch : "";
+
+      setSettings(sanitizedSettings);
+      setStartDate(startDateCandidate);
+      setWeeks(normalisedWeeks);
+      setAssignments(() => reshapedAssignments);
+      setSelectedWeek(selectedWeekSafe);
+      setCourses(() => normalisedCourses);
+      setStudentDirectory(normalisedStudentDirectory);
+      setCourseSearch(savedCourseSearch);
+      setHoverTarget(null);
+      setUploadError("");
+    } catch (error) {
+      console.error("Failed to load saved timetable", error);
+
+      const errorMessage =
+        error instanceof Error && error.message
+          ? error.message
+          : "Failed to load the saved timetable. Please try again.";
+
+      setUploadError(errorMessage);
+    } finally {
+      if (event.target) {
+        event.target.value = "";
+      }
+    }
+  };
   const handleExportSchedule = async () => {
     setExportError("");
 
@@ -2373,6 +2740,14 @@ function App() {
         </div>
 
         <div className="app__actions">
+          <input
+            ref={loadInputRef}
+            type="file"
+            accept="application/json"
+            onChange={handleLoadTimetable}
+            hidden
+          />
+
           <div className="start-date-control">
             <label htmlFor="start-date-input">Select exam start date:</label>
             <input
@@ -2392,6 +2767,22 @@ function App() {
 
             <span>Select .xlsx or .csv</span>
           </label>
+
+          <button
+            type="button"
+            onClick={handleSaveTimetable}
+            disabled={!courses.length}
+          >
+            Save Timetable
+          </button>
+
+          <button
+            type="button"
+            onClick={handleTriggerLoadTimetable}
+            disabled={isExporting}
+          >
+            Load Timetable
+          </button>
 
           <button
             type="button"
