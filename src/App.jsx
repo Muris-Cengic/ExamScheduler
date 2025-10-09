@@ -593,7 +593,7 @@ function computeConflicts(
       timeSlots.forEach((slot, slotIndex) => {
         const startCourses = weekAssignments[day]?.[slot.id] ?? [];
 
-        if (!startCourses.length && slotIndex === 0) {
+        if (!startCourses.length && slotIndex < slotsPerExamSafe - 1) {
           return;
         }
 
@@ -1667,13 +1667,6 @@ function App() {
             return true;
           }
 
-          const candidateSlotId = timeSlots[candidateIndex].id;
-          const candidateCourses = targetWeek[day][candidateSlotId] || [];
-
-          if (candidateCourses.length > 0) {
-            return true;
-          }
-
           for (let back = 1; back < slotsPerExam; back += 1) {
             const previousIndex = candidateIndex - back;
 
@@ -1681,11 +1674,13 @@ function App() {
               break;
             }
 
-            const previousSlotId = timeSlots[previousIndex].id;
-            const previousCourses = targetWeek[day][previousSlotId] || [];
+            if (previousIndex < slotIndex) {
+              const previousSlotId = timeSlots[previousIndex].id;
+              const previousCourses = targetWeek[day][previousSlotId] || [];
 
-            if (previousCourses.length > 0) {
-              return true;
+              if (previousCourses.length > 0) {
+                return true;
+              }
             }
           }
         }
@@ -1806,6 +1801,11 @@ function App() {
       return null;
     }
 
+    const effectiveDuration = Math.max(
+      1,
+      Number(examDurationMinutesArg) || DEFAULT_EXAM_DURATION_MINUTES,
+    );
+
     const safeStartDate = alignDateToMonday(
       baseStartDate ?? getDefaultStartDate(),
     );
@@ -1825,7 +1825,7 @@ function App() {
           return;
         }
 
-        const timeRange = formatSlotRange(slot.id, examDurationMinutesArg);
+        const timeRange = formatSlotRange(slot.id, effectiveDuration);
         const timeSortKey = parseSlotIdToMinutes(slot.id);
 
         const sortedCourseIds = [...courseIds].sort((a, b) => {
@@ -2865,8 +2865,3 @@ function App() {
 }
 
 export default App;
-
-
-
-
-
