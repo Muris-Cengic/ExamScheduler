@@ -551,10 +551,23 @@ function computeSlotSummaries(assignments, courseLookup, week, timeSlots, studen
 }
 
 
-function computeConflicts(assignments, courseLookup, studentDirectory, timeSlots) {
+function computeConflicts(
+  assignments,
+  courseLookup,
+  studentDirectory,
+  timeSlots,
+  studentsPerRoom,
+  availableInvigilators,
+) {
   const byWeek = {};
 
   const overallMessages = new Set();
+
+  const studentsPerRoomSafe = Math.max(1, Number(studentsPerRoom) || 1);
+  const invigilatorCapacity = Math.max(
+    0,
+    Number(availableInvigilators) || 0,
+  );
 
   const weekKeys = Object.keys(assignments || {})
     .map((value) => Number(value))
@@ -579,6 +592,18 @@ function computeConflicts(assignments, courseLookup, studentDirectory, timeSlots
 
         const slotStudentCourses = new Map();
 
+        const capacityStudentIds = new Set();
+
+        const addCourseStudents = (courseId) => {
+          const course = courseLookup[courseId];
+
+          if (!course) return;
+
+          course.students.forEach((student) => {
+            capacityStudentIds.add(student.id);
+          });
+        };
+
         const addCourseToSlotMap = (courseId) => {
           const course = courseLookup[courseId];
 
@@ -597,6 +622,7 @@ function computeConflicts(assignments, courseLookup, studentDirectory, timeSlots
 
         startCourses.forEach((courseId) => {
           addCourseToSlotMap(courseId);
+          addCourseStudents(courseId);
 
           const course = courseLookup[courseId];
 
@@ -622,6 +648,33 @@ function computeConflicts(assignments, courseLookup, studentDirectory, timeSlots
 
         if (slotStudentCourses.size === 0) {
           return;
+        }
+
+        if (capacityStudentIds.size === 0 && slotIndex > 0) {
+          const previousSlotId = timeSlots[slotIndex - 1].id;
+          const previousCourses = weekAssignments[day]?.[previousSlotId] ?? [];
+
+          previousCourses.forEach((courseId) => addCourseStudents(courseId));
+        }
+
+        if (capacityStudentIds.size > 0) {
+          const roomsNeeded = Math.ceil(
+            capacityStudentIds.size / studentsPerRoomSafe,
+          );
+          const requiredInvigilators = roomsNeeded * 2;
+
+          if (requiredInvigilators > invigilatorCapacity) {
+            const message = `Week ${week}: ${day} ${slot.label} requires ${requiredInvigilators} invigilators but only ${invigilatorCapacity} available.`;
+
+            overallMessages.add(message);
+
+            if (!weekConflicts[day][slot.id].includes(message)) {
+              weekConflicts[day][slot.id] = [
+                ...weekConflicts[day][slot.id],
+                message,
+              ];
+            }
+          }
         }
 
         slotStudentCourses.forEach((courseSet, studentId) => {
@@ -845,8 +898,17 @@ function App() {
         courseLookup,
         studentDirectory,
         timeSlots,
+        studentsPerRoomCapacity,
+        invigilatorPlaceholderTotal,
       ),
-    [assignments, courseLookup, studentDirectory, timeSlots],
+    [
+      assignments,
+      courseLookup,
+      studentDirectory,
+      studentsPerRoomCapacity,
+      invigilatorPlaceholderTotal,
+      timeSlots,
+    ],
   );
 
   const occupiedSlotIds = useMemo(() => {
