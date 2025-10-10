@@ -1666,39 +1666,6 @@ function App() {
         return previous;
       }
 
-      const rangeHasConflict = (() => {
-        for (let offset = 0; offset < slotsPerExam; offset += 1) {
-          const candidateIndex = slotIndex + offset;
-
-          if (candidateIndex >= timeSlots.length) {
-            return true;
-          }
-
-          for (let back = 1; back < slotsPerExam; back += 1) {
-            const previousIndex = candidateIndex - back;
-
-            if (previousIndex < 0) {
-              break;
-            }
-
-            if (previousIndex < slotIndex) {
-              const previousSlotId = timeSlots[previousIndex].id;
-              const previousCourses = targetWeek[day][previousSlotId] || [];
-
-              if (previousCourses.length > 0) {
-                return true;
-              }
-            }
-          }
-        }
-
-        return false;
-      })();
-
-      if (rangeHasConflict) {
-        return previous;
-      }
-
       const targetList = targetWeek[day][slotId];
 
       if (!targetList.includes(courseId)) {
