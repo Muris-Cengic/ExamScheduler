@@ -112,6 +112,39 @@
   background-color: #f1f5f9;
 }
 
+.app__actions button.primary-action {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 10px 20px rgba(37, 99, 235, 0.25);
+  transform: translateY(0);
+  transition:
+    background 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+.app__actions button.primary-action:not(:disabled):hover {
+  background: linear-gradient(135deg, #1d4ed8, #1e40af);
+  color: #ffffff;
+  box-shadow: 0 14px 24px rgba(29, 78, 216, 0.28);
+  transform: translateY(-1px);
+}
+
+.app__actions button.primary-action:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 3px rgba(148, 163, 184, 0.3),
+    0 10px 20px rgba(37, 99, 235, 0.25);
+}
+
+.app__actions button.primary-action:disabled {
+  background: linear-gradient(135deg, #9aa5b1, #94a3b8);
+  color: #e2e8f0;
+  border-color: transparent;
+  box-shadow: none;
+}
+
 .alert {
   padding: 1rem 1.25rem;
   border-radius: 0.5rem;

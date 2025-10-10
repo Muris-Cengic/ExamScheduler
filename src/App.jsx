@@ -2787,6 +2787,7 @@ function App() {
 
           <button
             type="button"
+            className="primary-action"
             onClick={handleExportSchedule}
             disabled={isExporting || !summary.totalCourses}
           >
