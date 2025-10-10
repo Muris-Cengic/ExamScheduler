@@ -340,6 +340,12 @@
   margin: 0 0 1rem 0;
 }
 
+.week-tabs__controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
 .week-tabs__list {
   display: flex;
   gap: 0.5rem;
@@ -381,6 +387,13 @@
   border-color: #2563eb;
   background-color: #f8fafc;
   color: #2563eb;
+}
+
+.week-tabs__export {
+  padding: 0.5rem 1.4rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.28);
 }
 
 .week-tabs__add:hover {

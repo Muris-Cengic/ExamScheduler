@@ -2707,14 +2707,29 @@ function App() {
       </div>
 
       {position === "top" ? (
-        <button
-          type="button"
-          className="week-tabs__add"
-          onClick={addWeek}
-          disabled={weeks.length >= MAX_WEEKS}
-        >
-          + Add Week
-        </button>
+        <div className="week-tabs__controls">
+          <button
+            type="button"
+            className="week-tabs__add"
+            onClick={addWeek}
+            disabled={weeks.length >= MAX_WEEKS}
+          >
+            + Add Week
+          </button>
+        </div>
+      ) : null}
+
+      {position === "bottom" ? (
+        <div className="week-tabs__controls">
+          <button
+            type="button"
+            className="primary-action week-tabs__export"
+            onClick={handleExportSchedule}
+            disabled={isExporting || !summary.totalCourses}
+          >
+            {isExporting ? "Exporting..." : "Export Timetable"}
+          </button>
+        </div>
       ) : null}
     </div>
   );
@@ -2783,15 +2798,6 @@ function App() {
             disabled={isExporting}
           >
             Load Timetable
-          </button>
-
-          <button
-            type="button"
-            className="primary-action"
-            onClick={handleExportSchedule}
-            disabled={isExporting || !summary.totalCourses}
-          >
-            {isExporting ? "Exporting..." : "Export Timetable"}
           </button>
 
           <button
