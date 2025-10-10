@@ -2692,7 +2692,7 @@ function App() {
             type="button"
             className="primary-action week-tabs__export"
             onClick={handleExportSchedule}
-            disabled={isExporting || !summary.totalCourses}
+            disabled={isExporting || summary.totalCourses < 1}
           >
             {isExporting ? "Exporting..." : "Export Timetable"}
           </button>
