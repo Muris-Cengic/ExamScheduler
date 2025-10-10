@@ -2596,6 +2596,7 @@ function App() {
           week,
           templateHeaders,
           baseStartDate,
+          examDurationMinutesValue,
         );
 
         if (!workbook) {
