@@ -1032,6 +1032,8 @@ function computeSummary(assignments, courseLookup, timeSlots, studentsPerRoom) {
 
 function App() {
   const [schedulerPhase, setSchedulerPhase] = useState("setup");
+  const [wizardStep, setWizardStep] = useState("load");
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settings, setSettings] = useState({
     slotIntervalMinutes: DEFAULT_SLOT_INTERVAL_MINUTES,
     startHour: DEFAULT_START_HOUR,
@@ -1807,6 +1809,7 @@ function App() {
       setSelectedWeek(initialWeeks[0]);
       setHasAsdStep(false);
       setSchedulerPhase("setup");
+      setWizardStep("asd");
     } catch (error) {
       console.error(error);
 
@@ -2894,6 +2897,7 @@ function App() {
       setStudentDirectory(normalisedStudentDirectory);
       setCourseSearch(savedCourseSearch);
       setSchedulerPhase("main");
+      setWizardStep("main");
       setHoverTarget(null);
       setUploadError("");
     } catch (error) {
@@ -3147,6 +3151,7 @@ function App() {
       );
       setSelectedWeek(selectedWeekSafe);
       setSchedulerPhase("main");
+      setWizardStep("main");
       setHoverTarget(null);
       setUploadError("");
     } catch (error) {
@@ -3304,6 +3309,7 @@ function App() {
   const startAsdStep = () => {
     setHasAsdStep(true);
     setSchedulerPhase("asd");
+    setWizardStep("asd");
     setSelectedWeek((previous) => (weeks.includes(previous) ? previous : weeks[0] ?? 1));
   };
 
@@ -3311,11 +3317,23 @@ function App() {
     setHasAsdStep(false);
     setAsdAssignments(buildEmptyAssignments(weeks, timeSlots));
     setSchedulerPhase("main");
+    setWizardStep("main");
   };
 
   const continueToMainStep = () => {
     setHasAsdStep(true);
     setSchedulerPhase("main");
+    setWizardStep("main");
+  };
+
+  const goToExportStep = () => {
+    setSchedulerPhase("main");
+    setWizardStep("export");
+  };
+
+  const goToMainStep = () => {
+    setSchedulerPhase("main");
+    setWizardStep("main");
   };
 
   const handleTimetableScroll = (event) => {
@@ -3323,6 +3341,21 @@ function App() {
     const hasScrolled = target.scrollTop > 0 || target.scrollLeft > 0;
     setIsTimetableScrolled(hasScrolled);
   };
+
+  useEffect(() => {
+    if (!isSettingsOpen) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setIsSettingsOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isSettingsOpen]);
 
   const renderWeekTabs = (position) => (
     <div className={`week-tabs week-tabs--${position}`}>
@@ -3377,6 +3410,15 @@ function App() {
     return ids.size;
   }, [courses]);
 
+  const wizardSteps = [
+    { id: "load", label: "1. Load Data" },
+    { id: "asd", label: "2. ASD (Optional)" },
+    { id: "main", label: "3. Build Main Timetable" },
+    { id: "export", label: "4. Export" },
+  ];
+
+  const wizardStepIndex = wizardSteps.findIndex((step) => step.id === wizardStep);
+
   return (
     <div className="app">
       <header className="app__header">
@@ -3388,7 +3430,7 @@ function App() {
           </p>
         </div>
 
-        <div className="app__actions">
+        <div className="app__actions app__actions--wizard">
           <input
             ref={loadInputRef}
             type="file"
@@ -3404,101 +3446,183 @@ function App() {
             hidden
           />
 
-          <div className="start-date-control">
-            <label htmlFor="start-date-input">Select exam start date:</label>
-            <input
-              id="start-date-input"
-              type="date"
-              value={startDate}
-              onChange={handleStartDateChange}
-            />
-          </div>
+          <ol className="wizard-steps">
+            {wizardSteps.map((step, index) => {
+              const stateClass =
+                index < wizardStepIndex
+                  ? "is-done"
+                  : index === wizardStepIndex
+                    ? "is-current"
+                    : "is-pending";
 
-          <label className="file-input">
-            <input
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              onChange={handleFileUpload}
-            />
+              return (
+                <li key={step.id} className={stateClass}>
+                  {step.label}
+                </li>
+              );
+            })}
+          </ol>
 
-            <span>Select .xlsx or .csv</span>
-          </label>
+          <section className="wizard-panel">
+            {wizardStep === "load" ? (
+              <>
+                <div className="start-date-control">
+                  <label htmlFor="start-date-input">Exam start date</label>
+                  <input
+                    id="start-date-input"
+                    type="date"
+                    value={startDate}
+                    onChange={handleStartDateChange}
+                  />
+                </div>
 
-          {courses.length && schedulerPhase === "setup" ? (
-            <>
-              <button type="button" onClick={startAsdStep}>
-                Create ASD Timetable
-              </button>
-              <button type="button" onClick={handleTriggerLoadAsdTimetable}>
-                Load ASD Timetable
-              </button>
-              <button type="button" onClick={skipAsdStep}>
-                Skip ASD Step
-              </button>
-            </>
-          ) : null}
+                <label className="file-input">
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    onChange={handleFileUpload}
+                  />
+                  <span>Upload Enrollment File</span>
+                </label>
 
-          {courses.length && schedulerPhase === "asd" ? (
-            <>
-              <button type="button" onClick={handleSaveAsdTimetable}>
-                Save ASD Timetable
-              </button>
-              <button type="button" onClick={handleTriggerLoadAsdTimetable}>
-                Load ASD Timetable
-              </button>
-              <button type="button" onClick={resetSchedule} disabled={isExporting}>
-                Clear ASD Timetable
-              </button>
-              <button
-                type="button"
-                className="primary-action"
-                onClick={continueToMainStep}
-              >
-                Continue To Main Timetable
-              </button>
-            </>
-          ) : null}
+                <button type="button" onClick={handleTriggerLoadTimetable}>
+                  Load Full Timetable Snapshot
+                </button>
 
-          {courses.length && schedulerPhase === "main" ? (
-            <>
-              <button
-                type="button"
-                onClick={handleSaveTimetable}
-                disabled={!courses.length}
-              >
-                Save Timetable
-              </button>
+                {courses.length ? (
+                  <button
+                    type="button"
+                    className="primary-action"
+                    onClick={() => setWizardStep("asd")}
+                  >
+                    Continue
+                  </button>
+                ) : null}
+              </>
+            ) : null}
 
-              <button
-                type="button"
-                onClick={handleTriggerLoadTimetable}
-                disabled={isExporting}
-              >
-                Load Timetable
-              </button>
-
-              {hasAsdStep ? (
+            {wizardStep === "asd" ? (
+              <>
+                <button type="button" onClick={startAsdStep}>
+                  Create ASD Timetable
+                </button>
+                <button type="button" onClick={handleTriggerLoadAsdTimetable}>
+                  Load ASD Timetable
+                </button>
+                {schedulerPhase === "asd" ? (
+                  <>
+                    <button type="button" onClick={handleSaveAsdTimetable}>
+                      Save ASD Timetable
+                    </button>
+                    <button type="button" onClick={resetSchedule} disabled={isExporting}>
+                      Clear ASD Timetable
+                    </button>
+                  </>
+                ) : null}
+                <button type="button" onClick={skipAsdStep}>
+                  Skip ASD Step
+                </button>
                 <button
                   type="button"
-                  onClick={() => setSchedulerPhase("asd")}
-                  disabled={isExporting}
+                  className="primary-action"
+                  onClick={continueToMainStep}
+                  disabled={!courses.length}
                 >
-                  Edit ASD Timetable
+                  Continue To Main
                 </button>
-              ) : null}
+              </>
+            ) : null}
 
-              <button
-                type="button"
-                onClick={resetSchedule}
-                disabled={!courses.length || isExporting}
-              >
-                Clear Timetable
-              </button>
-            </>
+            {wizardStep === "main" ? (
+              <>
+                <button type="button" onClick={handleSaveTimetable} disabled={!courses.length}>
+                  Save Timetable
+                </button>
+                <button type="button" onClick={handleTriggerLoadTimetable} disabled={isExporting}>
+                  Load Timetable
+                </button>
+                {hasAsdStep ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSchedulerPhase("asd");
+                      setWizardStep("asd");
+                    }}
+                    disabled={isExporting}
+                  >
+                    Edit ASD Timetable
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={resetSchedule}
+                  disabled={!courses.length || isExporting}
+                >
+                  Clear Timetable
+                </button>
+                <button
+                  type="button"
+                  className="primary-action"
+                  onClick={goToExportStep}
+                  disabled={!courses.length}
+                >
+                  Proceed To Export
+                </button>
+              </>
+            ) : null}
+
+            {wizardStep === "export" ? (
+              <>
+                <button
+                  type="button"
+                  className="primary-action"
+                  onClick={handleExportSchedule}
+                  disabled={isExporting || mainSummary.totalCourses < 1}
+                >
+                  {isExporting ? "Exporting..." : "Export Timetable"}
+                </button>
+                <button type="button" onClick={goToMainStep}>
+                  Back To Scheduling
+                </button>
+              </>
+            ) : null}
+          </section>
+
+          {(wizardStep === "main" || wizardStep === "asd") ? (
+            <button type="button" onClick={() => setIsSettingsOpen(true)}>
+              Open Settings
+            </button>
           ) : null}
+        </div>
+      </header>
 
-          <details className="settings-panel">
-            <summary>Settings</summary>
+      {uploadError ? (
+        <div className="alert alert--error">{uploadError}</div>
+      ) : null}
+
+      {exportError ? (
+        <div className="alert alert--error">{exportError}</div>
+      ) : null}
+
+      {isSettingsOpen ? (
+        <div
+          className="settings-overlay"
+          role="presentation"
+          onClick={() => setIsSettingsOpen(false)}
+        >
+          <section
+            className="settings-overlay__panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Scheduler settings"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="settings-overlay__header">
+              <h2>Settings</h2>
+              <button type="button" onClick={() => setIsSettingsOpen(false)}>
+                Close
+              </button>
+            </div>
 
             <div className="settings-panel__grid">
               <label>
@@ -3599,16 +3723,18 @@ function App() {
                 />
               </label>
             </div>
-          </details>
+
+            <div className="settings-overlay__actions">
+              <button
+                type="button"
+                className="primary-action"
+                onClick={() => setIsSettingsOpen(false)}
+              >
+                Done
+              </button>
+            </div>
+          </section>
         </div>
-      </header>
-
-      {uploadError ? (
-        <div className="alert alert--error">{uploadError}</div>
-      ) : null}
-
-      {exportError ? (
-        <div className="alert alert--error">{exportError}</div>
       ) : null}
 
       {courses.length ? (
@@ -3628,7 +3754,7 @@ function App() {
         </section>
       )}
 
-      {courses.length && schedulerPhase === "setup" ? (
+      {courses.length && wizardStep === "asd" && schedulerPhase === "setup" ? (
         <section className="overview overview--setup">
           <div>
             <strong>ASD pre-step:</strong> Optional. Create/load ASD timetable
@@ -3637,7 +3763,7 @@ function App() {
         </section>
       ) : null}
 
-      {courses.length && schedulerPhase !== "setup" ? (
+      {courses.length && schedulerPhase !== "setup" && wizardStep !== "export" ? (
         <>
           {schedulerPhase === "asd" ? (
             <section className="overview overview--mode">
@@ -4084,6 +4210,18 @@ function App() {
             </main>
           </div>
         </>
+      ) : null}
+
+      {courses.length && wizardStep === "export" ? (
+        <section className="overview overview--mode">
+          <div>
+            <strong>Export step:</strong> Review settings, then export the
+            generated weekly files.
+          </div>
+          <div>
+            <strong>Schedulable courses:</strong> {mainSummary.totalCourses}
+          </div>
+        </section>
       ) : null}
     </div>
   );
