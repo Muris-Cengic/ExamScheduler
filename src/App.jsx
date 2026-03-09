@@ -146,8 +146,8 @@ function assignInvigilatorsToRows(rowMetaList, placeholders) {
     weight: placeholder.weight,
     primaryCount: 0,
     backupCount: 0,
-    totalCount: 0,
-    slotUsage: new Map(),
+    primarySlotUsage: new Map(),
+    backupSlotUsage: new Map(),
     roomUsage: new Map(),
     order: index,
   }));
@@ -161,8 +161,14 @@ function assignInvigilatorsToRows(rowMetaList, placeholders) {
     pool
       .filter((candidate) => !excluded.has(candidate.name))
       .sort((a, b) => {
-        const aSlotCount = a.slotUsage.get(slotKey) ?? 0;
-        const bSlotCount = b.slotUsage.get(slotKey) ?? 0;
+        const aSlotCount =
+          role === "backup"
+            ? a.backupSlotUsage.get(slotKey) ?? 0
+            : a.primarySlotUsage.get(slotKey) ?? 0;
+        const bSlotCount =
+          role === "backup"
+            ? b.backupSlotUsage.get(slotKey) ?? 0
+            : b.primarySlotUsage.get(slotKey) ?? 0;
         if (aSlotCount !== bSlotCount) {
           return aSlotCount - bSlotCount;
         }
@@ -179,12 +185,6 @@ function assignInvigilatorsToRows(rowMetaList, placeholders) {
           return aRoleRatio - bRoleRatio;
         }
 
-        const aOverallRatio = a.totalCount / a.weight;
-        const bOverallRatio = b.totalCount / b.weight;
-        if (aOverallRatio !== bOverallRatio) {
-          return aOverallRatio - bOverallRatio;
-        }
-
         const aRoom = a.roomUsage.get(roomName) ?? 0;
         const bRoom = b.roomUsage.get(roomName) ?? 0;
         if (aRoom !== bRoom) {
@@ -194,75 +194,130 @@ function assignInvigilatorsToRows(rowMetaList, placeholders) {
         return a.order - b.order;
       })[0] ?? null;
 
-  const assignments = [];
+  const assignments = rowMetaList.map((rowMeta) => ({
+    primaryOne: "",
+    primaryTwo: "",
+    backup: "",
+    roomName: rowMeta?.roomName ?? "",
+  }));
 
-  for (let index = 0; index < rowMetaList.length; index += 1) {
-    const rowMeta = rowMetaList[index] ?? {};
-    const roomName = rowMeta.roomName ?? "";
-    const slotKey = rowMeta.slotKey ?? "";
-    const primaryExclusions = new Set();
+  const slotGroups = new Map();
+  rowMetaList.forEach((rowMeta, index) => {
+    const slotKey = rowMeta?.slotKey ?? "";
+    if (!slotGroups.has(slotKey)) {
+      slotGroups.set(slotKey, []);
+    }
+    slotGroups.get(slotKey).push(index);
+  });
 
-    const primaryOne = selectCandidate({
-      role: "primary",
-      roomName,
-      slotKey,
-      excluded: primaryExclusions,
-    });
-    if (primaryOne) {
-      primaryOne.primaryCount += 1;
-      primaryOne.totalCount += 1;
-      primaryOne.slotUsage.set(
-        slotKey,
-        (primaryOne.slotUsage.get(slotKey) ?? 0) + 1,
-      );
-      primaryOne.roomUsage.set(
+  slotGroups.forEach((rowIndexes, slotKey) => {
+    const usedInSlot = new Set();
+
+    rowIndexes.forEach((rowIndex) => {
+      const rowMeta = rowMetaList[rowIndex] ?? {};
+      const roomName = rowMeta.roomName ?? "";
+
+      const primary = selectCandidate({
+        role: "primary",
         roomName,
-        (primaryOne.roomUsage.get(roomName) ?? 0) + 1,
+        slotKey,
+        excluded: usedInSlot,
+      });
+
+      if (!primary) {
+        return;
+      }
+
+      primary.primaryCount += 1;
+      primary.primarySlotUsage.set(
+        slotKey,
+        (primary.primarySlotUsage.get(slotKey) ?? 0) + 1,
       );
-      primaryExclusions.add(primaryOne.name);
+      primary.roomUsage.set(roomName, (primary.roomUsage.get(roomName) ?? 0) + 1);
+      usedInSlot.add(primary.name);
+
+      assignments[rowIndex].primaryOne = primary.name;
+    });
+
+    rowIndexes.forEach((rowIndex) => {
+      const rowMeta = rowMetaList[rowIndex] ?? {};
+      const roomName = rowMeta.roomName ?? "";
+      const primaryNeeded = Math.max(1, Number(rowMeta.primaryNeeded) || 1);
+
+      if (primaryNeeded < 2 || !assignments[rowIndex].primaryOne) {
+        return;
+      }
+
+      const excluded = new Set(usedInSlot);
+
+      const secondPrimary = selectCandidate({
+        role: "primary",
+        roomName,
+        slotKey,
+        excluded,
+      });
+
+      if (!secondPrimary) {
+        return;
+      }
+
+      secondPrimary.primaryCount += 1;
+      secondPrimary.primarySlotUsage.set(
+        slotKey,
+        (secondPrimary.primarySlotUsage.get(slotKey) ?? 0) + 1,
+      );
+      secondPrimary.roomUsage.set(
+        roomName,
+        (secondPrimary.roomUsage.get(roomName) ?? 0) + 1,
+      );
+      usedInSlot.add(secondPrimary.name);
+
+      assignments[rowIndex].primaryTwo = secondPrimary.name;
+    });
+
+    const backupEligibleRows = rowIndexes.filter(
+      (rowIndex) => Boolean(assignments[rowIndex].primaryOne),
+    );
+    const sessionCountForSlot = backupEligibleRows.length;
+    if (sessionCountForSlot === 0) {
+      return;
     }
 
-    const primaryTwo = selectCandidate({
-      role: "primary",
-      roomName,
-      slotKey,
-      excluded: primaryExclusions,
-    });
-    if (primaryTwo) {
-      primaryTwo.primaryCount += 1;
-      primaryTwo.totalCount += 1;
-      primaryTwo.slotUsage.set(
-        slotKey,
-        (primaryTwo.slotUsage.get(slotKey) ?? 0) + 1,
-      );
-      primaryTwo.roomUsage.set(
-        roomName,
-        (primaryTwo.roomUsage.get(roomName) ?? 0) + 1,
-      );
-      primaryExclusions.add(primaryTwo.name);
-    }
+    const maxBackupsForSlot = Math.max(1, Math.floor(sessionCountForSlot * 0.4));
+    const backupTargetForSlot = Math.min(sessionCountForSlot, maxBackupsForSlot);
+    const targetBackupRows = backupEligibleRows.slice(0, backupTargetForSlot);
 
-    const backupExclusions = new Set(primaryExclusions);
-    const backup = selectCandidate({
-      role: "backup",
-      roomName,
-      slotKey,
-      excluded: backupExclusions,
-    });
-    if (backup) {
+    targetBackupRows.forEach((rowIndex) => {
+      const rowMeta = rowMetaList[rowIndex] ?? {};
+      const roomName = rowMeta.roomName ?? "";
+      const primaryName = assignments[rowIndex].primaryOne;
+      const excluded = new Set(usedInSlot);
+      if (primaryName) {
+        excluded.add(primaryName);
+      }
+
+      const backup = selectCandidate({
+        role: "backup",
+        roomName,
+        slotKey,
+        excluded,
+      });
+
+      if (!backup) {
+        return;
+      }
+
       backup.backupCount += 1;
-      backup.totalCount += 1;
-      backup.slotUsage.set(slotKey, (backup.slotUsage.get(slotKey) ?? 0) + 1);
+      backup.backupSlotUsage.set(
+        slotKey,
+        (backup.backupSlotUsage.get(slotKey) ?? 0) + 1,
+      );
       backup.roomUsage.set(roomName, (backup.roomUsage.get(roomName) ?? 0) + 1);
-    }
+      usedInSlot.add(backup.name);
 
-    assignments.push({
-      primaryOne: primaryOne?.name ?? "",
-      primaryTwo: primaryTwo?.name ?? "",
-      backup: backup?.name ?? "",
-      roomName,
+      assignments[rowIndex].backup = backup.name;
     });
-  }
+  });
 
   return { assignments, pool };
 }
@@ -610,6 +665,29 @@ function normaliseSheetName(base) {
   return base.length <= 31 ? base : base.slice(0, 31);
 }
 
+function computePrimaryInvigilatorsNeeded(
+  uniqueStudentCount,
+  studentsPerRoom,
+  threshold = 15,
+) {
+  const count = Math.max(0, Number(uniqueStudentCount) || 0);
+  const roomCapacity = Math.max(1, Number(studentsPerRoom) || 1);
+
+  if (count === 0) {
+    return 0;
+  }
+
+  const fullRooms = Math.floor(count / roomCapacity);
+  const remainder = count % roomCapacity;
+
+  let invigilators = fullRooms * (roomCapacity > threshold ? 2 : 1);
+  if (remainder > 0) {
+    invigilators += remainder > threshold ? 2 : 1;
+  }
+
+  return invigilators;
+}
+
 function computeSlotSummaries(assignments, courseLookup, week, timeSlots, studentsPerRoom) {
   const weekAssignments = assignments[week] || {};
 
@@ -643,7 +721,10 @@ function computeSlotSummaries(assignments, courseLookup, week, timeSlots, studen
           ? Math.ceil(uniqueStudentCount / studentsPerRoomSafe)
           : 0;
 
-      const invigilatorCount = roomCount * 2;
+      const invigilatorCount = computePrimaryInvigilatorsNeeded(
+        uniqueStudentCount,
+        studentsPerRoomSafe,
+      );
 
       summary[day][slot.id] = {
         studentCount: uniqueStudentCount,
@@ -773,10 +854,10 @@ function computeConflicts(
         }
 
         if (capacityStudentIds.size > 0) {
-          const roomsNeeded = Math.ceil(
-            capacityStudentIds.size / studentsPerRoomSafe,
+          const requiredInvigilators = computePrimaryInvigilatorsNeeded(
+            capacityStudentIds.size,
+            studentsPerRoomSafe,
           );
-          const requiredInvigilators = roomsNeeded * 2;
 
           if (requiredInvigilators > invigilatorCapacity) {
             const message = `Week ${week}: ${day} ${slot.label} requires ${requiredInvigilators} invigilators but only ${invigilatorCapacity} available.`;
@@ -911,7 +992,31 @@ function computeSummary(assignments, courseLookup, timeSlots, studentsPerRoom) {
     });
   });
 
-  const invigilators = roomCount * 2;
+  let invigilators = 0;
+
+  Object.values(assignments || {}).forEach((weekAssignments) => {
+    days.forEach((day) => {
+      timeSlots.forEach((slot) => {
+        const courseIds = weekAssignments?.[day]?.[slot.id] ?? [];
+
+        if (!courseIds.length) {
+          return;
+        }
+
+        const slotStudentIds = new Set();
+        courseIds.forEach((courseId) => {
+          const course = courseLookup[courseId];
+          if (!course) return;
+          course.students.forEach((student) => slotStudentIds.add(student.id));
+        });
+
+        invigilators += computePrimaryInvigilatorsNeeded(
+          slotStudentIds.size,
+          studentsPerRoomSafe,
+        );
+      });
+    });
+  });
 
   return {
     totalCourses: scheduledCourseIds.size,
@@ -2159,6 +2264,7 @@ function App() {
           invigilatorRowMeta.push({
             roomName,
             slotKey: `${dayDate.toISOString().slice(0, 10)}|${slot.id}`,
+            primaryNeeded: room.students.length > 15 ? 2 : 1,
           });
 
           if (!dayRowsMap.has(day)) {
