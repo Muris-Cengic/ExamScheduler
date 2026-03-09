@@ -17,7 +17,8 @@ const DEFAULT_END_HOUR = 17;
 
 const DEFAULT_STUDENTS_PER_ROOM = 25;
 
-const DEFAULT_INVIGILATOR_PLACEHOLDER_COUNT = 15;
+const DEFAULT_SPECIALIST_INVIGILATOR_COUNT = 5;
+const DEFAULT_OTHER_INVIGILATOR_COUNT = 10;
 
 const DEFAULT_EXAM_DURATION_MINUTES = 60;
 
@@ -109,35 +110,79 @@ function formatDateForInvigilator(date) {
 }
 
 function generateInvigilatorPlaceholders(
-  count = DEFAULT_INVIGILATOR_PLACEHOLDER_COUNT,
+  specialistCount = DEFAULT_SPECIALIST_INVIGILATOR_COUNT,
+  otherCount = DEFAULT_OTHER_INVIGILATOR_COUNT,
 ) {
-  return Array.from({ length: count }, (_, index) => {
-    const number = String(index + 1).padStart(2, "0");
-    return `Invigilator ${number}`;
-  });
+  const specialists = Array.from(
+    { length: Math.max(0, Number(specialistCount) || 0) },
+    (_, index) => {
+      const number = String(index + 1).padStart(2, "0");
+      return {
+        name: `Specialist Invigilator ${number}`,
+        type: "Specialist",
+        weight: 1.3,
+      };
+    },
+  );
+  const others = Array.from(
+    { length: Math.max(0, Number(otherCount) || 0) },
+    (_, index) => {
+      const number = String(index + 1).padStart(2, "0");
+      return {
+        name: `Invigilator ${number}`,
+        type: "Other",
+        weight: 1,
+      };
+    },
+  );
+
+  return [...specialists, ...others];
 }
 
-function assignInvigilatorsToRows(totalRows, placeholders, roomNames = []) {
-  const primaryPool = placeholders.map((name, index) => ({
-    name,
+function assignInvigilatorsToRows(rowMetaList, placeholders) {
+  const pool = placeholders.map((placeholder, index) => ({
+    name: placeholder.name,
+    type: placeholder.type,
+    weight: placeholder.weight,
     primaryCount: 0,
+    backupCount: 0,
+    totalCount: 0,
+    slotUsage: new Map(),
     roomUsage: new Map(),
     order: index,
   }));
 
-  const backupPool = placeholders.map((name, index) => ({
-    name,
-    backupCount: 0,
-    primaryCount: 0,
-    order: index,
-  }));
-
-  const selectPrimary = (roomName, excluded = new Set()) =>
-    primaryPool
+  const selectCandidate = ({
+    role,
+    roomName,
+    slotKey,
+    excluded = new Set(),
+  }) =>
+    pool
       .filter((candidate) => !excluded.has(candidate.name))
       .sort((a, b) => {
-        if (a.primaryCount !== b.primaryCount) {
-          return a.primaryCount - b.primaryCount;
+        const aSlotCount = a.slotUsage.get(slotKey) ?? 0;
+        const bSlotCount = b.slotUsage.get(slotKey) ?? 0;
+        if (aSlotCount !== bSlotCount) {
+          return aSlotCount - bSlotCount;
+        }
+
+        const aRoleRatio =
+          role === "backup"
+            ? a.backupCount / a.weight
+            : a.primaryCount / a.weight;
+        const bRoleRatio =
+          role === "backup"
+            ? b.backupCount / b.weight
+            : b.primaryCount / b.weight;
+        if (aRoleRatio !== bRoleRatio) {
+          return aRoleRatio - bRoleRatio;
+        }
+
+        const aOverallRatio = a.totalCount / a.weight;
+        const bOverallRatio = b.totalCount / b.weight;
+        if (aOverallRatio !== bOverallRatio) {
+          return aOverallRatio - bOverallRatio;
         }
 
         const aRoom = a.roomUsage.get(roomName) ?? 0;
@@ -149,30 +194,27 @@ function assignInvigilatorsToRows(totalRows, placeholders, roomNames = []) {
         return a.order - b.order;
       })[0] ?? null;
 
-  const selectBackup = (excluded = new Set()) =>
-    backupPool
-      .filter((candidate) => !excluded.has(candidate.name))
-      .sort((a, b) => {
-        if (a.backupCount !== b.backupCount) {
-          return a.backupCount - b.backupCount;
-        }
-
-        if (a.primaryCount !== b.primaryCount) {
-          return a.primaryCount - b.primaryCount;
-        }
-
-        return a.order - b.order;
-      })[0] ?? null;
-
   const assignments = [];
 
-  for (let index = 0; index < totalRows; index += 1) {
-    const roomName = roomNames[index] ?? "";
+  for (let index = 0; index < rowMetaList.length; index += 1) {
+    const rowMeta = rowMetaList[index] ?? {};
+    const roomName = rowMeta.roomName ?? "";
+    const slotKey = rowMeta.slotKey ?? "";
     const primaryExclusions = new Set();
 
-    const primaryOne = selectPrimary(roomName, primaryExclusions);
+    const primaryOne = selectCandidate({
+      role: "primary",
+      roomName,
+      slotKey,
+      excluded: primaryExclusions,
+    });
     if (primaryOne) {
       primaryOne.primaryCount += 1;
+      primaryOne.totalCount += 1;
+      primaryOne.slotUsage.set(
+        slotKey,
+        (primaryOne.slotUsage.get(slotKey) ?? 0) + 1,
+      );
       primaryOne.roomUsage.set(
         roomName,
         (primaryOne.roomUsage.get(roomName) ?? 0) + 1,
@@ -180,9 +222,19 @@ function assignInvigilatorsToRows(totalRows, placeholders, roomNames = []) {
       primaryExclusions.add(primaryOne.name);
     }
 
-    const primaryTwo = selectPrimary(roomName, primaryExclusions);
+    const primaryTwo = selectCandidate({
+      role: "primary",
+      roomName,
+      slotKey,
+      excluded: primaryExclusions,
+    });
     if (primaryTwo) {
       primaryTwo.primaryCount += 1;
+      primaryTwo.totalCount += 1;
+      primaryTwo.slotUsage.set(
+        slotKey,
+        (primaryTwo.slotUsage.get(slotKey) ?? 0) + 1,
+      );
       primaryTwo.roomUsage.set(
         roomName,
         (primaryTwo.roomUsage.get(roomName) ?? 0) + 1,
@@ -191,9 +243,17 @@ function assignInvigilatorsToRows(totalRows, placeholders, roomNames = []) {
     }
 
     const backupExclusions = new Set(primaryExclusions);
-    const backup = selectBackup(backupExclusions);
+    const backup = selectCandidate({
+      role: "backup",
+      roomName,
+      slotKey,
+      excluded: backupExclusions,
+    });
     if (backup) {
       backup.backupCount += 1;
+      backup.totalCount += 1;
+      backup.slotUsage.set(slotKey, (backup.slotUsage.get(slotKey) ?? 0) + 1);
+      backup.roomUsage.set(roomName, (backup.roomUsage.get(roomName) ?? 0) + 1);
     }
 
     assignments.push({
@@ -204,7 +264,7 @@ function assignInvigilatorsToRows(totalRows, placeholders, roomNames = []) {
     });
   }
 
-  return { assignments };
+  return { assignments, pool };
 }
 function formatTimeLabel(totalMinutes) {
   const hour24 = Math.floor(totalMinutes / 60);
@@ -872,7 +932,8 @@ function App() {
     startHour: DEFAULT_START_HOUR,
     endHour: DEFAULT_END_HOUR,
     studentsPerRoom: DEFAULT_STUDENTS_PER_ROOM,
-    invigilatorPlaceholderCount: DEFAULT_INVIGILATOR_PLACEHOLDER_COUNT,
+    specialistInvigilatorCount: DEFAULT_SPECIALIST_INVIGILATOR_COUNT,
+    otherInvigilatorCount: DEFAULT_OTHER_INVIGILATOR_COUNT,
     examDurationMinutes: DEFAULT_EXAM_DURATION_MINUTES,
   });
 
@@ -881,7 +942,8 @@ function App() {
     startHour,
     endHour,
     studentsPerRoom,
-    invigilatorPlaceholderCount,
+    specialistInvigilatorCount,
+    otherInvigilatorCount,
     examDurationMinutes,
   } = settings;
 
@@ -930,10 +992,16 @@ function App() {
 
   const studentsPerRoomCapacity = Math.max(1, Number(studentsPerRoom) || 1);
 
-  const invigilatorPlaceholderTotal = Math.max(
-    1,
-    Number(invigilatorPlaceholderCount) || 1,
+  const specialistInvigilatorTotal = Math.max(
+    0,
+    Number(specialistInvigilatorCount) || 0,
   );
+  const otherInvigilatorTotal = Math.max(
+    0,
+    Number(otherInvigilatorCount) || 0,
+  );
+  const totalInvigilatorCapacity =
+    specialistInvigilatorTotal + otherInvigilatorTotal;
 
   const examDurationMinutesValue = useMemo(() => {
     const rawDuration =
@@ -1010,7 +1078,7 @@ function App() {
         timeSlots,
         slotsPerExam,
         studentsPerRoomCapacity,
-        invigilatorPlaceholderTotal,
+        totalInvigilatorCapacity,
       ),
     [
       composedAssignments,
@@ -1018,7 +1086,7 @@ function App() {
       studentDirectory,
       slotsPerExam,
       studentsPerRoomCapacity,
-      invigilatorPlaceholderTotal,
+      totalInvigilatorCapacity,
       timeSlots,
     ],
   );
@@ -1204,8 +1272,12 @@ function App() {
         next.studentsPerRoom = 1;
       }
 
-      if (key === "invigilatorPlaceholderCount" && value <= 0) {
-        next.invigilatorPlaceholderCount = 1;
+      if (key === "specialistInvigilatorCount" && value < 0) {
+        next.specialistInvigilatorCount = 0;
+      }
+
+      if (key === "otherInvigilatorCount" && value < 0) {
+        next.otherInvigilatorCount = 0;
       }
 
       if (key === "examDurationMinutes" && value <= 0) {
@@ -1896,6 +1968,7 @@ function App() {
     const weekStartDate = addDays(safeStartDate, (week - 1) * 7);
 
     const invigilatorRows = [];
+    const invigilatorRowMeta = [];
     const dayRowsMap = new Map();
 
     days.forEach((day, dayIndex) => {
@@ -2083,6 +2156,10 @@ function App() {
             "",
             "",
           ]);
+          invigilatorRowMeta.push({
+            roomName,
+            slotKey: `${dayDate.toISOString().slice(0, 10)}|${slot.id}`,
+          });
 
           if (!dayRowsMap.has(day)) {
             dayRowsMap.set(day, []);
@@ -2116,18 +2193,20 @@ function App() {
       return null;
     }
 
-    const placeholders = generateInvigilatorPlaceholders(invigilatorPlaceholderTotal);
+    const placeholders = generateInvigilatorPlaceholders(
+      specialistInvigilatorTotal,
+      otherInvigilatorTotal,
+    );
     const roomNamesForRows = invigilatorRows.map((row) => row[7] || "");
     const { assignments: invigilatorAssignments } = assignInvigilatorsToRows(
-      invigilatorRows.length,
+      invigilatorRowMeta,
       placeholders,
-      roomNamesForRows,
     );
 
     const poolSheetName = normaliseSheetName(`Week ${week} Invigilator Pool`);
     const placeholderRowMap = new Map();
-    placeholders.forEach((name, index) => {
-      placeholderRowMap.set(name, index + 2);
+    placeholders.forEach((placeholder, index) => {
+      placeholderRowMap.set(placeholder.name, index + 2);
     });
 
     const workbook = XLSX.utils.book_new();
@@ -2206,13 +2285,26 @@ function App() {
     const backupColumnLetter = XLSX.utils.encode_col(10);
 
     const placeholderSheetData = [
-      ["Invigilator", "Primary assignments", "Backup assignments"],
-      ...placeholders.map((name, index) => {
+      [
+        "Invigilator",
+        "Type",
+        "Primary assignments",
+        "Backup assignments",
+        "Total assignments",
+      ],
+      ...placeholders.map((placeholder, index) => {
         const rowNumber = index + 2;
         const primaryFormula = `=COUNTIF('${invSheetName}'!$${primaryColumnLetterOne}:$${primaryColumnLetterOne},A${rowNumber})+COUNTIF('${invSheetName}'!$${primaryColumnLetterTwo}:$${primaryColumnLetterTwo},A${rowNumber})`;
         const backupFormula = `=COUNTIF('${invSheetName}'!$${backupColumnLetter}:$${backupColumnLetter},A${rowNumber})`;
+        const totalFormula = `=C${rowNumber}+D${rowNumber}`;
 
-        return [name, { f: primaryFormula }, { f: backupFormula }];
+        return [
+          placeholder.name,
+          placeholder.type,
+          { f: primaryFormula },
+          { f: backupFormula },
+          { f: totalFormula },
+        ];
       }),
     ];
     const placeholderSheet = XLSX.utils.aoa_to_sheet(placeholderSheetData);
@@ -2392,13 +2484,18 @@ function App() {
           ? Math.max(1, Math.floor(studentsPerRoomCandidate))
           : DEFAULT_STUDENTS_PER_ROOM;
 
-      const invigilatorCandidate = numericOrNull(
-        rawSettings.invigilatorPlaceholderCount,
+      const specialistCandidate = numericOrNull(
+        rawSettings.specialistInvigilatorCount,
       );
-      const invigilatorPlaceholderCountSafe =
-        invigilatorCandidate && invigilatorCandidate > 0
-          ? Math.max(1, Math.floor(invigilatorCandidate))
-          : DEFAULT_INVIGILATOR_PLACEHOLDER_COUNT;
+      const otherCandidate = numericOrNull(rawSettings.otherInvigilatorCount);
+      const specialistInvigilatorCountSafe =
+        specialistCandidate !== null && specialistCandidate >= 0
+          ? Math.floor(specialistCandidate)
+          : DEFAULT_SPECIALIST_INVIGILATOR_COUNT;
+      const otherInvigilatorCountSafe =
+        otherCandidate !== null && otherCandidate >= 0
+          ? Math.floor(otherCandidate)
+          : DEFAULT_OTHER_INVIGILATOR_COUNT;
 
       const examDurationCandidate = numericOrNull(
         rawSettings.examDurationMinutes,
@@ -2419,7 +2516,8 @@ function App() {
         startHour: startHourSafe,
         endHour: endHourSafe,
         studentsPerRoom: studentsPerRoomSafe,
-        invigilatorPlaceholderCount: invigilatorPlaceholderCountSafe,
+        specialistInvigilatorCount: specialistInvigilatorCountSafe,
+        otherInvigilatorCount: otherInvigilatorCountSafe,
         examDurationMinutes: examDurationMinutesSafe,
       };
 
@@ -2800,13 +2898,18 @@ function App() {
           ? Math.max(1, Math.floor(studentsPerRoomCandidate))
           : DEFAULT_STUDENTS_PER_ROOM;
 
-      const invigilatorCandidate = numericOrNull(
-        rawSettings.invigilatorPlaceholderCount,
+      const specialistCandidate = numericOrNull(
+        rawSettings.specialistInvigilatorCount,
       );
-      const invigilatorPlaceholderCountSafe =
-        invigilatorCandidate && invigilatorCandidate > 0
-          ? Math.max(1, Math.floor(invigilatorCandidate))
-          : DEFAULT_INVIGILATOR_PLACEHOLDER_COUNT;
+      const otherCandidate = numericOrNull(rawSettings.otherInvigilatorCount);
+      const specialistInvigilatorCountSafe =
+        specialistCandidate !== null && specialistCandidate >= 0
+          ? Math.floor(specialistCandidate)
+          : DEFAULT_SPECIALIST_INVIGILATOR_COUNT;
+      const otherInvigilatorCountSafe =
+        otherCandidate !== null && otherCandidate >= 0
+          ? Math.floor(otherCandidate)
+          : DEFAULT_OTHER_INVIGILATOR_COUNT;
 
       const examDurationCandidate = numericOrNull(
         rawSettings.examDurationMinutes,
@@ -2827,7 +2930,8 @@ function App() {
         startHour: startHourSafe,
         endHour: endHourSafe,
         studentsPerRoom: studentsPerRoomSafe,
-        invigilatorPlaceholderCount: invigilatorPlaceholderCountSafe,
+        specialistInvigilatorCount: specialistInvigilatorCountSafe,
+        otherInvigilatorCount: otherInvigilatorCountSafe,
         examDurationMinutes: examDurationMinutesSafe,
       };
 
@@ -3355,15 +3459,29 @@ function App() {
               </label>
 
               <label>
-                <span>#Invigilators</span>
+                <span>#Specialist invigilators</span>
                 <input
                   type="number"
-                  min="1"
+                  min="0"
                   max="200"
-                  value={invigilatorPlaceholderCount}
+                  value={specialistInvigilatorCount}
                   onChange={handleNumericSettingChange(
-                    "invigilatorPlaceholderCount",
-                    { min: 1, max: 200 },
+                    "specialistInvigilatorCount",
+                    { min: 0, max: 200 },
+                  )}
+                />
+              </label>
+
+              <label>
+                <span>#Other invigilators</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="500"
+                  value={otherInvigilatorCount}
+                  onChange={handleNumericSettingChange(
+                    "otherInvigilatorCount",
+                    { min: 0, max: 500 },
                   )}
                 />
               </label>
