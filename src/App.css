@@ -555,11 +555,17 @@
   position: sticky;
   left: 0;
   z-index: 3;
+  width: 1%;
+  min-width: max-content;
+  white-space: nowrap;
 }
 
 .timetable thead th:first-child {
   left: 0;
   z-index: 5;
+  width: 1%;
+  min-width: max-content;
+  white-space: nowrap;
 }
 
 .timetable td {
