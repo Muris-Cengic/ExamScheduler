@@ -2073,6 +2073,7 @@ function App() {
     const weekStartDate = addDays(safeStartDate, (week - 1) * 7);
 
     const invigilatorRows = [];
+    const invigilatorSessionRowMap = new Map();
     const invigilatorRowMeta = [];
     const dayRowsMap = new Map();
 
@@ -2237,6 +2238,7 @@ function App() {
 
         rooms.forEach((room, roomIndex) => {
           const roomName = `Room ${roomIndex + 1}`;
+          const sessionKey = `${day}|${slot.id}|${roomName}`;
           const crnLabel = Array.from(room.crns).sort().join(", ");
           const courseCodeLabel = Array.from(room.courseCodes)
             .sort()
@@ -2261,6 +2263,9 @@ function App() {
             "",
             "",
           ]);
+          if (!invigilatorSessionRowMap.has(sessionKey)) {
+            invigilatorSessionRowMap.set(sessionKey, invigilatorRows.length + 1);
+          }
           invigilatorRowMeta.push({
             roomName,
             slotKey: `${dayDate.toISOString().slice(0, 10)}|${slot.id}`,
@@ -2276,6 +2281,7 @@ function App() {
             rowsForDay.push({
               sortKey: timeSortKey,
               roomName,
+              sessionKey,
               courseCode: studentEntry.courseCode || "",
               studentId: studentEntry.id,
               row: [
@@ -2449,31 +2455,32 @@ function App() {
 
           return a.studentId.localeCompare(b.studentId);
         })
-        .map((entry) =>
-          entry.row.map((value) =>
+        .map((entry) => ({
+          ...entry,
+          row: entry.row.map((value) =>
             value === undefined || value === null ? "" : value,
           ),
-        );
+        }));
 
-      const sheetData = [[...templateHeaders.studentHeader], ...sortedRows];
+      const sheetData = [
+        [...templateHeaders.studentHeader],
+        ...sortedRows.map((entry) => entry.row),
+      ];
       const sheet = XLSX.utils.aoa_to_sheet(sheetData);
 
-      sortedRows.forEach((row, rowIndex) => {
-        const roomName = row[5];
-        if (!roomName) {
-          return;
-        }
-
-        const roomRowNumber = roomRowMap.get(roomName);
-        if (!roomRowNumber) {
+      sortedRows.forEach((entry, rowIndex) => {
+        const invigilatorRowNumber = invigilatorSessionRowMap.get(
+          entry.sessionKey,
+        );
+        if (!invigilatorRowNumber) {
           return;
         }
 
         const cellAddress = XLSX.utils.encode_cell({ c: 5, r: rowIndex + 1 });
         sheet[cellAddress] = {
           t: "s",
-          v: roomName,
-          f: `='${roomPoolSheetName}'!A${roomRowNumber}`,
+          v: entry.roomName || "",
+          f: `='${invSheetName}'!H${invigilatorRowNumber}`,
         };
       });
 
