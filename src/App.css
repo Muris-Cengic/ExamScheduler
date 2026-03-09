@@ -169,6 +169,15 @@
   flex-wrap: wrap;
 }
 
+.overview--setup {
+  background-color: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.overview--mode {
+  background-color: #f8fafc;
+}
+
 .placeholder {
   color: #52606d;
   justify-content: center;
@@ -446,12 +455,13 @@
 }
 
 .timetable {
-  overflow-x: auto;
+  overflow: auto;
   border-radius: 0.75rem;
   border: 1px solid #e4e7eb;
   background-color: #ffffff;
   box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
   max-width: 100%;
+  max-height: calc(100vh - 11rem);
 }
 
 .timetable table {
@@ -473,12 +483,23 @@
   padding: 0.75rem;
   font-weight: 600;
   text-align: center;
+  position: sticky;
+  top: 0;
+  z-index: 4;
 }
 
 .timetable tbody th {
   background-color: #f8fafc;
   text-align: left;
   padding: 0.75rem;
+  position: sticky;
+  left: 0;
+  z-index: 3;
+}
+
+.timetable thead th:first-child {
+  left: 0;
+  z-index: 5;
 }
 
 .timetable td {
@@ -515,6 +536,19 @@
 .timetable td.has-conflict {
   background-color: #fef2f2;
   border-color: #fca5a5;
+}
+
+.header-label-short {
+  display: none;
+  white-space: nowrap;
+}
+
+.timetable--compact-headers .header-label-full {
+  display: none;
+}
+
+.timetable--compact-headers .header-label-short {
+  display: inline;
 }
 
 .slot-summary {
@@ -617,6 +651,15 @@
     135deg,
     rgba(59, 130, 246, 0.08),
     rgba(99, 102, 241, 0.08)
+  );
+}
+
+.scheduled-course--locked {
+  border-color: #cbd5e1;
+  background: linear-gradient(
+    135deg,
+    rgba(148, 163, 184, 0.2),
+    rgba(100, 116, 139, 0.16)
   );
 }
 

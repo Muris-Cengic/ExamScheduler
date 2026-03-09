@@ -25,6 +25,7 @@ const XLSX_MIME_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 const TIMETABLE_MANIFEST_VERSION = 1;
+const ASD_TIMETABLE_MANIFEST_VERSION = 1;
 
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -219,6 +220,20 @@ function formatTimeLabel(totalMinutes) {
   return `${hour12}:${paddedMinute} ${suffix}`;
 }
 
+function formatShortTimeFromSlotId(slotId) {
+  const totalMinutes = parseSlotIdToMinutes(slotId);
+  const hour24 = Math.floor(totalMinutes / 60);
+  const minute = totalMinutes % 60;
+  const suffix = hour24 >= 12 ? "P" : "A";
+  const hour12 = ((hour24 + 11) % 12) + 1;
+
+  if (minute === 0) {
+    return `${hour12}${suffix}`;
+  }
+
+  return `${hour12}:${String(minute).padStart(2, "0")}${suffix}`;
+}
+
 function buildTimeSlots(startHour, endHour, slotIntervalMinutes) {
   const slots = [];
 
@@ -388,6 +403,32 @@ function reshapeAssignments(assignments, timeSlots) {
   });
 
   return reshaped;
+}
+
+function mergeAssignments(primary, secondary, weekList, timeSlots) {
+  const merged = buildEmptyAssignments(weekList, timeSlots);
+
+  weekList.forEach((week) => {
+    days.forEach((day) => {
+      timeSlots.forEach((slot) => {
+        const first = primary?.[week]?.[day]?.[slot.id] ?? [];
+        const second = secondary?.[week]?.[day]?.[slot.id] ?? [];
+        merged[week][day][slot.id] = Array.from(new Set([...first, ...second]));
+      });
+    });
+  });
+
+  return merged;
+}
+
+function hasAnyAssignedCourse(assignments, weekList, timeSlots) {
+  return weekList.some((week) =>
+    days.some((day) =>
+      timeSlots.some(
+        (slot) => (assignments?.[week]?.[day]?.[slot.id] ?? []).length > 0,
+      ),
+    ),
+  );
 }
 
 
@@ -825,6 +866,7 @@ function computeSummary(assignments, courseLookup, timeSlots, studentsPerRoom) {
 
 
 function App() {
+  const [schedulerPhase, setSchedulerPhase] = useState("setup");
   const [settings, setSettings] = useState({
     slotIntervalMinutes: DEFAULT_SLOT_INTERVAL_MINUTES,
     startHour: DEFAULT_START_HOUR,
@@ -850,6 +892,10 @@ function App() {
   const [assignments, setAssignments] = useState(() =>
     buildEmptyAssignments([1], DEFAULT_TIME_SLOTS),
   );
+  const [asdAssignments, setAsdAssignments] = useState(() =>
+    buildEmptyAssignments([1], DEFAULT_TIME_SLOTS),
+  );
+  const [hasAsdStep, setHasAsdStep] = useState(false);
 
   const [selectedWeek, setSelectedWeek] = useState(1);
 
@@ -865,8 +911,10 @@ function App() {
 
   const templateHeadersRef = useRef(null);
   const loadInputRef = useRef(null);
+  const loadAsdInputRef = useRef(null);
 
   const [isExporting, setIsExporting] = useState(false);
+  const [isTimetableScrolled, setIsTimetableScrolled] = useState(false);
 
   const [exportError, setExportError] = useState("");
 
@@ -877,6 +925,7 @@ function App() {
 
   useEffect(() => {
     setAssignments((previous) => reshapeAssignments(previous, timeSlots));
+    setAsdAssignments((previous) => reshapeAssignments(previous, timeSlots));
   }, [timeSlots]);
 
   const studentsPerRoomCapacity = Math.max(1, Number(studentsPerRoom) || 1);
@@ -911,22 +960,51 @@ function App() {
     return lookup;
   }, [courses]);
 
+  const activeAssignments = useMemo(
+    () => (schedulerPhase === "asd" ? asdAssignments : assignments),
+    [asdAssignments, assignments, schedulerPhase],
+  );
+
+  const lockedAssignments = useMemo(() => {
+    if (schedulerPhase === "main" && hasAsdStep) {
+      return asdAssignments;
+    }
+
+    return buildEmptyAssignments(weeks, timeSlots);
+  }, [asdAssignments, hasAsdStep, schedulerPhase, weeks, timeSlots]);
+
+  const composedAssignments = useMemo(
+    () => mergeAssignments(activeAssignments, lockedAssignments, weeks, timeSlots),
+    [activeAssignments, lockedAssignments, weeks, timeSlots],
+  );
+
+  const calculationAssignments = useMemo(
+    () => activeAssignments,
+    [activeAssignments],
+  );
+
   const slotSummaries = useMemo(
     () =>
       computeSlotSummaries(
-        assignments,
+        calculationAssignments,
         courseLookup,
         selectedWeek,
         timeSlots,
         studentsPerRoomCapacity,
       ),
-    [assignments, courseLookup, selectedWeek, timeSlots, studentsPerRoomCapacity],
+    [
+      calculationAssignments,
+      courseLookup,
+      selectedWeek,
+      timeSlots,
+      studentsPerRoomCapacity,
+    ],
   );
 
   const conflicts = useMemo(
     () =>
       computeConflicts(
-        assignments,
+        composedAssignments,
         courseLookup,
         studentDirectory,
         timeSlots,
@@ -935,7 +1013,7 @@ function App() {
         invigilatorPlaceholderTotal,
       ),
     [
-      assignments,
+      composedAssignments,
       courseLookup,
       studentDirectory,
       slotsPerExam,
@@ -948,7 +1026,7 @@ function App() {
   const occupiedSlotIds = useMemo(() => {
     const result = new Set();
 
-    const weekAssignments = assignments[selectedWeek] || {};
+    const weekAssignments = calculationAssignments[selectedWeek] || {};
 
     timeSlots.forEach((slot, index) => {
       const hasCourseInColumn = days.some((day) => {
@@ -984,9 +1062,9 @@ function App() {
     });
 
     return result;
-  }, [assignments, selectedWeek, slotsPerExam, timeSlots]);
+  }, [calculationAssignments, selectedWeek, slotsPerExam, timeSlots]);
 
-  const summary = useMemo(
+  const mainSummary = useMemo(
     () =>
       computeSummary(
         assignments,
@@ -1000,7 +1078,7 @@ function App() {
   const assignedCourseIds = useMemo(() => {
     const ids = new Set();
 
-    Object.values(assignments || {}).forEach((weekAssignments) => {
+    Object.values(composedAssignments || {}).forEach((weekAssignments) => {
       days.forEach((day) => {
         timeSlots.forEach((slot) => {
           const courseIds = weekAssignments?.[day]?.[slot.id] ?? [];
@@ -1011,7 +1089,22 @@ function App() {
     });
 
     return ids;
-  }, [assignments, timeSlots]);
+  }, [composedAssignments, timeSlots]);
+
+  const asdAssignedCourseIds = useMemo(() => {
+    const ids = new Set();
+
+    Object.values(asdAssignments || {}).forEach((weekAssignments) => {
+      days.forEach((day) => {
+        timeSlots.forEach((slot) => {
+          const courseIds = weekAssignments?.[day]?.[slot.id] ?? [];
+          courseIds.forEach((courseId) => ids.add(courseId));
+        });
+      });
+    });
+
+    return ids;
+  }, [asdAssignments, timeSlots]);
 
   const orderedCourses = useMemo(() => {
     return [...courses].sort((a, b) => {
@@ -1028,8 +1121,15 @@ function App() {
   }, [courses]);
 
   const availableCourses = useMemo(
-    () => orderedCourses.filter((course) => !assignedCourseIds.has(course.id)),
-    [orderedCourses, assignedCourseIds],
+    () =>
+      orderedCourses.filter((course) => {
+        if (schedulerPhase === "main" && hasAsdStep && asdAssignedCourseIds.has(course.id)) {
+          return false;
+        }
+
+        return !assignedCourseIds.has(course.id);
+      }),
+    [orderedCourses, assignedCourseIds, asdAssignedCourseIds, schedulerPhase, hasAsdStep],
   );
 
   const filteredCourses = useMemo(() => {
@@ -1525,8 +1625,11 @@ function App() {
       setStudentDirectory(studentNames);
 
       setAssignments(buildEmptyAssignments(initialWeeks, timeSlots));
+      setAsdAssignments(buildEmptyAssignments(initialWeeks, timeSlots));
 
       setSelectedWeek(initialWeeks[0]);
+      setHasAsdStep(false);
+      setSchedulerPhase("setup");
     } catch (error) {
       console.error(error);
 
@@ -1629,7 +1732,10 @@ function App() {
 
     if (!courseId || !courseLookup[courseId]) return;
 
-    setAssignments((previous) => {
+    const setActiveAssignments =
+      schedulerPhase === "asd" ? setAsdAssignments : setAssignments;
+
+    setActiveAssignments((previous) => {
       const next = cloneAssignments(previous, timeSlots);
 
       Object.keys(next).forEach((weekKey) => {
@@ -1648,7 +1754,8 @@ function App() {
         });
       });
 
-      const targetWeek = next[selectedWeek] || createEmptyDaySlotMap(timeSlots);
+      const targetWeek =
+        next[selectedWeek] || createEmptyDaySlotMap(timeSlots);
 
       if (!next[selectedWeek]) {
         next[selectedWeek] = targetWeek;
@@ -1677,7 +1784,10 @@ function App() {
   };
 
   const handleRemoveCourse = (day, slotId, courseId) => {
-    setAssignments((previous) => {
+    const setActiveAssignments =
+      schedulerPhase === "asd" ? setAsdAssignments : setAssignments;
+
+    setActiveAssignments((previous) => {
       const next = cloneAssignments(previous, timeSlots);
 
       next[selectedWeek][day][slotId] = next[selectedWeek][day][slotId].filter(
@@ -2185,12 +2295,15 @@ function App() {
 
     const now = new Date();
     const snapshot = {
+      type: "main",
       version: TIMETABLE_MANIFEST_VERSION,
       savedAt: now.toISOString(),
       settings: { ...settings },
       startDate,
       weeks: [...weeks],
       assignments: cloneAssignments(assignments, timeSlots),
+      asdAssignments: cloneAssignments(asdAssignments, timeSlots),
+      hasAsdStep,
       selectedWeek,
       courses,
       studentDirectory,
@@ -2201,7 +2314,7 @@ function App() {
       type: "application/json",
     });
     const datePart = now.toISOString().slice(0, 10);
-    const filename = `Exam_Timetable_${datePart}.json`;
+    const filename = `Main_Exam_Timetable_${datePart}.json`;
 
     downloadBlob(blob, filename);
   };
@@ -2223,6 +2336,12 @@ function App() {
 
       if (!isPlainObject(parsed)) {
         throw new Error("The selected file is not a valid timetable.");
+      }
+
+      if (parsed.type && parsed.type !== "main") {
+        throw new Error(
+          "This file is not a main timetable snapshot. Use Load ASD Timetable for ASD files.",
+        );
       }
 
       if (parsed.version !== TIMETABLE_MANIFEST_VERSION) {
@@ -2362,6 +2481,45 @@ function App() {
 
       const reshapedAssignments = reshapeAssignments(
         normalisedAssignments,
+        reconstructedTimeSlots,
+      );
+
+      const rawAsdAssignments = isPlainObject(parsed.asdAssignments)
+        ? parsed.asdAssignments
+        : {};
+      const normalisedAsdAssignments = {};
+
+      normalisedWeeks.forEach((week) => {
+        const weekAssignments =
+          rawAsdAssignments[String(week)] ??
+          rawAsdAssignments[Number.isInteger(week) ? week : ""] ??
+          {};
+        normalisedAsdAssignments[week] = {};
+
+        days.forEach((day) => {
+          const dayAssignments = isPlainObject(weekAssignments[day])
+            ? weekAssignments[day]
+            : {};
+          const slots = {};
+
+          Object.entries(dayAssignments).forEach(([slotId, value]) => {
+            if (!Array.isArray(value)) {
+              return;
+            }
+
+            const courseIds = value
+              .map((courseId) => (typeof courseId === "string" ? courseId : ""))
+              .filter(Boolean);
+
+            slots[slotId] = courseIds;
+          });
+
+          normalisedAsdAssignments[week][day] = slots;
+        });
+      });
+
+      const reshapedAsdAssignments = reshapeAssignments(
+        normalisedAsdAssignments,
         reconstructedTimeSlots,
       );
 
@@ -2512,15 +2670,19 @@ function App() {
 
       const savedCourseSearch =
         typeof parsed.courseSearch === "string" ? parsed.courseSearch : "";
+      const hasAsdStepSafe = Boolean(parsed.hasAsdStep);
 
       setSettings(sanitizedSettings);
       setStartDate(startDateCandidate);
       setWeeks(normalisedWeeks);
       setAssignments(() => reshapedAssignments);
+      setAsdAssignments(() => reshapedAsdAssignments);
+      setHasAsdStep(hasAsdStepSafe);
       setSelectedWeek(selectedWeekSafe);
       setCourses(() => normalisedCourses);
       setStudentDirectory(normalisedStudentDirectory);
       setCourseSearch(savedCourseSearch);
+      setSchedulerPhase("main");
       setHoverTarget(null);
       setUploadError("");
     } catch (error) {
@@ -2538,10 +2700,258 @@ function App() {
       }
     }
   };
+
+  const handleSaveAsdTimetable = () => {
+    if (!courses.length) {
+      return;
+    }
+
+    const now = new Date();
+    const snapshot = {
+      type: "asd",
+      version: ASD_TIMETABLE_MANIFEST_VERSION,
+      savedAt: now.toISOString(),
+      settings: { ...settings },
+      startDate,
+      weeks: [...weeks],
+      assignments: cloneAssignments(asdAssignments, timeSlots),
+      selectedWeek,
+    };
+
+    const blob = new Blob([JSON.stringify(snapshot, null, 2)], {
+      type: "application/json",
+    });
+    const datePart = now.toISOString().slice(0, 10);
+    const filename = `ASD_Exam_Timetable_${datePart}.json`;
+
+    downloadBlob(blob, filename);
+  };
+
+  const handleTriggerLoadAsdTimetable = () => {
+    loadAsdInputRef.current?.click();
+  };
+
+  const handleLoadAsdTimetable = async (event) => {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+
+      if (!isPlainObject(parsed)) {
+        throw new Error("The selected file is not a valid ASD timetable.");
+      }
+
+      if (parsed.type && parsed.type !== "asd") {
+        throw new Error(
+          "This file is not an ASD timetable snapshot. Use Load Timetable for main files.",
+        );
+      }
+
+      if (parsed.version !== ASD_TIMETABLE_MANIFEST_VERSION) {
+        throw new Error("This ASD timetable file version is not supported.");
+      }
+
+      const rawSettings = isPlainObject(parsed.settings) ? parsed.settings : {};
+      const numericOrNull = (value) => {
+        const number = Number(value);
+        return Number.isFinite(number) ? number : null;
+      };
+
+      const slotIntervalCandidate = numericOrNull(
+        rawSettings.slotIntervalMinutes,
+      );
+      const allowedSlotIntervals = [30, 60];
+      const slotIntervalMinutesSafe = allowedSlotIntervals.includes(
+        slotIntervalCandidate,
+      )
+        ? slotIntervalCandidate
+        : DEFAULT_SLOT_INTERVAL_MINUTES;
+
+      const startHourCandidate = numericOrNull(rawSettings.startHour);
+      const startHourSafe =
+        startHourCandidate !== null &&
+        startHourCandidate >= 0 &&
+        startHourCandidate <= 22
+          ? Math.floor(startHourCandidate)
+          : DEFAULT_START_HOUR;
+
+      const endHourCandidate = numericOrNull(rawSettings.endHour);
+      let endHourSafe =
+        endHourCandidate !== null &&
+        endHourCandidate > startHourSafe &&
+        endHourCandidate <= 23
+          ? Math.floor(endHourCandidate)
+          : DEFAULT_END_HOUR;
+
+      if (endHourSafe <= startHourSafe) {
+        endHourSafe = Math.max(startHourSafe + 1, DEFAULT_END_HOUR);
+      }
+
+      const studentsPerRoomCandidate = numericOrNull(
+        rawSettings.studentsPerRoom,
+      );
+      const studentsPerRoomSafe =
+        studentsPerRoomCandidate && studentsPerRoomCandidate > 0
+          ? Math.max(1, Math.floor(studentsPerRoomCandidate))
+          : DEFAULT_STUDENTS_PER_ROOM;
+
+      const invigilatorCandidate = numericOrNull(
+        rawSettings.invigilatorPlaceholderCount,
+      );
+      const invigilatorPlaceholderCountSafe =
+        invigilatorCandidate && invigilatorCandidate > 0
+          ? Math.max(1, Math.floor(invigilatorCandidate))
+          : DEFAULT_INVIGILATOR_PLACEHOLDER_COUNT;
+
+      const examDurationCandidate = numericOrNull(
+        rawSettings.examDurationMinutes,
+      );
+      const allowedExamDurations = [60, 120];
+      let examDurationMinutesSafe = allowedExamDurations.includes(
+        examDurationCandidate,
+      )
+        ? examDurationCandidate
+        : DEFAULT_EXAM_DURATION_MINUTES;
+
+      if (examDurationMinutesSafe < slotIntervalMinutesSafe) {
+        examDurationMinutesSafe = slotIntervalMinutesSafe;
+      }
+
+      const sanitizedSettings = {
+        slotIntervalMinutes: slotIntervalMinutesSafe,
+        startHour: startHourSafe,
+        endHour: endHourSafe,
+        studentsPerRoom: studentsPerRoomSafe,
+        invigilatorPlaceholderCount: invigilatorPlaceholderCountSafe,
+        examDurationMinutes: examDurationMinutesSafe,
+      };
+
+      const rawWeeks = Array.isArray(parsed.weeks) ? parsed.weeks : [];
+      const normalisedWeeks = Array.from(
+        new Set(
+          rawWeeks
+            .map((value) => Number(value))
+            .filter(
+              (value) =>
+                Number.isInteger(value) && value >= 1 && value <= MAX_WEEKS,
+            ),
+        ),
+      ).sort((a, b) => a - b);
+
+      if (!normalisedWeeks.length) {
+        throw new Error("The ASD timetable file does not contain any weeks.");
+      }
+
+      const rawAssignments = isPlainObject(parsed.assignments)
+        ? parsed.assignments
+        : {};
+      const normalisedAssignments = {};
+
+      normalisedWeeks.forEach((week) => {
+        const weekAssignments =
+          rawAssignments[String(week)] ??
+          rawAssignments[Number.isInteger(week) ? week : ""] ??
+          {};
+        normalisedAssignments[week] = {};
+
+        days.forEach((day) => {
+          const dayAssignments = isPlainObject(weekAssignments[day])
+            ? weekAssignments[day]
+            : {};
+          const slots = {};
+
+          Object.entries(dayAssignments).forEach(([slotId, value]) => {
+            if (!Array.isArray(value)) {
+              return;
+            }
+
+            const courseIds = value
+              .map((courseId) => (typeof courseId === "string" ? courseId : ""))
+              .filter(Boolean);
+
+            slots[slotId] = courseIds;
+          });
+
+          normalisedAssignments[week][day] = slots;
+        });
+      });
+
+      const reconstructedTimeSlots = buildTimeSlots(
+        sanitizedSettings.startHour,
+        sanitizedSettings.endHour,
+        sanitizedSettings.slotIntervalMinutes,
+      );
+
+      const reshapedAssignments = reshapeAssignments(
+        normalisedAssignments,
+        reconstructedTimeSlots,
+      );
+
+      const startDateValue = String(parsed.startDate || "").trim();
+      const startDateCandidate =
+        parseISODateString(startDateValue) !== null
+          ? startDateValue
+          : getDefaultStartDateISO();
+
+      const selectedWeekCandidate = Number(parsed.selectedWeek);
+      const selectedWeekSafe = normalisedWeeks.includes(selectedWeekCandidate)
+        ? selectedWeekCandidate
+        : normalisedWeeks[0];
+
+      setSettings(sanitizedSettings);
+      setStartDate(startDateCandidate);
+      setWeeks(normalisedWeeks);
+      setAsdAssignments(() => reshapedAssignments);
+      setAssignments((previous) => {
+        const reshapedCurrent = reshapeAssignments(
+          previous,
+          reconstructedTimeSlots,
+        );
+        const nextAssignments = buildEmptyAssignments(
+          normalisedWeeks,
+          reconstructedTimeSlots,
+        );
+
+        normalisedWeeks.forEach((week) => {
+          if (reshapedCurrent[week]) {
+            nextAssignments[week] = reshapedCurrent[week];
+          }
+        });
+
+        return nextAssignments;
+      });
+      setHasAsdStep(
+        hasAnyAssignedCourse(reshapedAssignments, normalisedWeeks, reconstructedTimeSlots),
+      );
+      setSelectedWeek(selectedWeekSafe);
+      setSchedulerPhase("main");
+      setHoverTarget(null);
+      setUploadError("");
+    } catch (error) {
+      console.error("Failed to load ASD timetable", error);
+
+      const errorMessage =
+        error instanceof Error && error.message
+          ? error.message
+          : "Failed to load the ASD timetable. Please try again.";
+
+      setUploadError(errorMessage);
+    } finally {
+      if (event.target) {
+        event.target.value = "";
+      }
+    }
+  };
+
   const handleExportSchedule = async () => {
     setExportError("");
 
-    if (!summary.totalCourses) {
+    if (!mainSummary.totalCourses) {
       setExportError("No scheduled exams available to export.");
 
       return;
@@ -2645,6 +3055,16 @@ function App() {
           [nextWeekNumber]: createEmptyDaySlotMap(timeSlots),
         };
       });
+      setAsdAssignments((previousAssignments) => {
+        if (previousAssignments?.[nextWeekNumber]) {
+          return previousAssignments;
+        }
+
+        return {
+          ...previousAssignments,
+          [nextWeekNumber]: createEmptyDaySlotMap(timeSlots),
+        };
+      });
 
       setSelectedWeek(nextWeekNumber);
 
@@ -2653,9 +3073,38 @@ function App() {
   };
 
   const resetSchedule = () => {
-    setAssignments(buildEmptyAssignments(weeks, timeSlots));
+    const resetValue = buildEmptyAssignments(weeks, timeSlots);
+
+    if (schedulerPhase === "asd") {
+      setAsdAssignments(resetValue);
+    } else {
+      setAssignments(resetValue);
+    }
 
     setSelectedWeek(weeks[0] ?? 1);
+  };
+
+  const startAsdStep = () => {
+    setHasAsdStep(true);
+    setSchedulerPhase("asd");
+    setSelectedWeek((previous) => (weeks.includes(previous) ? previous : weeks[0] ?? 1));
+  };
+
+  const skipAsdStep = () => {
+    setHasAsdStep(false);
+    setAsdAssignments(buildEmptyAssignments(weeks, timeSlots));
+    setSchedulerPhase("main");
+  };
+
+  const continueToMainStep = () => {
+    setHasAsdStep(true);
+    setSchedulerPhase("main");
+  };
+
+  const handleTimetableScroll = (event) => {
+    const target = event.currentTarget;
+    const hasScrolled = target.scrollTop > 0 || target.scrollLeft > 0;
+    setIsTimetableScrolled(hasScrolled);
   };
 
   const renderWeekTabs = (position) => (
@@ -2686,13 +3135,13 @@ function App() {
         </div>
       ) : null}
 
-      {position === "bottom" ? (
+      {position === "bottom" && schedulerPhase === "main" ? (
         <div className="week-tabs__controls">
           <button
             type="button"
             className="primary-action week-tabs__export"
             onClick={handleExportSchedule}
-            disabled={isExporting || summary.totalCourses < 1}
+            disabled={isExporting || mainSummary.totalCourses < 1}
           >
             {isExporting ? "Exporting..." : "Export Timetable"}
           </button>
@@ -2730,6 +3179,13 @@ function App() {
             onChange={handleLoadTimetable}
             hidden
           />
+          <input
+            ref={loadAsdInputRef}
+            type="file"
+            accept="application/json"
+            onChange={handleLoadAsdTimetable}
+            hidden
+          />
 
           <div className="start-date-control">
             <label htmlFor="start-date-input">Select exam start date:</label>
@@ -2751,29 +3207,78 @@ function App() {
             <span>Select .xlsx or .csv</span>
           </label>
 
-          <button
-            type="button"
-            onClick={handleSaveTimetable}
-            disabled={!courses.length}
-          >
-            Save Timetable
-          </button>
+          {courses.length && schedulerPhase === "setup" ? (
+            <>
+              <button type="button" onClick={startAsdStep}>
+                Create ASD Timetable
+              </button>
+              <button type="button" onClick={handleTriggerLoadAsdTimetable}>
+                Load ASD Timetable
+              </button>
+              <button type="button" onClick={skipAsdStep}>
+                Skip ASD Step
+              </button>
+            </>
+          ) : null}
 
-          <button
-            type="button"
-            onClick={handleTriggerLoadTimetable}
-            disabled={isExporting}
-          >
-            Load Timetable
-          </button>
+          {courses.length && schedulerPhase === "asd" ? (
+            <>
+              <button type="button" onClick={handleSaveAsdTimetable}>
+                Save ASD Timetable
+              </button>
+              <button type="button" onClick={handleTriggerLoadAsdTimetable}>
+                Load ASD Timetable
+              </button>
+              <button type="button" onClick={resetSchedule} disabled={isExporting}>
+                Clear ASD Timetable
+              </button>
+              <button
+                type="button"
+                className="primary-action"
+                onClick={continueToMainStep}
+              >
+                Continue To Main Timetable
+              </button>
+            </>
+          ) : null}
 
-          <button
-            type="button"
-            onClick={resetSchedule}
-            disabled={!courses.length || isExporting}
-          >
-            Clear Timetable
-          </button>
+          {courses.length && schedulerPhase === "main" ? (
+            <>
+              <button
+                type="button"
+                onClick={handleSaveTimetable}
+                disabled={!courses.length}
+              >
+                Save Timetable
+              </button>
+
+              <button
+                type="button"
+                onClick={handleTriggerLoadTimetable}
+                disabled={isExporting}
+              >
+                Load Timetable
+              </button>
+
+              {hasAsdStep ? (
+                <button
+                  type="button"
+                  onClick={() => setSchedulerPhase("asd")}
+                  disabled={isExporting}
+                >
+                  Edit ASD Timetable
+                </button>
+              ) : null}
+
+              <button
+                type="button"
+                onClick={resetSchedule}
+                disabled={!courses.length || isExporting}
+              >
+                Clear Timetable
+              </button>
+            </>
+          ) : null}
 
           <details className="settings-panel">
             <summary>Settings</summary>
@@ -2892,8 +3397,34 @@ function App() {
         </section>
       )}
 
-      {courses.length ? (
+      {courses.length && schedulerPhase === "setup" ? (
+        <section className="overview overview--setup">
+          <div>
+            <strong>ASD pre-step:</strong> Optional. Create/load ASD timetable
+            first, or skip and continue directly to your timetable.
+          </div>
+        </section>
+      ) : null}
+
+      {courses.length && schedulerPhase !== "setup" ? (
         <>
+          {schedulerPhase === "asd" ? (
+            <section className="overview overview--mode">
+              <div>
+                <strong>Current mode:</strong> ASD timetable creation.
+              </div>
+            </section>
+          ) : null}
+
+          {schedulerPhase === "main" && hasAsdStep ? (
+            <section className="overview overview--mode">
+              <div>
+                <strong>ASD timetable loaded:</strong> ASD courses are locked
+                and displayed in gray.
+              </div>
+            </section>
+          ) : null}
+
           <section className="conflicts conflicts--full">
             <h2>Conflicts</h2>
 
@@ -2910,7 +3441,7 @@ function App() {
 
           <div className="layout">
             <aside className="course-list">
-              <h2>Course Pool</h2>
+              <h2>{schedulerPhase === "asd" ? "ASD Course Pool" : "Course Pool"}</h2>
 
               <p>Drag a course into a timetable slot to schedule its exam.</p>
 
@@ -2974,11 +3505,17 @@ function App() {
             <main className="scheduler">
               {renderWeekTabs("top")}
 
-              <section className="timetable">
+              <section
+                className={`timetable${isTimetableScrolled ? " timetable--compact-headers" : ""}`}
+                onScroll={handleTimetableScroll}
+              >
                 <table>
                   <thead>
                     <tr>
-                      <th>Day / Time</th>
+                      <th>
+                        <span className="header-label-full">Day / Time</span>
+                        <span className="header-label-short">Day/Time</span>
+                      </th>
 
                       {timeSlots.map((slot) => {
                         const slotIsOccupied = occupiedSlotIds.has(slot.id);
@@ -2992,7 +3529,10 @@ function App() {
 
                         return (
                           <th key={slot.id} className={headerClassName}>
-                            {slot.label}
+                            <span className="header-label-full">{slot.label}</span>
+                            <span className="header-label-short">
+                              {formatShortTimeFromSlotId(slot.id)}
+                            </span>
                           </th>
                         );
                       })}
@@ -3002,17 +3542,30 @@ function App() {
                   <tbody>
                     {days.map((day) => (
                       <tr key={day}>
-                        <th scope="row">{day}</th>
+                        <th scope="row" title={day}>
+                          <span className="header-label-full">{day}</span>
+                          <span className="header-label-short">
+                            {day.slice(0, 3)}
+                          </span>
+                        </th>
 
                         {timeSlots.map((slot, slotIndex) => {
-                          const weekAssignments =
-                            assignments[selectedWeek] || {};
+                          const activeWeekAssignments =
+                            activeAssignments[selectedWeek] || {};
+                          const lockedWeekAssignments =
+                            lockedAssignments[selectedWeek] || {};
+                          const activeDayAssignments =
+                            activeWeekAssignments[day] || {};
+                          const lockedDayAssignments =
+                            lockedWeekAssignments[day] || {};
 
-                          const dayAssignments = weekAssignments[day] || {};
+                          const activeSlotCourses =
+                            activeDayAssignments[slot.id] || [];
+                          const lockedSlotCourses =
+                            lockedDayAssignments[slot.id] || [];
 
-                          const slotCourses = dayAssignments[slot.id] || [];
-
-                          const trailingCourseSet = new Set();
+                          const activeTrailingSet = new Set();
+                          const lockedTrailingSet = new Set();
 
                           for (let offset = 1; offset < slotsPerExam; offset += 1) {
                             const previousIndex = slotIndex - offset;
@@ -3022,21 +3575,35 @@ function App() {
                             }
 
                             const previousSlotId = timeSlots[previousIndex].id;
-                            const previousCourses =
-                              dayAssignments[previousSlotId] || [];
+                            const previousActiveCourses =
+                              activeDayAssignments[previousSlotId] || [];
+                            const previousLockedCourses =
+                              lockedDayAssignments[previousSlotId] || [];
 
-                            previousCourses.forEach((courseId) => {
-                              if (!slotCourses.includes(courseId)) {
-                                trailingCourseSet.add(courseId);
+                            previousActiveCourses.forEach((courseId) => {
+                              if (!activeSlotCourses.includes(courseId)) {
+                                activeTrailingSet.add(courseId);
+                              }
+                            });
+                            previousLockedCourses.forEach((courseId) => {
+                              if (!lockedSlotCourses.includes(courseId)) {
+                                lockedTrailingSet.add(courseId);
                               }
                             });
                           }
 
-                          const trailingOnlyCourses = Array.from(trailingCourseSet);
+                          const trailingOnlyCourses = Array.from(activeTrailingSet);
+                          const lockedTrailingCourses =
+                            Array.from(lockedTrailingSet);
+                          const hasAnyActiveCourses =
+                            activeSlotCourses.length > 0 ||
+                            trailingOnlyCourses.length > 0;
+                          const hasAnyLockedCourses =
+                            lockedSlotCourses.length > 0 ||
+                            lockedTrailingCourses.length > 0;
 
                           const hasAnyCourses =
-                            slotCourses.length > 0 ||
-                            trailingOnlyCourses.length > 0;
+                            hasAnyActiveCourses || hasAnyLockedCourses;
 
                           const slotIsOccupied = occupiedSlotIds.has(slot.id);
 
@@ -3124,12 +3691,19 @@ function App() {
                                         {invigilatorCount}
                                       </span>
                                     </>
-                                  ) : hasAnyCourses ? (
+                                  ) : hasAnyActiveCourses ? (
                                     <span
                                       className="slot-summary__status"
                                       title="Exam continues from the previous slot"
                                     >
                                       Exam in progress
+                                    </span>
+                                  ) : hasAnyLockedCourses ? (
+                                    <span
+                                      className="slot-summary__status"
+                                      title="Locked ASD exam in this slot"
+                                    >
+                                      ASD exam scheduled
                                     </span>
                                   ) : (
                                     <span className="slot-summary__empty">
@@ -3141,7 +3715,34 @@ function App() {
                                 <div className="slot-courses">
                                   {hasAnyCourses ? (
                                     <>
-                                      {slotCourses.map((courseId) => {
+                                      {lockedSlotCourses.map((courseId) => {
+                                        const course = courseLookup[courseId];
+
+                                        if (!course) return null;
+
+                                        return (
+                                          <article
+                                            key={`${courseId}-locked-${slot.id}`}
+                                            className="scheduled-course scheduled-course--locked"
+                                          >
+                                            <header>
+                                              <span className="course-code">
+                                                {course.code}
+                                              </span>
+                                            </header>
+
+                                            <p>{course.title}</p>
+
+                                            <footer>
+                                              <span>
+                                                {course.studentCount} students
+                                              </span>
+                                            </footer>
+                                          </article>
+                                        );
+                                      })}
+
+                                      {activeSlotCourses.map((courseId) => {
                                         const course = courseLookup[courseId];
 
                                         if (!course) return null;
@@ -3191,6 +3792,33 @@ function App() {
                                           <article
                                             key={`${courseId}-ghost-${slot.id}`}
                                             className="scheduled-course scheduled-course--ghost"
+                                          >
+                                            <header>
+                                              <span className="course-code">
+                                                {course.code}
+                                              </span>
+                                            </header>
+
+                                            <p>{course.title}</p>
+
+                                            <footer>
+                                              <span>
+                                                {course.studentCount} students
+                                              </span>
+                                            </footer>
+                                          </article>
+                                        );
+                                      })}
+
+                                      {lockedTrailingCourses.map((courseId) => {
+                                        const course = courseLookup[courseId];
+
+                                        if (!course) return null;
+
+                                        return (
+                                          <article
+                                            key={`${courseId}-locked-ghost-${slot.id}`}
+                                            className="scheduled-course scheduled-course--ghost scheduled-course--locked"
                                           >
                                             <header>
                                               <span className="course-code">
