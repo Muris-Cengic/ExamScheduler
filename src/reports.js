@@ -37,7 +37,7 @@ export function buildResourceWorkbookForWeek({ week, sessions, catalog, plan, st
         { t: "s", v: assignedRoom.name, f: `'${roomSheetName}'!A${roomRows.get(assignedRoom.id)}` },
         staffCell(allocation.invigilatorIds[0]), staffCell(allocation.invigilatorIds[1]), staffCell(plan.backups[session.id]?.[index]),
         extraDuty(allocation.invigilatorIds[0]), extraDuty(allocation.invigilatorIds[1]), extraDuty(plan.backups[session.id]?.[index]),
-        room.distributionChoice === "standard" ? `Normal limit: ${room.maxStudents}` : `Approved up to 27: ${room.distributionChoice === "merge" ? "merge overflow" : "distribute evenly"}`,
+        room.distributionChoice === "standard" ? `Normal limit: ${room.maxStudents}` : `Approved up to 27: ${room.distributionChoice === "merge" ? "merge overflow" : "staffing-aware distribution"}`,
       ]);
       if (!daily.has(session.day)) daily.set(session.day, [templateHeaders.studentHeader]);
       room.students.forEach((student) => daily.get(session.day).push([

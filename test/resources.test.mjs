@@ -91,8 +91,8 @@ test("rooms are distinguished by campus/building and unspecified class times blo
   assert.equal(resourceBusyReason(resources.rooms[0], { week: 2, day: "Tuesday", start: 720, end: 780 }, []), "");
 });
 
-test("exam rosters are balanced under the room limit and staffing follows each room's actual count", () => {
-  for (const [count, roomSizes, invigilators] of [[15, [15], [1]], [16, [16], [2]], [25, [25], [2]], [26, [13, 13], [1, 1]], [31, [16, 15], [2, 1]], [55, [19, 18, 18], [2, 2, 2]], [60, [20, 20, 20], [2, 2, 2]]]) {
+test("exam rosters respect the room limit and save the last room's invigilator when possible", () => {
+  for (const [count, roomSizes, invigilators] of [[15, [15], [1]], [16, [16], [2]], [25, [25], [2]], [26, [13, 13], [1, 1]], [31, [16, 15], [2, 1]], [32, [17, 15], [2, 1]], [55, [20, 20, 15], [2, 2, 1]], [60, [23, 22, 15], [2, 2, 1]], [66, [22, 22, 22], [2, 2, 2]]]) {
     const sessions = sessionsFor(course("EXAM", count));
     assert.deepEqual(sessions[0].rooms.map((room) => room.students.length), roomSizes);
     assert.deepEqual(sessions[0].rooms.map((room) => room.requiredInvigilators), invigilators);
@@ -112,7 +112,7 @@ test("balanced room rosters keep courses separate and retain each enrolled stude
   const b = course("B", 26);
   a.students.push({ ...a.students[0] });
   const sessions = buildExamSessions({ 1: { Monday: { "12:00": ["A", "B"] } } }, { A: a, B: b }, 60);
-  for (const [c, sizes] of [[a, [19, 18, 18]], [b, [13, 13]]]) {
+  for (const [c, sizes] of [[a, [20, 20, 15]], [b, [13, 13]]]) {
     const rooms = sessions[0].rooms.filter((room) => room.courseId === c.id);
     assert.deepEqual(rooms.map((room) => room.students.length), sizes);
     const roster = rooms.flatMap((room) => room.students);
@@ -149,8 +149,8 @@ test("single-CRN lab exams keep their room and second instructor; extra rooms/st
   assert.match(outsideLab[0].issues[0], /move this single-CRN/);
   const larger = sessionsFor(course("LAB", 32, { labSessions: [lab] }), "08:00");
   const largerPlan = assignResources(larger, resources);
-  assert.deepEqual(larger[0].rooms.map((room) => room.students.length), [16, 16]);
-  assert.ok(larger[0].rooms.every((room) => largerPlan.allocations[room.id].invigilatorIds.filter(Boolean).length === 2));
+  assert.deepEqual(larger[0].rooms.map((room) => room.students.length), [17, 15]);
+  assert.deepEqual(larger[0].rooms.map((room) => largerPlan.allocations[room.id].invigilatorIds.filter(Boolean).length), [2, 1]);
   assert.equal(largerPlan.allocations[larger[0].rooms[0].id].invigilatorIds[0], "I2");
   assert.equal(validateResourcePlan(larger, resources, largerPlan).complete, true);
 });
@@ -426,19 +426,20 @@ test("reports use reviewed resources and per-room student references, without an
     studentHeader: ["CRN", "Code", "Title", "Student ID", "Student Name", "Class room", "Present/ Absent"],
   } });
   const inv = workbook.Sheets["Week 1 Invigilators"];
-  assert.deepEqual([inv.D2.v, inv.D3.v, inv.D4.v], [20, 20, 20]);
+  assert.deepEqual([inv.D2.v, inv.D3.v, inv.D4.v], [23, 22, 15]);
   assert.ok(inv.I2.v && inv.J2.v && inv.I3.v && inv.J3.v && inv.I4.v);
-  assert.ok(inv.J4.v);
+  assert.ok(!inv.J4?.v, "The 15-student last room has only one invigilator");
   assert.equal(XLSX.utils.sheet_to_json(inv, { header: 1 }).slice(1).filter((row) => row[10]).length, 1);
   const daily = workbook.Sheets["Week 1 Monday"];
   assert.equal(daily.F2.f, "'Week 1 Invigilators'!H2");
-  assert.equal(daily.F21.f, "'Week 1 Invigilators'!H2");
-  assert.equal(daily.F22.f, "'Week 1 Invigilators'!H3");
-  assert.equal(daily.F41.f, "'Week 1 Invigilators'!H3");
-  assert.equal(daily.F42.f, "'Week 1 Invigilators'!H4");
+  assert.equal(daily.F24.f, "'Week 1 Invigilators'!H2");
+  assert.equal(daily.F25.f, "'Week 1 Invigilators'!H3");
+  assert.equal(daily.F46.f, "'Week 1 Invigilators'!H3");
+  assert.equal(daily.F47.f, "'Week 1 Invigilators'!H4");
+  assert.equal(daily.F61.f, "'Week 1 Invigilators'!H4");
   assert.ok(!XLSX.utils.sheet_to_json(workbook.Sheets["Week 1 Invigilator Pool"], { header: 1 })[0].includes("Type"));
   const saved = XLSX.read(XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }), { type: "buffer" });
-  assert.equal(saved.Sheets["Week 1 Monday"].F22.f, "'Week 1 Invigilators'!H3");
+  assert.equal(saved.Sheets["Week 1 Monday"].F25.f, "'Week 1 Invigilators'!H3");
 });
 
 test("reports exclude teaching-hour duties from cached loads and recalculation formulas", () => {
@@ -550,7 +551,7 @@ test("capacity exceptions are recorded in reports and unapproved or excessive ro
   const inv = workbook.Sheets["Week 1 Invigilators"];
   assert.deepEqual([inv.D2.v, inv.D3.v], [26, 26]);
   assert.ok(inv.I2.v && inv.J2.v && inv.I3.v && inv.J3.v);
-  assert.match(inv.O2.v, /Approved up to 27.*distribute/);
+  assert.match(inv.O2.v, /Approved up to 27.*staffing-aware distribution/);
   assert.equal(workbook.Sheets["Week 1 Room Pool"].C2.v, 25);
   assert.equal(workbook.Sheets["Week 1 Room Pool"].D2.v, 27);
   assert.equal(workbook.Sheets["Week 1 Monday"].F28.f, "'Week 1 Invigilators'!H3");

@@ -284,12 +284,12 @@ test("staffing reserves two invigilators above 15 students plus slot backups; AS
   assert.equal(enough.placed.length, 1);
 });
 
-test("auto-scheduling staffing uses balanced room sizes rather than capacity-filled rooms", () => {
+test("auto-scheduling staffing uses the last-room saving while keeping slot backups separate", () => {
   const large = course("LARGE", Array.from({ length: 55 }, (_, i) => student(`S${i}`)));
-  const short = draft([large], { settings: { ...settings, invigilatorCount: 6 } });
-  assert.equal(short.placed.length, 0, "19/18/18 needs six room invigilators plus one backup");
+  const short = draft([large], { settings: { ...settings, invigilatorCount: 5 } });
+  assert.equal(short.placed.length, 0, "20/20/15 needs five room invigilators plus one backup");
   assert.match(short.unplaced[0].reason, /insufficient invigilators/);
-  assert.equal(draft([large], { settings: { ...settings, invigilatorCount: 7 } }).placed.length, 1);
+  assert.equal(draft([large], { settings: { ...settings, invigilatorCount: 6 } }).placed.length, 1);
   const small = course("SMALL", Array.from({ length: 26 }, (_, i) => student(`S${i}`)));
   assert.equal(draft([small], { settings: { ...settings, invigilatorCount: 3 } }).placed.length, 1, "13/13 needs only two room invigilators plus one backup");
 });

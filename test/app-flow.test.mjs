@@ -368,7 +368,8 @@ test("wizard imports, exam toggles, draft, saved-state round trip and report exc
     const courseIds = new Set(session.rooms.map((room) => room.courseId));
     courseIds.forEach((courseId) => {
       const sizes = session.rooms.filter((room) => room.courseId === courseId).map((room) => room.students.length);
-      assert.ok(Math.max(...sizes) - Math.min(...sizes) <= 1);
+      const total = sizes.reduce((sum, size) => sum + size, 0);
+      assert.deepEqual(sizes, examRooms.examRoomSizes(total, afterToggle.settings.studentsPerRoom));
     });
   });
   button(loadedTree, "Save Timetable").props.onClick();
@@ -460,7 +461,8 @@ test("room consolidation choices require a click, preserve other exams, survive 
   const panel = () => find(tree, (node) => node.type?.name === "ResourceAssignment").props;
   const examRooms = () => panel().sessions[0].rooms.filter((room) => room.courseId === exam.id);
   const decisionButton = (label) => find(tree, (node) => node.type === "button" && node.props["aria-label"] === `${label} for ${exam.code}`);
-  assert.deepEqual(examRooms().map((room) => room.students.length), [18, 17, 17]);
+  assert.deepEqual(examRooms().map((room) => room.students.length), [19, 18, 15]);
+  assert.deepEqual(examRooms().map((room) => room.requiredInvigilators), [2, 2, 1]);
   assert.equal(decisionButton("Keep the extra room (normal limit)").props["aria-pressed"], true);
   const otherRoom = panel().sessions[0].rooms.find((room) => room.courseId === other.id);
   const otherAllocation = panel().plan.allocations[otherRoom.id];
@@ -470,7 +472,7 @@ test("room consolidation choices require a click, preserve other exams, survive 
   assert.equal(panel().validation.complete, true);
   assert.deepEqual(panel().plan.allocations[otherRoom.id], otherAllocation);
   assert.match(text(tree), /Exception approved for this exam/);
-  decisionButton("Distribute overflow evenly").props.onClick();
+  decisionButton("Distribute across remaining rooms").props.onClick();
   tree = app.render();
   assert.deepEqual(examRooms().map((room) => room.students.length), [26, 26]);
   assert.ok(examRooms().every((room) => room.requiredInvigilators === 2));
@@ -483,7 +485,7 @@ test("room consolidation choices require a click, preserve other exams, survive 
   tree = reloaded.render();
   button(tree, "Proceed To Resources").props.onClick();
   tree = reloaded.render();
-  assert.equal(decisionButton("Distribute overflow evenly").props["aria-pressed"], true);
+  assert.equal(decisionButton("Distribute across remaining rooms").props["aria-pressed"], true);
   assert.equal(panel().validation.complete, true);
   assert.equal(panel().sessions[0].rooms.find((room) => room.courseId === other.id).maxStudents, 25);
   button(tree, "Proceed To Export").props.onClick();
@@ -498,7 +500,7 @@ test("room consolidation choices require a click, preserve other exams, survive 
   tree = reloaded.render();
   decisionButton("Keep the extra room (normal limit)").props.onClick();
   tree = reloaded.render();
-  assert.deepEqual(examRooms().map((room) => room.students.length), [18, 17, 17]);
+  assert.deepEqual(examRooms().map((room) => room.students.length), [19, 18, 15]);
   assert.equal(button(tree, "Proceed To Export").props.disabled, true, "The restored room must be assigned before export");
 });
 

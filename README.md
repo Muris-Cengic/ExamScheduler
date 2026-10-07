@@ -92,17 +92,24 @@ Review the proposed assignments and adjust them with the room/staff selectors.
   time conservatively block those days.
 - Each exam is split into separate rooms of at most **25 students** (a lower limit
   can be configured). The minimum required rooms receive balanced student counts,
-  differing by at most one: 55 students use 19/18/18, not 25/25/5. Course rosters
-  remain separate and every student appears exactly once. Every room needs one invigilator for 1-15 students,
-  or two for 16-25 students.
+  except the last room stays at **15 students** when the other rooms can absorb
+  the remainder within capacity and this saves an invigilator. Those other rooms
+  stay balanced: 55 students use **20/20/15**, needing five room invigilators,
+  instead of six for 19/18/18. If the last room must have more than 15 anyway,
+  the usual balanced split is retained: 66 students use 22/22/22. Already balanced
+  one-invigilator rooms, such as 13/13 for 26 students, are unchanged.
+  Course rosters remain separate and every student appears exactly once.
+  Every room needs one invigilator for 1-15 students, or two above 15.
 - When a few students would force one more room at the normal limit, the Resources
   step asks whether to keep it, merge the overflow into one existing room, or
-  distribute it evenly among that exam's remaining rooms. Only feasible choices
-  are offered: for 52 students, keep 18/17/17, merge to 27/25, or distribute 26/26.
+  distribute it among that exam's remaining rooms. Only feasible choices
+  are offered: for 52 students, keep 19/18/15, merge to 27/25, or distribute 26/26.
   The default remains 25; **27 is a per-exam exception requiring an explicit choice**,
   never an automatic increase. A lower configured capacity is respected and does
   not offer this exception. Different exams are not mixed, and no room can exceed
   27. Rooms with 26-27 students still need two invigilators.
+  The distribute choice uses the same last-room staffing rule within the approved
+  27-student limit; an explicit merge retains its proposed merged-room layout.
   Existing room/staff assignments are retained where possible; returning to the
   normal limit may require assigning the restored room. Decisions are saved in JSON
   and shown in the report; changing one exam does not reassign unrelated exams.

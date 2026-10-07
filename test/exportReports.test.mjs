@@ -147,7 +147,7 @@ test("overview room labels remove standalone PAD tokens and compact separators w
   assert.equal(JSON.stringify(options), before, "Display formatting cannot mutate saved resources or assignments");
 });
 
-test("overview primary requirements follow balanced rooms and approved consolidation, not extra load or backup duties", () => {
+test("overview primary requirements follow staffing-aware rooms and approved consolidation, not extra load or backup duties", () => {
   const catalog = {
     rooms: Array.from({ length: 3 }, (_, i) => ({ id: "R" + i, name: "Room " + i, enabled: true, busy: [] })),
     invigilators: Array.from({ length: 8 }, (_, i) => ({ id: "I" + i, name: "Staff " + i, enabled: true, busy: [] })),
@@ -155,7 +155,8 @@ test("overview primary requirements follow balanced rooms and approved consolida
   for (const [count, choice, expectedSizes, needed] of [
     [15, "standard", [15], 1], [16, "standard", [16], 2],
     [26, "standard", [13, 13], 2], [31, "standard", [16, 15], 3],
-    [55, "standard", [19, 18, 18], 6], [52, "standard", [18, 17, 17], 6],
+    [32, "standard", [17, 15], 3], [55, "standard", [20, 20, 15], 5],
+    [52, "standard", [19, 18, 15], 5], [66, "standard", [22, 22, 22], 6],
     [52, "distribute", [26, 26], 4],
   ]) {
     const sessions = buildExamSessions({ 1: { Monday: { "12:00": ["A"] } } }, { A: course("A", count) }, 60, 25, { A: choice });

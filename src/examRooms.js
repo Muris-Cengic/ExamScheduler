@@ -9,6 +9,15 @@ function balancedSizes(count, rooms) {
   return Array.from({ length: rooms }, (_, index) => size + (index < extra ? 1 : 0));
 }
 
+function staffingAwareSizes(count, rooms, capacity) {
+  const sizes = balancedSizes(count, rooms);
+  // Keep the last room at the one-invigilator threshold only when it saves a duty.
+  if (rooms > 1 && sizes[rooms - 1] > 15 && count - 15 <= (rooms - 1) * capacity) {
+    return [...balancedSizes(count - 15, rooms - 1), 15];
+  }
+  return sizes;
+}
+
 export function roomConsolidationOptions(studentCount, capacity = 25) {
   const count = studentTotal(studentCount);
   const rooms = Math.ceil(count / 25) - 1;
@@ -20,9 +29,9 @@ export function roomConsolidationOptions(studentCount, capacity = 25) {
     sizes[0] += overflow;
     options.push({ value: "merge", label: "Merge overflow into one room", sizes });
   }
-  const sizes = balancedSizes(count, rooms);
+  const sizes = staffingAwareSizes(count, rooms, 27);
   if (!options.some((option) => option.sizes.every((size, index) => size === sizes[index]))) {
-    options.push({ value: "distribute", label: "Distribute overflow evenly", sizes });
+    options.push({ value: "distribute", label: "Distribute across remaining rooms", sizes });
   }
   return options;
 }
@@ -32,7 +41,7 @@ export function examRoomLayout(studentCount, capacity = 25, choice = "standard")
   const approved = roomConsolidationOptions(count, capacity).find((option) => option.value === choice);
   if (approved) return { sizes: approved.sizes, maxStudents: 27, choice: approved.value };
   const limit = roomCapacity(capacity);
-  return { sizes: balancedSizes(count, Math.ceil(count / limit)), maxStudents: limit, choice: "standard" };
+  return { sizes: staffingAwareSizes(count, Math.ceil(count / limit), limit), maxStudents: limit, choice: "standard" };
 }
 
 export function examRoomSizes(studentCount, capacity = 25, choice = "standard") {

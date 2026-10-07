@@ -30,7 +30,7 @@ export default function ResourceAssignment({ sessions, catalog, plan, validation
   return (
     <section className="resource-panel">
       <div className="resource-panel__heading">
-        <div><h2>Assign Rooms &amp; Invigilators</h2><p>Normally, students are balanced across rooms of at most 25. You can explicitly approve up to 27 for an exam to avoid a small overflow room. One invigilator up to 15 students; two above 15. Backups cover the time slot, not every room.</p></div>
+        <div><h2>Assign Rooms &amp; Invigilators</h2><p>Students are balanced across rooms of at most 25, except the last room stays at 15 when that saves an invigilator without overfilling the others. You can explicitly approve up to 27 for an exam to avoid a small overflow room. One invigilator up to 15 students; two above 15. Backups cover the time slot, not every room.</p></div>
         <button type="button" className="primary-action" onClick={onAssign}>Auto-Assign Resources</button>
       </div>
       <p className="resource-panel__note">Only the first sheet of the CRN list supplies courses, rooms, staff and teaching availability. Its regular classes block resources for the full exam duration; all other sheets are ignored. A single-CRN exam replaces its lab, keeping that room and lab instructor (the second instructor when listed). A morning lab ending at 09:50 is treated as ending at 10:00 for the exam and teaching-time load. Extra rooms and staff cover overflow. Other classes on the first sheet remain blocked. Availability outside listed classes is assumed within timetable hours.</p>
