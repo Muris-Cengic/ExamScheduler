@@ -102,6 +102,120 @@ function harness(component = "App", props) {
   };
 }
 
+test("invigilator and backup selectors show available people first and update after assignments", () => {
+  const makeCourse = (id, count) => ({ id, code: id, title: id, crns: ["101"], labSessions: [],
+    students: Array.from({ length: count }, (_, i) => ({ id: id + i, name: "Student " + i, crn: "101" })) });
+  const sessions = resources.buildExamSessions({ 1: { Monday: { "09:00": ["A"], "09:30": ["B"] } } },
+    { A: makeCourse("A", 16), B: makeCourse("B", 10) }, 60);
+  const [current, other] = sessions;
+  const meeting = (code, start, end, extra = {}) => ({ code, crn: "101", days: ["Monday"], isLab: false, start, end, ...extra });
+  const person = (id, name, busy = [], enabled = true) => ({ id, name, busy, enabled });
+  const catalog = { rooms: [], invigilators: [
+    person("CLASS", "Ada Class", [meeting("CLASS-1000", 480, 590)]),
+    person("EXCLUDED", "Ben Excluded", [], false),
+    person("EXAM", "Cal Exam"),
+    person("BACKUP", "Dee Backup"),
+    person("UNKNOWN", "Eli Unknown", [meeting("UNKNOWN-1000", 0, 1440, { unknownTime: true })]),
+    person("OTHERBACKUP", "Finn Backup"),
+    person("FREEZ", "Zoe Available", [meeting("TUESDAY-1000", 540, 600, { days: ["Tuesday"] })]),
+    person("FREEA", "Alex Available", [meeting("EARLY-1000", 480, 540)]),
+    person("CURRENT", "Sam Selected"),
+    person("LATE", "Late Class", [meeting("LATE-1000", 585, 660)]),
+  ] };
+  const plan = resources.emptyResourcePlan(sessions, catalog);
+  plan.allocations[current.rooms[0].id] = { roomId: "", invigilatorIds: ["CURRENT", ""] };
+  plan.allocations[other.rooms[0].id] = { roomId: "", invigilatorIds: ["EXAM"] };
+  plan.backups[current.id] = ["BACKUP"];
+  plan.backups[other.id] = ["OTHERBACKUP"];
+  const props = { sessions, catalog, plan, validation: { complete: false, issues: [] },
+    onAssign() {}, onPoolChange() {}, onDistributionChange() {},
+    onAllocationChange(id, allocation) { props.plan = { ...props.plan, allocations: { ...props.plan.allocations, [id]: allocation } }; },
+    onBackupChange(id, ids) { props.plan = { ...props.plan, backups: { ...props.plan.backups, [id]: ids } }; },
+  };
+  const app = harness("ResourceAssignment", props);
+  let tree = app.render();
+  const select = (label) => find(tree, (node) => node.type === "select" && node.props["aria-label"] === label);
+  const groups = (control) => nodes(control).filter((node) => node.type === "optgroup");
+  const choices = (control) => nodes(control).filter((node) => node.type === "option" && node.props.value);
+  const availableIds = (control) => choices(control).filter((node) => !node.props.disabled).map((node) => node.props.value);
+  const option = (control, id) => find(control, (node) => node.type === "option" && node.props.value === id);
+  const mainLabel = "Invigilator 1 for " + current.rooms[0].id;
+  const extraLabel = "Invigilator 2 for " + current.rooms[0].id;
+  const backupLabel = "Backup 1 for " + current.id;
+  const main = select(mainLabel);
+  assert.deepEqual(availableIds(main), ["FREEA", "CURRENT", "FREEZ"], "Available choices are alphabetic, not interleaved with disabled staff");
+  assert.deepEqual(groups(main).map((group) => group.props.label), ["Available (3)", "Unavailable (7)"]);
+  assert.equal(groups(main)[1].props.disabled, true);
+  assert.ok(choices(groups(main)[1]).every((node) => node.props.disabled));
+  assert.equal(text(option(main, "CLASS")), "Ada Class - Class CLASS-1000 08:00-09:50");
+  assert.equal(text(option(main, "LATE")), "Late Class - Class LATE-1000 09:45-11:00", "Availability covers the whole exam, not just its start");
+  assert.equal(text(option(main, "EXCLUDED")), "Ben Excluded - Excluded from pool");
+  assert.equal(text(option(main, "EXAM")), "Cal Exam - Exam B 09:30-10:30");
+  assert.equal(text(option(main, "BACKUP")), "Dee Backup - Backup duty 09:00-10:00");
+  assert.equal(text(option(main, "OTHERBACKUP")), "Finn Backup - Backup duty 09:30-10:30");
+  assert.equal(text(option(main, "UNKNOWN")), "Eli Unknown - Class UNKNOWN-1000 (time unknown; day blocked)");
+  assert.equal(option(main, "CURRENT").props.disabled, undefined);
+  assert.equal(option(select(extraLabel), "CURRENT").props.disabled, true, "A person cannot cover two places in the same slot");
+  assert.deepEqual(availableIds(select(backupLabel)), ["FREEA", "BACKUP", "FREEZ"]);
+  assert.equal(option(select(backupLabel), "CURRENT").props.disabled, true);
+
+  select(extraLabel).props.onChange({ target: { value: "FREEA" } });
+  tree = app.render();
+  assert.equal(select(extraLabel).props.value, "FREEA");
+  assert.ok(availableIds(select(extraLabel)).includes("FREEA"));
+  assert.equal(option(select(mainLabel), "FREEA").props.disabled, true);
+  assert.equal(option(select(backupLabel), "FREEA").props.disabled, true);
+  assert.equal(select(mainLabel).props.value, "CURRENT", "Regrouping must not change current assignments");
+  select(backupLabel).props.onChange({ target: { value: "FREEZ" } });
+  tree = app.render();
+  assert.equal(select(backupLabel).props.value, "FREEZ");
+  assert.ok(availableIds(select(backupLabel)).includes("FREEZ"));
+  assert.equal(option(select(mainLabel), "FREEZ").props.disabled, true);
+  assert.ok(availableIds(select(mainLabel)).includes("BACKUP"), "The former backup becomes available immediately");
+
+  catalog.invigilators.forEach((staff) => { staff.enabled = false; });
+  tree = app.render();
+  assert.deepEqual(availableIds(select(mainLabel)), []);
+  assert.equal(groups(select(mainLabel)).length, 1);
+  assert.match(text(find(select(mainLabel), (node) => node.type === "option" && node.props.value === "")), /none available/);
+  assert.equal(select(mainLabel).props.value, "CURRENT", "An invalid selection stays visible until explicitly corrected");
+  assert.equal(option(select(mainLabel), "CURRENT").props.disabled, true);
+});
+
+test("grouped lab selectors retain the required instructor and teaching-hour labels without restricting extra staff", () => {
+  const labRoom = department.roomIdentity("PAD", "P-B-4F", "13");
+  const lab = { days: ["Monday"], crn: "101", startMinutes: 480, endMinutes: 590,
+    room: "13", building: "P-B-4F", campus: "PAD", labInstructorId: "I0" };
+  const exam = { id: "LAB", code: "LAB", title: "Lab Exam", crns: ["101"], labSessions: [lab],
+    students: Array.from({ length: 31 }, (_, i) => ({ id: "S" + i, name: "Student " + i, crn: "101" })) };
+  const sessions = resources.buildExamSessions({ 1: { Monday: { "09:00": ["LAB"] } } }, { LAB: exam }, 60);
+  const catalog = {
+    rooms: [{ id: labRoom, name: "PAD / P-B-4F / 13", enabled: true, busy: [] }, { id: "R1", name: "Overflow", enabled: true, busy: [] }],
+    invigilators: Array.from({ length: 6 }, (_, i) => ({ id: "I" + i, name: "Staff " + i, enabled: i !== 3, busy: [] })),
+  };
+  catalog.invigilators[0].busy = [{ code: "LAB", crn: "101", isLab: true, days: ["Monday"], start: 480, end: 590 }];
+  catalog.invigilators[2].busy = [{ code: "OTHER", crn: "201", isLab: false, days: ["Monday"], start: 570, end: 630 }];
+  const plan = resources.emptyResourcePlan(sessions, catalog);
+  plan.allocations[sessions[0].rooms[0].id] = { roomId: labRoom, invigilatorIds: ["I0", "I1"] };
+  plan.allocations[sessions[0].rooms[1].id] = { roomId: "R1", invigilatorIds: ["I5"] };
+  plan.backups[sessions[0].id] = ["I4"];
+  const app = harness("ResourceAssignment", { sessions, catalog, plan, validation: { complete: true, issues: [] },
+    onAssign() {}, onPoolChange() {}, onAllocationChange() {}, onBackupChange() {}, onDistributionChange() {} });
+  let tree = app.render();
+  const control = (index) => find(tree, (node) => node.type === "select" && node.props["aria-label"] === "Invigilator " + index + " for " + sessions[0].rooms[0].id);
+  const choices = (select) => nodes(select).filter((node) => node.type === "option" && node.props.value);
+  assert.deepEqual(choices(control(1)).filter((node) => !node.props.disabled).map((node) => node.props.value), ["I0"]);
+  assert.match(text(choices(control(1)).find((node) => node.props.value === "I0")), /teaching hours, no extra load/);
+  assert.ok(choices(control(1)).filter((node) => node.props.value !== "I0").every((node) => node.props.disabled && /Lab instructor required/.test(text(node))));
+  assert.ok(!text(control(2)).includes("Lab instructor required"), "Only the lab lead selector is pinned");
+  assert.deepEqual(choices(control(2)).filter((node) => !node.props.disabled).map((node) => node.props.value), ["I1"]);
+  catalog.invigilators[0].busy.push({ code: "CLASH", crn: "301", isLab: false, days: ["Monday"], start: 570, end: 630 });
+  tree = app.render();
+  assert.equal(choices(control(1)).filter((node) => !node.props.disabled).length, 0);
+  assert.match(text(choices(control(1)).find((node) => node.props.value === "I0")), /Class CLASH 09:30-10:30/);
+  assert.equal(control(1).props.value, "I0", "A lab instructor conflict cannot silently replace the required instructor");
+});
+
 const buffer = (path) => {
   const bytes = readFileSync(path);
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
@@ -205,7 +319,9 @@ test("wizard imports, exam toggles, draft, saved-state round trip and report exc
   assert.match(text(loadedTree), /During Teaching Hours/);
   const pinned = fullResources.sessions.flatMap((session) => session.rooms).find((room) => room.fixedInvigilatorId);
   const leadSelect = find(loadedTree, (node) => node.type === "select" && node.props["aria-label"] === `Invigilator 1 for ${pinned.id}`);
-  assert.ok(leadSelect.children.filter((node) => node.type === "option" && node.props.value && node.props.value !== pinned.fixedInvigilatorId).every((node) => node.props.disabled));
+  const alternativeLeads = nodes(leadSelect).filter((node) => node.type === "option" && node.props.value && node.props.value !== pinned.fixedInvigilatorId);
+  assert.ok(alternativeLeads.length > 0);
+  assert.ok(alternativeLeads.every((node) => node.props.disabled));
   assert.ok(!fullResources.catalog.invigilators.some((person) => person.busy.some((entry) => /CSTP-1011/.test(entry.code))), "Second-sheet CSTP commitments must not enter the resource pool");
   const isetSession = fullResources.sessions.find((session) => session.rooms.some((room) => room.code === "ISET-4001" && room.fixedInvigilatorId));
   assert.ok(isetSession);

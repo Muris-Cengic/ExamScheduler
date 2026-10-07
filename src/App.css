@@ -140,6 +140,10 @@
 .resource-panel select:focus-visible,
 .resource-panel button:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 .resource-invigilators { display: grid; gap: 0.5rem; }
+.resource-invigilators optgroup:disabled,
+.resource-invigilators option:disabled,
+.resource-backups optgroup:disabled,
+.resource-backups option:disabled { color: #6b7280; background: #f1f5f9; }
 .resource-issues { padding: 1rem; border: 1px solid #fbbf24; background: #fffbeb; border-radius: 0.5rem; margin-bottom: 1rem; }
 .resource-issues ul { max-height: 24rem; overflow: auto; list-style: none; padding: 0; }
 .resource-issue { margin: 0.75rem 0; padding: 1rem; border: 1px solid #fcd34d; border-left: 4px solid #d97706; border-radius: 0.4rem; background: #fff; overflow-wrap: anywhere; }

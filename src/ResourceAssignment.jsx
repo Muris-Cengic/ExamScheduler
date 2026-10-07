@@ -1,11 +1,31 @@
-import { backupTarget, clock, invigilatorWorkloads, isTeachingTimeDuty, resourceAssignmentAnchor, resourceChoiceReason, resourceSessionLabel } from "./resources.js";
+import { backupTarget, clock, invigilatorWorkloads, isTeachingTimeDuty, resourceAssignmentAnchor, resourceChoiceReason, resourceChoiceSummary, resourceSessionLabel } from "./resources.js";
+
+function InvigilatorOptions({ people, session, sessions, plan, owner, fixedId = "", placeholder }) {
+  const choices = people.map((person) => {
+    const reason = fixedId && person.id !== fixedId ? "Lab instructor required"
+      : resourceChoiceSummary(person, "invigilator", session, sessions, plan, owner);
+    return { person, reason, teaching: !reason && isTeachingTimeDuty(person, session, sessions) };
+  }).sort((a, b) => a.person.name.localeCompare(b.person.name));
+  const available = choices.filter((choice) => !choice.reason);
+  const unavailable = choices.filter((choice) => choice.reason);
+  return <>
+    <option value="">{placeholder}{!available.length ? " (none available)" : ""}</option>
+    {available.length ? <optgroup label={"Available (" + available.length + ")"}>
+      {available.map(({ person, teaching }) => <option key={person.id} value={person.id}>
+        {person.name}{teaching ? " - teaching hours, no extra load" : ""}
+      </option>)}
+    </optgroup> : null}
+    {unavailable.length ? <optgroup label={"Unavailable (" + unavailable.length + ")"} disabled>
+      {unavailable.map(({ person, reason }) => <option key={person.id} value={person.id} disabled>{person.name} - {reason}</option>)}
+    </optgroup> : null}
+  </>;
+}
 
 export default function ResourceAssignment({ sessions, catalog, plan, validation, onAssign, onPoolChange, onAllocationChange, onBackupChange, onDistributionChange }) {
   const workloads = invigilatorWorkloads(catalog, sessions, plan);
-  const options = (resources, kind, session, owner, fixedId = "") => resources.map((resource) => {
-    const reason = fixedId && resource.id !== fixedId ? "Original lab resource required" : resourceChoiceReason(resource, kind, session, sessions, plan, owner);
-    const teaching = kind === "invigilator" && isTeachingTimeDuty(resource, session, sessions);
-    return <option key={resource.id} value={resource.id} disabled={Boolean(reason)}>{resource.name}{reason ? ` - ${reason}` : teaching ? " - teaching hours, no extra load" : ""}</option>;
+  const roomOptions = (session, owner, fixedId = "") => catalog.rooms.map((resource) => {
+    const reason = fixedId && resource.id !== fixedId ? "Original lab resource required" : resourceChoiceReason(resource, "room", session, sessions, plan, owner);
+    return <option key={resource.id} value={resource.id} disabled={Boolean(reason)}>{resource.name}{reason ? " - " + reason : ""}</option>;
   });
   return (
     <section className="resource-panel">
@@ -73,12 +93,13 @@ export default function ResourceAssignment({ sessions, catalog, plan, validation
               return <tr key={room.id} id={resourceAssignmentAnchor(room.id)}>
                 <td><strong>{room.code}</strong><br />{room.title}{room.fixedRoomId ? <small className="resource-lab-label">Original lab room &amp; instructor</small> : null}</td>
                 <td>{room.students.length}{room.distributionChoice !== "standard" ? <small className="resource-capacity-label">Approved up to 27</small> : null}</td>
-                <td><select aria-label={`Room for ${room.id}`} value={allocation.roomId} onChange={(event) => onAllocationChange(room.id, { ...allocation, roomId: event.target.value })}><option value="">Select room</option>{options(catalog.rooms, "room", session, room.id, room.fixedRoomId)}</select></td>
+                <td><select aria-label={`Room for ${room.id}`} value={allocation.roomId} onChange={(event) => onAllocationChange(room.id, { ...allocation, roomId: event.target.value })}><option value="">Select room</option>{roomOptions(session, room.id, room.fixedRoomId)}</select></td>
                 <td><div className="resource-invigilators">{Array.from({ length: room.requiredInvigilators }, (_, index) => <select key={index} aria-label={`Invigilator ${index + 1} for ${room.id}`} value={allocation.invigilatorIds[index] || ""} onChange={(event) => {
                   const ids = Array.from({ length: room.requiredInvigilators }, (_, i) => allocation.invigilatorIds[i] || "");
                   ids[index] = event.target.value;
                   onAllocationChange(room.id, { ...allocation, invigilatorIds: ids });
-                }}><option value="">Select invigilator {index + 1}</option>{options(catalog.invigilators, "invigilator", session, `${room.id}/invigilator/${index}`, index === 0 ? room.fixedInvigilatorId : "")}</select>)}</div></td>
+                }}><InvigilatorOptions people={catalog.invigilators} session={session} sessions={sessions} plan={plan}
+                  owner={`${room.id}/invigilator/${index}`} fixedId={index === 0 ? room.fixedInvigilatorId : ""} placeholder={"Select invigilator " + (index + 1)} /></select>)}</div></td>
               </tr>;
             })}
           </tbody></table></div>
@@ -86,7 +107,8 @@ export default function ResourceAssignment({ sessions, catalog, plan, validation
             const ids = Array.from({ length: backupTarget(session.rooms.length) }, (_, i) => plan?.backups?.[session.id]?.[i] || "");
             ids[index] = event.target.value;
             onBackupChange(session.id, ids);
-          }}><option value="">{index === 0 ? "Select required backup" : "No additional backup"}</option>{options(catalog.invigilators, "invigilator", session, `${session.id}/backup/${index}`)}</select>)}</div>
+          }}><InvigilatorOptions people={catalog.invigilators} session={session} sessions={sessions} plan={plan}
+            owner={`${session.id}/backup/${index}`} placeholder={index === 0 ? "Select required backup" : "No additional backup"} /></select>)}</div>
         </section>)}
       </div>
     </section>

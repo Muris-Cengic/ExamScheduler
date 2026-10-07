@@ -80,6 +80,11 @@ Review the proposed assignments and adjust them with the room/staff selectors.
 - Rooms and named invigilators come from the CRN workbook's first sheet. Both
   primary and second instructors enter one pool; there are no invigilator types.
   Resource-pool checkboxes can exclude rooms or staff from exam duty.
+- Invigilator and backup selectors list available people first, alphabetically.
+  Unavailable people appear below in a disabled group with a short reason:
+  a class, another exam or backup duty, exclusion from the pool, or the required
+  lab-instructor restriction. The current selection remains available in its own
+  selector unless another conflict blocks it; nobody is silently reassigned.
 - Availability is checked against regular classes on the **first sheet only**.
   Commitments from other sheets do not block resources. Meetings repeat weekly.
   Outside listed classes, availability is assumed within timetable hours; the file

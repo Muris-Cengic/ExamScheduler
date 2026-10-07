@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as XLSX from "xlsx/xlsx.mjs";
 import { parseDepartmentWorkbook, roomIdentity } from "../src/department.js";
-import { assignResources, backupTarget, buildExamSessions, emptyResourcePlan, invigilatorWorkloads, isTeachingTimeDuty, parseResourceCatalog, readResourceCatalog, readResourcePlan, reconcileRoomDistribution, resourceBusyReason, resourceFingerprint, validateResourcePlan } from "../src/resources.js";
+import { assignResources, backupTarget, buildExamSessions, emptyResourcePlan, invigilatorWorkloads, isTeachingTimeDuty, parseResourceCatalog, readResourceCatalog, readResourcePlan, reconcileRoomDistribution, resourceBusyReason, resourceChoiceReason, resourceChoiceSummary, resourceFingerprint, validateResourcePlan } from "../src/resources.js";
 import { buildResourceWorkbookForWeek } from "../src/reports.js";
 
 const course = (id, count, options = {}) => ({
@@ -17,6 +17,36 @@ const sessionsFor = (c, time = "12:00", duration = 60) => buildExamSessions({ 1:
 const classTime = (code, start, end, options = {}) => ({ code, crn: "101", days: ["Monday"], start, end, isLab: false, ...options });
 const headers = ["Campus", "Crn No", "Course Code", "Title", "Cr", "Maximum Load", "No Of Enrolled", "Session Id", "DAYS", "Time", "Primary Instructor", "Second Instructor", "Type", "Building", "Room"];
 const meetingRow = (code, time, type = "LEC", room = "1", crn = "101") => ["Campus", crn, code, code, 3, 25, 20, "01", "M", time, "1: Lecturer", "2: Lab Teacher", type, "Building", room];
+
+test("short selector reasons use the same availability and owner rules as resource validation", () => {
+  const sessions = [...sessionsFor(course("A", 16)), ...sessionsFor(course("B", 10), "12:30")];
+  const resources = catalog(2, 6);
+  const plan = emptyResourcePlan(sessions, resources);
+  const [current, other] = sessions;
+  plan.allocations[current.rooms[0].id] = { roomId: "R0", invigilatorIds: ["I0"] };
+  plan.allocations[other.rooms[0].id] = { roomId: "R1", invigilatorIds: ["I1"] };
+  plan.backups[current.id] = ["I2"];
+  resources.invigilators[3].busy = [classTime("CLASS", 690, 770)];
+  resources.invigilators[4].busy = [classTime("UNKNOWN", 0, 1440, { unknownTime: true })];
+  resources.invigilators[5].enabled = false;
+  const owner = current.rooms[0].id + "/invigilator/0";
+  const summary = (id, target = current, targetOwner = owner) =>
+    resourceChoiceSummary(resources.invigilators.find((person) => person.id === id), "invigilator", target, sessions, plan, targetOwner);
+  assert.equal(summary("I0"), "", "The existing selection is not its own conflicting booking");
+  assert.equal(summary("I0", current, current.id + "/backup/0"), "Exam A 12:00-13:00");
+  assert.equal(summary("I1"), "Exam B 12:30-13:30", "Overlapping bookings with a different start are unavailable");
+  assert.equal(summary("I2"), "Backup duty 12:00-13:00");
+  assert.equal(summary("I2", current, current.id + "/backup/0"), "");
+  assert.equal(summary("I3"), "Class CLASS 11:30-12:50");
+  assert.equal(summary("I4"), "Class UNKNOWN (time unknown; day blocked)");
+  assert.equal(summary("I5"), "Excluded from pool");
+  assert.equal(summary("missing"), "Not found in the resource pool.");
+  assert.equal(summary("I0", { ...current, start: 780, end: 840 }), "", "Adjacent bookings are allowed");
+  assert.equal(summary("I1", { ...current, day: "Tuesday" }), "");
+  assert.equal(summary("I1", { ...current, week: 2 }), "");
+  resources.invigilators.forEach((person) => assert.equal(Boolean(summary(person.id)),
+    Boolean(resourceChoiceReason(person, "invigilator", current, sessions, plan, owner))));
+});
 
 test("resource pools and teaching availability use only the first CRN sheet", () => {
   const workbook = XLSX.utils.book_new();

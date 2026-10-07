@@ -202,11 +202,26 @@ function choiceConflict(resource, kind, session, sessions, plan, owner) {
   const busy = availabilityConflict(resource, session, sessions);
   if (busy) return busy;
   const booking = planBookings(sessions, plan).find((entry) => entry.kind === kind && entry.owner !== owner && entry.resourceId === resource.id && sameDay(entry, session) && overlaps(entry, session));
-  return booking ? { type: "booking", message: `Already assigned to ${booking.courseCode ? `the ${booking.courseCode} exam` : "slot backup duty"} on ${booking.day}, ${clock(booking.start)}-${clock(booking.end)}.` } : null;
+  return booking ? { type: "booking", booking, message: `Already assigned to ${booking.courseCode ? `the ${booking.courseCode} exam` : "slot backup duty"} on ${booking.day}, ${clock(booking.start)}-${clock(booking.end)}.` } : null;
 }
 
 export function resourceChoiceReason(resource, kind, session, sessions, plan, owner) {
   return choiceConflict(resource, kind, session, sessions, plan, owner)?.message || "";
+}
+
+export function resourceChoiceSummary(resource, kind, session, sessions, plan, owner) {
+  const conflict = choiceConflict(resource, kind, session, sessions, plan, owner);
+  if (!conflict) return "";
+  if (conflict.type === "excluded") return "Excluded from pool";
+  if (conflict.type === "class") {
+    const entry = conflict.entry;
+    return "Class " + entry.code + (entry.unknownTime ? " (time unknown; day blocked)" : " " + clock(entry.start) + "-" + clock(entry.end));
+  }
+  if (conflict.type === "booking") {
+    const booking = conflict.booking;
+    return (booking.courseCode ? "Exam " + booking.courseCode : "Backup duty") + " " + clock(booking.start) + "-" + clock(booking.end);
+  }
+  return conflict.message;
 }
 
 export function validateResourcePlan(sessions, catalog, plan) {
