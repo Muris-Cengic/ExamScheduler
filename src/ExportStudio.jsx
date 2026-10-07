@@ -14,12 +14,12 @@ function ReportIcon({ kind }) {
   </svg>;
 }
 
-function PreviewTable({ columns, rows, limit = Infinity, label }) {
+function PreviewTable({ columns, rows, rowClassNames = [], limit = Infinity, label }) {
   return <div className="export-table-wrap" tabIndex="0" aria-label={label}>
     <table className="export-table">
       <caption className="sr-only">{label}</caption>
       <thead><tr>{columns.map((column) => <th key={column} scope="col">{column}</th>)}</tr></thead>
-      <tbody>{rows.slice(0, limit).map((row, index) => <tr key={index}>{row.map((cell, column) => <td key={column}>{cell}</td>)}</tr>)}</tbody>
+      <tbody>{rows.slice(0, limit).map((row, index) => <tr key={index} className={rowClassNames[index]}>{row.map((cell, column) => <td key={column}>{cell}</td>)}</tr>)}</tbody>
     </table>
     {!rows.length ? <p className="export-empty">No matching records in this preview.</p> : null}
   </div>;
@@ -38,21 +38,27 @@ const studentRows = (model) => model.students.map((student) => [student.id, stud
   student.day + " / " + reportTimeRange(student.start, student.end), student.roomName]);
 const loadRows = (model, includeIdle = false) => model.workloads.filter((person) => includeIdle || person.exam + person.backup + person.teaching > 0)
   .map((person) => [person.name, person.exam, person.backup, person.teaching, person.exam + person.backup]);
-const overviewColumns = ["Course", "Title", "Day", "Time", "Students", "Rooms", "Primary invigilators needed", "During lab time"];
-const overviewRows = (model) => model.exams.map((exam) => [
+const overviewColumns = ["Course", "Title", "Day", "Time", "Students", "Rooms", "Primary invigilators needed", "During lab time", "Schedule"];
+const overviewRows = (model) => model.overviewExams.map((exam) => [
   exam.code, exam.title, exam.day, reportTimeRange(exam.start, exam.end),
-  exam.studentCount, exam.roomNames.join("; "), exam.primaryInvigilatorsNeeded, exam.duringLab ? "Yes" : "No",
+  exam.isAsd ? "N/A" : exam.studentCount, exam.isAsd ? "Not managed here" : exam.roomNames.join("; "),
+  exam.isAsd ? "N/A" : exam.primaryInvigilatorsNeeded, exam.isAsd ? "N/A" : exam.duringLab ? "Yes" : "No",
+  exam.isAsd ? "ASD (reference)" : "Department",
 ]);
+const overviewRowClasses = (model) => model.overviewExams.map((exam) => exam.isAsd ? "export-row--asd" : "");
 const overviewNote = "Primary invigilators are exam-room duties, including the lab instructor; slot backups are excluded. Lab time means this exam replaces its listed lab session.";
+const asdReferenceNote = "ASD exams are reference only; their students, rooms and invigilators are not managed or counted here.";
 
 function ExamCard({ exam }) {
-  return <article className="export-board__exam">
+  return <article className={"export-board__exam" + (exam.isAsd ? " export-board__exam--asd" : "")}>
     <span className="export-board__time">{reportTimeRange(exam.start, exam.end)}</span>
     <h4>{exam.code}</h4><p>{exam.title}</p>
-    <small>{exam.studentCount} students / {exam.roomNames.length} {exam.roomNames.length === 1 ? "room" : "rooms"}</small>
-    <small className="export-board__staffing">{exam.primaryInvigilatorsNeeded} primary {exam.primaryInvigilatorsNeeded === 1 ? "invigilator" : "invigilators"} needed</small>
-    {exam.duringLab ? <span className="export-lab">During lab time</span> : null}
-    <ul>{exam.roomNames.map((room) => <li key={room}>{room}</li>)}</ul>
+    {exam.isAsd ? <span className="export-asd">ASD / reference</span> : <>
+      <small>{exam.studentCount} students / {exam.roomNames.length} {exam.roomNames.length === 1 ? "room" : "rooms"}</small>
+      <small className="export-board__staffing">{exam.primaryInvigilatorsNeeded} primary {exam.primaryInvigilatorsNeeded === 1 ? "invigilator" : "invigilators"} needed</small>
+      {exam.duringLab ? <span className="export-lab">During lab time</span> : null}
+      <ul>{exam.roomNames.map((room) => <li key={room}>{room}</li>)}</ul>
+    </>}
   </article>;
 }
 
@@ -60,14 +66,14 @@ function WeekBoard({ model, startDate, week }) {
   return <div className="export-board">
     {REPORT_DAYS.map((day) => <section key={day} className="export-board__day">
       <header><strong>{day.slice(0, 3)}</strong><span>{formatReportDate(reportDate(startDate, week, day))}</span></header>
-      {model.exams.filter((exam) => exam.day === day).map((exam) => <ExamCard key={exam.id} exam={exam} />)}
-      {!model.exams.some((exam) => exam.day === day) ? <p className="export-board__free">No exams</p> : null}
+      {model.overviewExams.filter((exam) => exam.day === day).map((exam) => <ExamCard key={exam.id} exam={exam} />)}
+      {!model.overviewExams.some((exam) => exam.day === day) ? <p className="export-board__free">No exams</p> : null}
     </section>)}
   </div>;
 }
 
 function PrintWeekBoard({ model, startDate, week }) {
-  const columns = REPORT_DAYS.map((day) => model.exams.filter((exam) => exam.day === day));
+  const columns = REPORT_DAYS.map((day) => model.overviewExams.filter((exam) => exam.day === day));
   const rowCount = Math.max(1, ...columns.map((exams) => exams.length));
   // Table rows paginate between cards and repeat the weekday headers on long boards.
   return <table className="export-board-print">
@@ -98,41 +104,43 @@ function WorkbookMap({ model, week }) {
   </div>;
 }
 
-function PrintReport({ report, overviewMode, model, startDate, sessions, catalog, plan }) {
+function PrintReport({ report, overviewMode, model, startDate, sessions, catalog, plan, asdExams }) {
   return <div className="export-print">
     {model.selectedWeeks.map((week) => {
-      const current = buildExportModel({ sessions, catalog, plan, startDate, weeks: [week] });
+      const current = buildExportModel({ sessions, catalog, plan, startDate, weeks: [week], asdExams, includeAsd: model.includeAsd });
       return <section className="export-print__week" key={week}>
         <header><span>Department exams / confirmed resources</span><h1>{REPORT_VIEWS.find((view) => view.id === report).label}</h1>
           <p>{"Week " + week + " / " + formatReportDate(reportDate(startDate, week, "Monday"), true) + " - " + formatReportDate(reportDate(startDate, week, "Friday"), true)}</p></header>
         {report === "overview" ? <><p className="export-overview-note">{overviewNote}</p>
           {overviewMode === "board" ? <PrintWeekBoard model={current} startDate={startDate} week={week} />
-            : <PreviewTable label="Exam overview" columns={overviewColumns} rows={overviewRows(current)} />}</> : null}
+            : <PreviewTable label="Exam overview" columns={overviewColumns} rows={overviewRows(current)} rowClassNames={overviewRowClasses(current)} />}</> : null}
         {report === "complete" ? <><h2>Room assignments</h2><PreviewTable label="Room assignments" columns={["Course", "Day / time", "Room", "Students", "Invigilators", "Room limit"]} rows={ledgerRows(current)} /></> : null}
         {report === "complete" || report === "staff" ? <><h2>Staff duties</h2><PreviewTable label="Staff duties" columns={["Invigilator", "Day / time", "Duty", "Course", "Room", "Load"]} rows={staffRows(current)} />
           <h2>Workload summary</h2><PreviewTable label="Workload summary" columns={["Invigilator", "Exam load", "Backup load", "Teaching duties", "Extra duties"]} rows={loadRows(current)} /></> : null}
         {report === "complete" || report === "students" ? <><h2>Student room lists</h2><PreviewTable label="Student room lists" columns={["Student ID", "Name", "Course", "CRN", "Day / time", "Room"]} rows={studentRows(current)} /></> : null}
-        <footer>ASD exams are excluded. Teaching-time duties do not add extra invigilation load. {report === "complete" || report === "students" ? "Contains student personal data." : ""}</footer>
+        <footer>{model.includeAsd ? asdReferenceNote : "ASD exams are excluded."} Teaching-time duties do not add extra invigilation load. {report === "complete" || report === "students" ? "Contains student personal data." : ""}</footer>
       </section>;
     })}
   </div>;
 }
 
-export default function ExportStudio({ sessions, catalog, plan, startDate, ready, isExporting, onExport }) {
+export default function ExportStudio({ sessions, catalog, plan, startDate, asdExams = [], ready, isExporting, onExport }) {
   const [report, setReport] = useState("complete");
   const [format, setFormat] = useState("xlsx");
   const [packaging, setPackaging] = useState("combined");
   const [excludedWeeks, setExcludedWeeks] = useState([]);
   const [previewWeek, setPreviewWeek] = useState(null);
   const [mode, setMode] = useState("board");
+  const [includeAsd, setIncludeAsd] = useState(false);
   const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(50);
-  const full = useMemo(() => ready ? buildExportModel({ sessions, catalog, plan, startDate }) : null, [sessions, catalog, plan, startDate, ready]);
+  const withAsd = report === "overview" && includeAsd;
+  const full = useMemo(() => ready ? buildExportModel({ sessions, catalog, plan, startDate, asdExams, includeAsd: withAsd }) : null, [sessions, catalog, plan, startDate, asdExams, withAsd, ready]);
   const selectedWeeks = useMemo(() => full?.selectedWeeks.filter((week) => !excludedWeeks.includes(week)) || [], [full, excludedWeeks]);
-  const selected = useMemo(() => selectedWeeks.length ? buildExportModel({ sessions, catalog, plan, startDate, weeks: selectedWeeks }) : null, [sessions, catalog, plan, startDate, selectedWeeks]);
+  const selected = useMemo(() => selectedWeeks.length ? buildExportModel({ sessions, catalog, plan, startDate, weeks: selectedWeeks, asdExams, includeAsd: withAsd }) : null, [sessions, catalog, plan, startDate, selectedWeeks, asdExams, withAsd]);
   const overall = report === "staff" && previewWeek === "overall";
   const activeWeek = selectedWeeks.includes(previewWeek) ? previewWeek : selectedWeeks[0];
-  const current = useMemo(() => overall ? selected : activeWeek ? buildExportModel({ sessions, catalog, plan, startDate, weeks: [activeWeek] }) : null, [sessions, catalog, plan, startDate, activeWeek, overall, selected]);
+  const current = useMemo(() => overall ? selected : activeWeek ? buildExportModel({ sessions, catalog, plan, startDate, weeks: [activeWeek], asdExams, includeAsd: withAsd }) : null, [sessions, catalog, plan, startDate, activeWeek, overall, selected, asdExams, withAsd]);
   const previewLabel = overall ? "Overall" : "Week " + activeWeek;
   const view = REPORT_VIEWS.find((item) => item.id === report);
   const matches = (record) => Object.values(record).flat().filter((value) => typeof value === "string").join(" ").toLowerCase().includes(search.toLowerCase());
@@ -147,7 +155,7 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, ready
       <span className={"export-ready" + (ready ? "" : " export-ready--blocked")}>{ready ? "Resources confirmed" : "Resources need attention"}</span>
       <div className="export-stats" aria-live="polite">
         <div><strong>{selectedWeeks.length}</strong><span>included weeks</span></div>
-        <div><strong>{selected?.summary.exams || 0}</strong><span>scheduled exams</span></div>
+        <div><strong>{selected?.summary.exams || 0}</strong><span>department exams</span></div>
         <div><strong>{selected?.summary.roomSessions || 0}</strong><span>room sessions</span></div>
         <div><strong>{selected?.summary.students || 0}</strong><span>unique students</span></div>
       </div>
@@ -158,7 +166,7 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, ready
           onChange={() => { setExcludedWeeks((previous) => previous.includes(week) ? previous.filter((item) => item !== week) : [...previous, week]); setSearch(""); setLimit(50); }} />
         <span><strong>{"Week " + week}</strong><small>{formatReportDate(reportDate(startDate, week, "Monday")) + " - " + formatReportDate(reportDate(startDate, week, "Friday"))}</small></span>
       </label>)}
-      <p>Only weeks with main exams are listed. ASD is never included.</p>
+      <p>{withAsd ? "Weeks with department or ASD exams are listed. Resource totals cover department exams only." : "Only weeks with department exams are listed. ASD is excluded."}</p>
     </fieldset>
     <div className="export-layout">
       <aside className="export-options">
@@ -167,6 +175,12 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, ready
           aria-pressed={report === item.id} disabled={isExporting} onClick={() => chooseReport(item.id)}>
           <ReportIcon kind={item.id} /><span><small>{String(index + 1).padStart(2, "0") + " / " + item.audience}</small><strong>{item.label}</strong><p>{item.description}</p></span>
         </button>)}</div>
+        {report === "overview" ? <fieldset className="export-asd-option"><legend>ASD reference schedule</legend>
+          <label><input type="checkbox" checked={includeAsd} disabled={isExporting || !asdExams.length}
+            onChange={(event) => setIncludeAsd(event.target.checked)} /> <span>Include ASD exams</span></label>
+          <small>{asdExams.length ? "Reference entries in both views, Excel, CSV and print/PDF. Department resource totals stay unchanged." : "No ASD schedule loaded. Add one in the ASD step to include it here."}</small>
+          {withAsd && selected ? <small role="status">{selected.overviewExams.filter((exam) => exam.isAsd).length} ASD reference exams in included weeks.</small> : null}
+        </fieldset> : null}
         <fieldset className="export-format"><legend>File format</legend>
           <label><input type="radio" name="export-format" checked={format === "xlsx"} disabled={isExporting} onChange={() => setFormat("xlsx")} />Excel (.xlsx)</label>
           <label><input type="radio" name="export-format" checked={format === "csv"} disabled={isExporting || report === "complete"} onChange={() => setFormat("csv")} />CSV (.csv)</label>
@@ -181,7 +195,7 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, ready
         <div className="export-download">
           <p>{selectedWeeks.length ? packaging === "weekly" && selectedWeeks.length > 1 ? selectedWeeks.length + " weekly files / ZIP download" : "1 " + (format === "xlsx" ? "Excel workbook" : "CSV file") : "Select a week to export."}</p>
           <button type="button" className="export-download__primary" disabled={disabled}
-            onClick={() => onExport({ report, format, packaging, weeks: selectedWeeks })}>{isExporting ? "Exporting..." : report === "complete" ? "Export Timetable" : format === "xlsx" ? "Download Excel" : "Download CSV"}</button>
+            onClick={() => onExport({ report, format, packaging, weeks: selectedWeeks, includeAsd: withAsd })}>{isExporting ? "Exporting..." : report === "complete" ? "Export Timetable" : format === "xlsx" ? "Download Excel" : "Download CSV"}</button>
           <button type="button" disabled={disabled} onClick={() => window.print()}>Print / Save PDF</button>
           {report === "overview" ? <small className="export-print-layout" role="status">Print layout: {mode === "board" ? "Week board" : "Chronological list"}. Change it using the preview views. All included weeks are printed; Excel and CSV remain tables.</small> : null}
           <small>{report === "complete" || report === "students" ? "Contains student names and IDs. Share only with authorised recipients." : "Only the selected report and included weeks are exported."}</small>
@@ -202,10 +216,10 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, ready
             <p>{formatReportDate(reportDate(startDate, overall ? selectedWeeks[0] : activeWeek, "Monday"), true) + " - " + formatReportDate(reportDate(startDate, overall ? selectedWeeks.at(-1) : activeWeek, "Friday"), true)}</p>
             <small>{report === "overview" ? "Shareable timetable / no student names or IDs" : report === "students" ? "Room check-in register / personal data" : report === "staff" ? "Exam duties, slot backups and teaching-time load" : "Confirmed allocations / linked weekly Excel sheets"}</small>
           </header>
-          {report === "overview" ? <><p className="export-overview-note">{overviewNote}</p><div className="export-view-toggle"><button type="button" aria-pressed={mode === "board"} onClick={() => setMode("board")}>Week board</button>
+          {report === "overview" ? <><p className="export-overview-note">{overviewNote} {withAsd ? asdReferenceNote : ""}</p><div className="export-view-toggle"><button type="button" aria-pressed={mode === "board"} onClick={() => setMode("board")}>Week board</button>
             <button type="button" aria-pressed={mode === "table"} onClick={() => setMode("table")}>Chronological list</button></div>
             {mode === "board" ? <WeekBoard model={current} startDate={startDate} week={activeWeek} /> : <PreviewTable label="Exam overview preview"
-              columns={overviewColumns} rows={overviewRows(current)} />}</> : <>
+              columns={overviewColumns} rows={overviewRows(current)} rowClassNames={overviewRowClasses(current)} />}</> : <>
             {report === "complete" ? <WorkbookMap model={current} week={activeWeek} /> : null}
             {report === "staff" ? <details className="export-workloads" open><summary>Workload balance / {previewLabel}</summary>
               {overall ? <p>Totals across included weeks: {selectedWeeks.map((week) => "Week " + week).join(", ")}. Include every week to match the Resource Review Pool. Invigilators with no assignments are shown too.</p> : null}
@@ -218,10 +232,10 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, ready
               rows={report === "students" ? studentRows(filtered) : report === "staff" ? staffRows(filtered, overall) : ledgerRows(filtered)} />
             {records > limit ? <button type="button" className="export-show-more" onClick={() => setLimit((previous) => previous + 50)}>Show 50 more ({records - limit} remaining)</button> : null}
           </>}
-          <footer className="export-preview__footer">Previewing {overall ? "all included weeks" : previewLabel}. Downloads and print include all {selectedWeeks.length} selected {selectedWeeks.length === 1 ? "week" : "weeks"}. ASD exams are excluded.</footer>
+          <footer className="export-preview__footer">Previewing {overall ? "all included weeks" : previewLabel}. Downloads and print include all {selectedWeeks.length} selected {selectedWeeks.length === 1 ? "week" : "weeks"}. {withAsd ? asdReferenceNote : "ASD exams are excluded."}</footer>
         </>}
       </main>
     </div>
-    {selected ? <PrintReport report={report} overviewMode={mode} model={selected} sessions={sessions} catalog={catalog} plan={plan} startDate={startDate} /> : null}
+    {selected ? <PrintReport report={report} overviewMode={mode} model={selected} sessions={sessions} catalog={catalog} plan={plan} startDate={startDate} asdExams={asdExams} /> : null}
   </section>;
 }

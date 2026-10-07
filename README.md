@@ -138,7 +138,7 @@ Review the proposed assignments and adjust them with the room/staff selectors.
   listed lab time used if available. Excluded resources can be included again in
   the resource pool. Flexible room/staff conflicts can use another available resource.
 - Reports use the reviewed room names and invigilators, not generated placeholders.
-  ASD exams remain excluded. JSON saves retain the pool, availability and assignments;
+  ASD exams remain excluded from resource reports. JSON saves retain the pool, availability and assignments;
   changing the timetable invalidates stale resource assignments.
 
 ## Export workspace
@@ -156,7 +156,11 @@ previews:
   excluding slot backups) and whether the exam replaces its lab session. Room
   names are compact, for example `PAD / P-B-4F / 13` becomes `P-B-4F/13`.
   Resource identities and the complete report's linked room references are
-  unchanged.
+  unchanged. Enable **Include ASD exams** to add the ASD reference schedule to this
+  report only (off by default). ASD cards and rows are muted in both views and
+  print/PDF; Excel and CSV identify them as **ASD (reference)** in the **Schedule**
+  column. ASD resource/student fields are blank in files and marked not applicable
+  in the preview. Department resource and student totals stay unchanged.
 - **Staff duties**: each exam duty and slot-level backup, plus a separate workload
   summary in Excel and print. Teaching-time duties add zero extra load; backup
   duties remain separate. Use the **Overall** preview tab for totals and duties
@@ -170,7 +174,10 @@ Choose which populated exam weeks to include, then select **One workbook** or
 **Separate weekly files**. The combined complete report adds a navigable
 **Schedule Index** and preserves all week-qualified sheet names and formula links.
 Multiple weekly files download as one ZIP; a single selected week downloads
-directly. Empty weeks and ASD exams are excluded from every report.
+directly. Empty weeks are excluded. With **Include ASD exams** enabled, the Exam
+overview also offers weeks containing only ASD exams. ASD never appears in the
+Complete report, Staff duties or Student room lists, including their print/PDF
+exports.
 
 The three focused reports also support UTF-8 **CSV** as one file or weekly files.
 Staff CSV contains the duties only; choose Excel for its additional workload
@@ -204,7 +211,8 @@ Excel/CSV schedules need `Course`, `Department`, `Day` and `Time` columns.
 - Time ranges such as `12:00 - 1:00 PM` and `10:30 - 11:30 AM` are supported.
   The timetable expands its weeks/hours and uses 30-minute slots when needed.
 - Imported exam durations are retained for timetable display and cross-schedule student conflicts.
-  ASD exams appear gray, leave the main course pool, and are excluded from main staffing totals and exports.
+  ASD exams appear gray, leave the main course pool, and are excluded from main
+  staffing totals. They can optionally be included in Exam overview exports only.
 - ASD and full timetable JSON saves retain the imported durations.
 
 ## Verify and publish

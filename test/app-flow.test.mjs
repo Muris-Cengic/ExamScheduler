@@ -511,10 +511,12 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
     ...Array.from({ length: 16 }, (_, i) => ["A" + i, "Alice " + i, "MAIN-1000", "First Exam", "101"]),
     ...Array.from({ length: 10 }, (_, i) => ["B" + i, "Bob " + i, "MAIN-2000", "Second Exam", "201"]),
     ["ASD1", "ASD Student", "ASD-1000", "Excluded ASD Exam", "301"],
+    ["ASD2", "ASD Private Student", "ASD-2000", "ASD-only Week Exam", "302"],
   ]), "Enrolment");
   const enrolment = imports.parseEnrolmentWorkbook(book);
   const main = enrolment.courses.filter((course) => course.code.startsWith("MAIN"));
   const asd = enrolment.courses.find((course) => course.code.startsWith("ASD"));
+  const asdOnly = enrolment.courses.find((course) => course.code === "ASD-2000");
   const labRoomId = department.roomIdentity("PAD", "P-B-4F", "13");
   const labMeeting = { crn: "101", days: ["Monday"], isLab: true, startMinutes: 480, endMinutes: 590,
     room: "13", building: "P-B-4F", campus: "PAD", instructor: "Staff 0",
@@ -523,7 +525,8 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   const snapshot = { type: "main", version: 5, startDate: "2026-10-20", weeks: [1, 2, 3], selectedWeek: 1,
     settings: { slotIntervalMinutes: 30, startHour: 8, endHour: 18, studentsPerRoom: 25, examDurationMinutes: 60 },
     assignments: { 1: { Monday: { "09:00": [main[0].id] } }, 2: { Tuesday: { "12:00": [main[1].id] } }, 3: {} },
-    asdAssignments: { 1: { Monday: { "09:00": [asd.id] } } }, asdExamDurations: { [asd.id]: 60 }, hasAsdStep: true,
+    asdAssignments: { 1: { Monday: { "09:00": [asd.id] } }, 3: { Wednesday: { "10:30": [asdOnly.id] } } },
+    asdExamDurations: { [asd.id]: 60, [asdOnly.id]: 90 }, hasAsdStep: true,
     courses: enrolment.courses, studentDirectory: enrolment.studentDirectory,
     departmentSelection: { sheetName: "First", courses: main.map((course, index) => ({
       code: course.code, title: course.title, crns: course.crns, meetings: index === 0 ? [labMeeting] : [],
@@ -617,10 +620,10 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   assert.match(text(find(panel(), (node) => node.props.className === "export-print-layout")), /Print layout: Chronological list/);
   assert.ok(!nodes(printView()).some((node) => node.props.className === "export-board-print"));
   const printedOverviews = nodes(printView()).filter((node) => node.type?.name === "PreviewTable" && node.props.label === "Exam overview");
-  assert.deepEqual(JSON.parse(JSON.stringify(printedOverviews.map((table) => table.props.rows[0].slice(-2)))), [[2, "Yes"], [1, "No"]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(printedOverviews.map((table) => table.props.rows[0].slice(-3)))), [[2, "Yes", "Department"], [1, "No", "Department"]]);
   assert.ok(printedOverviews.every((table) => table.props.columns.includes("Primary invigilators needed") && table.props.columns.includes("During lab time")));
   const labList = find(preview(), (node) => node.type?.name === "PreviewTable" && node.props.label === "Exam overview preview");
-  assert.deepEqual(JSON.parse(JSON.stringify(labList.props.rows[0].slice(-3))), ["P-B-4F/13", 2, "Yes"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(labList.props.rows[0].slice(-4))), ["P-B-4F/13", 2, "Yes", "Department"]);
   weekInput(1).props.onChange();
   tree = app.render();
   assert.match(text(preview()), /MAIN-2000/);
@@ -634,8 +637,76 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   assert.match(overviewCsv, /"Primary invigilators needed","During lab time"/);
   assert.match(overviewCsv, /"P-B-4F\/\d+","1","No"/);
 
+  const asdToggle = () => find(find(panel(), (node) => node.type === "label" && text(node).trim() === "Include ASD exams"),
+    (node) => node.type === "input");
+  assert.equal(asdToggle().props.checked, false);
+  weekInput(1).props.onChange();
+  tree = app.render();
+  const departmentStats = () => nodes(find(panel(), (node) => node.props.className === "export-stats"))
+    .filter((node) => node.type === "div").slice(2).map(text);
+  const statsBeforeAsd = departmentStats();
+  asdToggle().props.onChange({ target: { checked: true } });
+  tree = app.render();
+  assert.equal(weekInput(3).props.checked, true, "ASD-only weeks are offered only when opted in");
+  assert.match(text(panel()), /2 ASD reference exams in included weeks/);
+  assert.deepEqual(departmentStats(), statsBeforeAsd,
+    "Department exam, room and student totals are unchanged");
+  button(preview(), "Week 1").props.onClick();
+  button(tree, "Week board").props.onClick();
+  tree = app.render();
+  const referenceCard = find(preview(), (node) => node.props.className === "export-board__exam export-board__exam--asd");
+  assert.match(text(referenceCard), /09:00-10:00ASD-1000/);
+  assert.match(text(referenceCard), /ASD \/ reference/);
+  assert.ok(!text(referenceCard).includes("invigilator"));
+  assert.ok(!text(referenceCard).includes("students"));
+  assert.ok(!text(printView()).includes("ASD Private Student"));
+  assert.equal(nodes(printView()).filter((node) => node.props.className === "export-board__exam export-board__exam--asd").length, 2);
+  button(tree, "Chronological list").props.onClick();
+  tree = app.render();
+  const asdList = find(preview(), (node) => node.type?.name === "PreviewTable" && node.props.label === "Exam overview preview");
+  assert.equal(asdList.props.rows[1][0], "ASD-1000", "Department exam stays first at the same time");
+  assert.equal(asdList.props.rows[1].at(-1), "ASD (reference)");
+  assert.equal(asdList.props.rowClassNames[1], "export-row--asd");
+  assert.deepEqual(JSON.parse(JSON.stringify(asdList.props.rows[1].slice(4, 8))), ["N/A", "Not managed here", "N/A", "N/A"]);
+  const asdPrintedTables = nodes(printView()).filter((node) => node.type?.name === "PreviewTable" && node.props.label === "Exam overview");
+  assert.equal(asdPrintedTables.length, 3);
+  assert.equal(asdPrintedTables[0].props.rowClassNames[1], "export-row--asd");
+  assert.equal(asdPrintedTables[2].props.rows[0][0], "ASD-2000");
+  assert.match(text(asdPrintedTables[2]), /10:30-12:00/);
+  await button(tree, "Download CSV").props.onClick();
+  const asdCsvZip = await JSZip.loadAsync(await app.downloads.at(-1).arrayBuffer());
+  assert.deepEqual(Object.keys(asdCsvZip.files).sort(), ["Week_1_Exam_Overview.csv", "Week_2_Exam_Overview.csv", "Week_3_Exam_Overview.csv"]);
+  assert.match(await asdCsvZip.file("Week_1_Exam_Overview.csv").async("string"), /"ASD-1000".*"ASD \(reference\)"/);
+  assert.match(await asdCsvZip.file("Week_3_Exam_Overview.csv").async("string"), /"10:30","12:00","ASD-2000"/);
+  weekInput(1).props.onChange();
+  weekInput(2).props.onChange();
+  tree = app.render();
+  assert.match(text(preview()), /ASD-2000/);
+  assert.ok(!text(preview()).includes("MAIN-"));
+  radio("Excel (.xlsx)").props.onChange();
+  tree = app.render();
+  await button(tree, "Download Excel").props.onClick();
+  assert.equal(app.downloadNames.at(-1), "Week_3_Exam_Overview.xlsx");
+  const asdWorkbook = XLSX.read(await app.downloads.at(-1).arrayBuffer(), { type: "array" });
+  const asdExcelRow = XLSX.utils.sheet_to_json(asdWorkbook.Sheets["Exam overview"])[0];
+  assert.equal(asdExcelRow.Course, "ASD-2000");
+  assert.equal(asdExcelRow.Schedule, "ASD (reference)");
+  assert.equal(asdExcelRow.Students, undefined);
+  assert.equal(asdExcelRow["Primary invigilators needed"], undefined);
+  asdToggle().props.onChange({ target: { checked: false } });
+  tree = app.render();
+  assert.equal(button(tree, "Download Excel").props.disabled, true, "Turning ASD off with only an ASD week selected leaves no export");
+  assert.ok(!nodes(panel()).some((node) => node.props["aria-label"] === "Include Week 3"));
+  asdToggle().props.onChange({ target: { checked: true } });
+  tree = app.render();
+  weekInput(2).props.onChange();
+  tree = app.render();
+
   reportButton("Staff duties").props.onClick();
   tree = app.render();
+  assert.ok(!nodes(panel()).some((node) => node.props.className === "export-asd-option"));
+  assert.ok(!nodes(panel()).some((node) => node.props["aria-label"] === "Include Week 3"));
+  assert.ok(!text(printView()).includes("ASD-"));
   assert.match(text(preview()), /Workload balance/);
   assert.match(text(preview()), /Backup/);
   assert.ok(!text(preview()).includes("Bob"));
@@ -694,6 +765,8 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
 
   reportButton("Student room lists").props.onClick();
   tree = app.render();
+  assert.ok(!nodes(panel()).some((node) => node.props.className === "export-asd-option"));
+  assert.ok(!text(printView()).includes("ASD-"));
   assert.match(text(preview()), /Bob 0/);
   const search = find(preview(), (node) => node.type === "input" && node.props.type === "search");
   search.props.onChange({ target: { value: "NO-MATCH" } });
@@ -719,8 +792,19 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   tree = app.render();
   reportButton("Complete report").props.onClick();
   tree = app.render();
+  assert.ok(!nodes(panel()).some((node) => node.props.className === "export-asd-option"));
+  assert.ok(!text(preview()).includes("ASD-"));
+  assert.ok(!text(printView()).includes("ASD-"));
+  await button(tree, "Export Timetable").props.onClick();
+  const completeAfterAsd = XLSX.read(await app.downloads.at(-1).arrayBuffer(), { type: "array" });
+  assert.ok(!JSON.stringify(completeAfterAsd.Sheets).includes("ASD-"));
   assert.equal(radio("Excel (.xlsx)").props.checked, true);
   assert.equal(radio("CSV (.csv)").props.disabled, true);
+  reportButton("Exam overview").props.onClick();
+  tree = app.render();
+  assert.equal(asdToggle().props.checked, true, "The overview preference is retained without affecting another report");
+  assert.equal(weekInput(3).props.checked, true);
+  assert.match(text(preview()), /ASD-1000/);
 });
 
 test("week-board printing keeps every exam in busy days and all included weeks, independently of the active preview", () => {

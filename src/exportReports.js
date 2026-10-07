@@ -28,10 +28,32 @@ export function formatRoomDisplayName(name) {
     .filter((part) => part && part.toUpperCase() !== "PAD").join("/");
 }
 
-export function buildExportModel({ sessions, catalog, plan, startDate, weeks }) {
+export function buildAsdOverviewExams({ assignments, courseLookup, examDurations = {}, defaultDuration = 60 }) {
+  const exams = [];
+  Object.entries(assignments).forEach(([week, days]) => Object.entries(days).forEach(([day, slots]) => Object.entries(slots).forEach(([slotId, ids]) => {
+    [...new Set(ids)].forEach((courseId) => {
+      const course = courseLookup[courseId];
+      const [hour, minute] = slotId.split(":").map(Number);
+      const start = hour * 60 + minute;
+      const duration = examDurations[courseId] ?? defaultDuration;
+      if (!course || !REPORT_DAYS.includes(day) || !Number.isInteger(Number(week)) || Number(week) < 1 ||
+        !/^\d{2}:\d{2}$/.test(slotId) || hour > 23 || minute > 59 || !Number.isFinite(duration) || duration <= 0 || start + duration > 1440) {
+        throw new Error("Invalid ASD exam in the overview.");
+      }
+      // Reference exams deliberately carry no department resource or student totals.
+      exams.push({ id: "asd/" + week + "/" + day + "/" + slotId + "/" + courseId, isAsd: true,
+        week: Number(week), day, start, end: start + duration, code: course.code, title: course.title,
+        crns: [...course.crns].sort(), studentCount: null, roomNames: [], primaryInvigilatorsNeeded: null, duringLab: null });
+    });
+  })));
+  return exams;
+}
+
+export function buildExportModel({ sessions, catalog, plan, startDate, weeks, asdExams = [], includeAsd = false }) {
   if (!validateResourcePlan(sessions, catalog, plan).complete) throw new Error("Complete valid resource assignments before exporting.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !Number.isFinite(Date.parse(startDate + "T00:00:00Z"))) throw new Error("Choose a valid exam start date.");
-  const available = [...new Set(sessions.map((session) => session.week))].sort((a, b) => a - b);
+  const references = includeAsd ? asdExams : [];
+  const available = [...new Set([...sessions, ...references].map((session) => session.week))].sort((a, b) => a - b);
   const selectedWeeks = [...new Set(weeks ?? available)].sort((a, b) => a - b);
   if (!selectedWeeks.length) throw new Error("Select at least one exam week.");
   if (selectedWeeks.some((week) => !available.includes(week))) throw new Error("Only weeks with scheduled exams can be exported.");
@@ -76,17 +98,22 @@ export function buildExportModel({ sessions, catalog, plan, startDate, weeks }) 
         code: [...courses.values()].map((exam) => exam.code).join(", "), roomName: "Slot standby", teaching, extraLoad: teaching ? 0 : 1 });
     });
   });
-  return { selectedWeeks, sessions: current, roomRows, exams, duties, students,
+  const overviewExams = [...exams, ...references.filter((exam) => selectedWeeks.includes(exam.week))
+    .map((exam) => ({ ...exam, date: reportDate(startDate, exam.week, exam.day) }))]
+    .sort((a, b) => a.week - b.week || REPORT_DAYS.indexOf(a.day) - REPORT_DAYS.indexOf(b.day) ||
+      a.start - b.start || Number(Boolean(a.isAsd)) - Number(Boolean(b.isAsd)) || a.code.localeCompare(b.code));
+  return { selectedWeeks, sessions: current, roomRows, exams, overviewExams, includeAsd, duties, students,
     workloads: invigilatorWorkloads(catalog, current, plan),
     summary: { exams: exams.length, roomSessions: roomRows.length, students: new Set(students.map((student) => student.id)).size, sittings: students.length } };
 }
 
 export function reportTable(report, model) {
   if (report === "overview") return {
-    columns: ["Week", "Date", "Day", "Start", "End", "Course", "Course title", "CRNs", "Students", "Rooms", "Assigned rooms", "Primary invigilators needed", "During lab time"],
-    widths: [10, 18, 16, 12, 12, 18, 44, 22, 12, 12, 48, 30, 20],
-    rows: model.exams.map((exam) => [exam.week, exam.date, exam.day, clock(exam.start), clock(exam.end), exam.code, exam.title,
-      exam.crns.join(", "), exam.studentCount, exam.roomNames.length, exam.roomNames.join("; "), exam.primaryInvigilatorsNeeded, exam.duringLab ? "Yes" : "No"]),
+    columns: ["Week", "Date", "Day", "Start", "End", "Course", "Course title", "CRNs", "Students", "Rooms", "Assigned rooms", "Primary invigilators needed", "During lab time", "Schedule"],
+    widths: [10, 18, 16, 12, 12, 18, 44, 22, 12, 12, 48, 30, 20, 24],
+    rows: model.overviewExams.map((exam) => [exam.week, exam.date, exam.day, clock(exam.start), clock(exam.end), exam.code, exam.title,
+      exam.crns.join(", "), exam.studentCount, exam.isAsd ? null : exam.roomNames.length, exam.isAsd ? null : exam.roomNames.join("; "),
+      exam.primaryInvigilatorsNeeded, exam.isAsd ? null : exam.duringLab ? "Yes" : "No", exam.isAsd ? "ASD (reference)" : "Department"]),
   };
   if (report === "staff") return {
     columns: ["Week", "Date", "Day", "Start", "End", "Invigilator", "Duty", "Room", "Course", "Extra load", "During teaching hours"],
@@ -113,6 +140,7 @@ function appendTable(workbook, name, columns, rows, widths, dateColumn) {
 }
 
 export function buildCombinedResourceWorkbook(options) {
+  options = { ...options, includeAsd: false };
   const model = buildExportModel(options);
   const workbook = XLSX.utils.book_new();
   const rows = model.selectedWeeks.map((week) => {
@@ -154,6 +182,7 @@ export function buildExportFiles({ report = "complete", format = "xlsx", packagi
   const view = REPORT_VIEWS.find((item) => item.id === report);
   if (!view || !["xlsx", "csv"].includes(format) || !["combined", "weekly"].includes(packaging)) throw new Error("Invalid export options.");
   if (report === "complete" && format !== "xlsx") throw new Error("The complete multi-sheet report is available as Excel.");
+  options = { ...options, includeAsd: report === "overview" && Boolean(options.includeAsd) };
   const model = buildExportModel(options);
   const groups = packaging === "weekly" ? model.selectedWeeks.map((week) => [week]) : [model.selectedWeeks];
   return groups.map((weeks) => {

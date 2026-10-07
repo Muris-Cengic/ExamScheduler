@@ -72,6 +72,10 @@
 .export-format legend, .export-packaging legend { font-size: 13px; font-weight: 700; margin-bottom: 10px; }
 .export-format label, .export-packaging label { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px; }
 .export-format small { flex-basis: 100%; color: var(--export-muted); font-size: 11px; }
+.export-asd-option { margin: 24px 0 0; padding: 14px; border: 1px dashed #c5cbd3; border-radius: 8px; background: #f6f7f8; display: grid; gap: 8px; }
+.export-asd-option legend { font-size: 13px; font-weight: 700; padding: 0 4px; }
+.export-asd-option label { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px; }
+.export-asd-option small { font-size: 11px; line-height: 1.6; color: var(--export-muted); }
 .export-packaging { display: grid; gap: 8px; }
 .export-packaging label { padding: 12px; border: 1px solid var(--export-line); border-radius: 8px; background: #fff; }
 .export-packaging label:has(input:checked) { border-color: #94b4e7; }
@@ -107,6 +111,7 @@
 .export-table th { background: #edf2f8; color: #4b6078; font-size: 10px; letter-spacing: 0.025em; padding: 13px 16px; white-space: nowrap; position: sticky; top: 0; z-index: 1; border-bottom: 1px solid var(--export-line); }
 .export-table td { padding: 13px 16px; border-bottom: 1px solid #e9edf3; min-width: 80px; max-width: 240px; overflow-wrap: anywhere; vertical-align: top; }
 .export-table tbody tr:nth-child(even) { background: #fbfcfe; }
+.export-table tbody tr.export-row--asd { background: #f2f3f5; color: #59616c; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
 .export-course { display: grid; gap: 3px; min-width: 130px; }
 .export-course strong { color: var(--export-ink); font-size: 12px; }
 .export-course small { color: var(--export-muted); font-size: 10px; }
@@ -131,6 +136,10 @@
 .export-overview-note { margin: 16px 26px 0; color: var(--export-muted); font-size: 11px; line-height: 1.6; }
 .export-board__exam ul { list-style: none; margin: 9px 0 0; padding: 8px 0 0; border-top: 1px solid #e4eaf3; font-size: 10px; color: #42607e; overflow-wrap: anywhere; }
 .export-board__exam li + li { margin-top: 4px; }
+.export-board__exam--asd { border: 1px dashed #bec5cd; background: #f0f1f3; color: #59616c; }
+.export-board__exam--asd .export-board__time, .export-board__exam--asd p { color: #59616c; }
+.export-board__exam--asd h4 { font-size: 11px; }
+.export-asd { display: inline-block; padding: 3px 6px; border: 1px solid #c5cbd3; border-radius: 4px; color: #59616c; font-size: 10px; font-weight: 600; }
 .export-board__free { font-size: 11px; color: #76859a; padding: 20px 12px; text-align: center; }
 .export-workloads { margin: 20px 26px; border: 1px solid var(--export-line); border-radius: 8px; overflow: hidden; }
 .export-workloads summary { cursor: pointer; padding: 12px 14px; font-size: 12px; font-weight: 700; background: #f3f7fc; }
@@ -196,6 +205,9 @@
   .export-print .export-board__exam { margin: 2mm; padding: 2.5mm; border-top-width: 0.6mm; overflow-wrap: anywhere; break-inside: avoid; }
   .export-print .export-board__time { font-size: 8pt; }
   .export-print .export-board__exam h4 { margin: 2mm 0 1mm; font-size: 10pt; }
+  .export-print .export-board__exam--asd { border-top-width: 1px; }
+  .export-print .export-board__exam--asd h4 { font-size: 9pt; }
+  .export-print .export-asd { font-size: 7.5pt; }
   .export-print .export-board__exam p { margin: 0 0 2mm; font-size: 8pt; line-height: 1.4; }
   .export-print .export-board__exam small { font-size: 7.5pt; }
   .export-print .export-board__exam .export-board__staffing { margin-top: 1mm; }

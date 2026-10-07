@@ -11,7 +11,7 @@ import { autoSchedule } from "./autoSchedule.js";
 import ResourceAssignment from "./ResourceAssignment.jsx";
 import { assignResources, buildExamSessions, emptyResourcePlan, parseResourceCatalog, readResourceCatalog, readResourcePlan, reconcileRoomDistribution, resourceFingerprint, validateResourcePlan } from "./resources.js";
 import { examInvigilatorsNeeded, examRoomSizes, readRoomDistributionChoices, roomCapacity } from "./examRooms.js";
-import { buildExportFiles, REPORT_VIEWS } from "./exportReports.js";
+import { buildAsdOverviewExams, buildExportFiles, REPORT_VIEWS } from "./exportReports.js";
 import ExportStudio from "./ExportStudio.jsx";
 
 const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
@@ -785,6 +785,12 @@ function App() {
   const exportStartDate = useMemo(
     () => formatDateToISO(alignDateToMonday(parseISODateString(startDate) ?? getDefaultStartDate())),
     [startDate],
+  );
+  const asdOverviewExams = useMemo(
+    () => hasAsdStep ? buildAsdOverviewExams({
+      assignments: asdAssignments, courseLookup, examDurations: asdExamDurations, defaultDuration: examDurationMinutesValue,
+    }) : [],
+    [hasAsdStep, asdAssignments, courseLookup, asdExamDurations, examDurationMinutesValue],
   );
   const resourceValidation = useMemo(
     () => validateResourcePlan(examSessions, resourceCatalog, resourcePlan),
@@ -2153,6 +2159,7 @@ function App() {
       const exportedFiles = buildExportFiles({
         ...options, templateHeaders, startDate: exportStartDate,
         sessions: examSessions, catalog: resourceCatalog, plan: resourcePlan,
+        asdExams: asdOverviewExams,
       });
 
       if (exportedFiles.length === 1) {
@@ -3196,6 +3203,7 @@ function App() {
 
       {courses.length && wizardStep === "export" ? (
         <ExportStudio sessions={examSessions} catalog={resourceCatalog} plan={resourcePlan} startDate={exportStartDate}
+          asdExams={asdOverviewExams}
           ready={resourceValidation.complete} isExporting={isExporting} onExport={handleExportSchedule} />
       ) : null}
     </div>

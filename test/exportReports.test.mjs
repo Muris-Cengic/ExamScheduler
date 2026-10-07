@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as XLSX from "xlsx/xlsx.mjs";
 import { assignResources, buildExamSessions, emptyResourcePlan } from "../src/resources.js";
 import { roomIdentity } from "../src/department.js";
-import { buildCombinedResourceWorkbook, buildExportFiles, buildExportModel, formatRoomDisplayName, reportDate, reportTable } from "../src/exportReports.js";
+import { buildAsdOverviewExams, buildCombinedResourceWorkbook, buildExportFiles, buildExportModel, formatRoomDisplayName, reportDate, reportTable } from "../src/exportReports.js";
 
 const course = (id, count, options = {}) => ({
   id, code: id, title: id + " course", crns: ["101"], labSessions: [],
@@ -27,6 +27,110 @@ function fixture() {
 }
 const read = (file) => XLSX.read(file.data, { type: "array", cellDates: true });
 const rows = (workbook, name) => XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 });
+
+function asdFixture() {
+  return buildAsdOverviewExams({
+    assignments: { 1: { Monday: { "09:00": ["ASD-1", "ASD-1"], "08:00": ["ASD-2"] } },
+      3: { Wednesday: { "10:30": ["ASD-1"] } } },
+    courseLookup: { "ASD-1": course("ASD-1", 99), "ASD-2": course("ASD-2", 5) },
+    examDurations: { "ASD-1": 90 }, defaultDuration: 75,
+  });
+}
+
+test("ASD overview references retain imported durations without copying students or resources", () => {
+  const references = asdFixture();
+  assert.equal(references.length, 3, "Duplicate IDs in a slot are not duplicated in the overview");
+  assert.deepEqual(references.map((exam) => [exam.week, exam.start, exam.end]), [[1, 540, 630], [1, 480, 555], [3, 630, 720]]);
+  assert.ok(references.every((exam) => exam.isAsd && exam.studentCount === null &&
+    exam.primaryInvigilatorsNeeded === null && exam.duringLab === null && !exam.roomNames.length));
+  assert.ok(!JSON.stringify(references).includes("Student"));
+  assert.equal(new Set(references.map((exam) => exam.id)).size, 3);
+  const input = { assignments: { 1: { Monday: { "09:00": ["ASD-1"] } } }, courseLookup: { "ASD-1": course("ASD-1", 1) } };
+  const before = JSON.stringify(input);
+  assert.equal(buildAsdOverviewExams(input)[0].end, 600);
+  assert.equal(JSON.stringify(input), before);
+  assert.throws(() => buildAsdOverviewExams({ ...input, courseLookup: {} }), /Invalid ASD/);
+  assert.throws(() => buildAsdOverviewExams({ ...input, examDurations: { "ASD-1": -1 } }), /Invalid ASD/);
+  assert.throws(() => buildAsdOverviewExams({ ...input, assignments: { 1: { Monday: { "25:00": ["ASD-1"] } } } }), /Invalid ASD/);
+});
+
+test("ASD opt-in extends only the overview model, including ASD-only weeks and chronological reference entries", () => {
+  const options = { ...fixture(), asdExams: asdFixture() };
+  const before = JSON.stringify(options);
+  const normal = buildExportModel(options);
+  const included = buildExportModel({ ...options, includeAsd: true });
+  assert.deepEqual(normal.selectedWeeks, [1, 2]);
+  assert.deepEqual(normal.overviewExams, normal.exams);
+  assert.deepEqual(included.selectedWeeks, [1, 2, 3]);
+  assert.deepEqual(included.overviewExams.map((exam) => exam.code), ["ASD-2", "A", "ASD-1", "B", "ASD-1"],
+    "Earlier times come first, with department exams before ASD at an identical start time");
+  for (const key of ["summary", "exams", "roomRows", "students", "duties", "workloads", "sessions"]) {
+    assert.deepEqual(included[key], normal[key], key + " stays department-only");
+  }
+  const week3 = buildExportModel({ ...options, includeAsd: true, weeks: [3] });
+  assert.deepEqual(week3.summary, { exams: 0, roomSessions: 0, students: 0, sittings: 0 });
+  assert.equal(week3.overviewExams[0].date, "2026-11-04");
+  assert.equal(week3.overviewExams[0].end, 720);
+  assert.ok(week3.workloads.every((person) => person.exam + person.backup + person.teaching === 0));
+  assert.throws(() => buildExportModel({ ...options, weeks: [3] }), /Only weeks with scheduled/);
+  assert.throws(() => buildExportModel({ ...options, includeAsd: true, weeks: [4] }), /Only weeks with scheduled/);
+  assert.throws(() => buildExportModel({ ...options, includeAsd: true, weeks: [3], plan: emptyResourcePlan(options.sessions, options.catalog) }), /Complete valid resource/);
+  assert.equal(JSON.stringify(options), before, "Reference display cannot modify resource assignments");
+});
+
+test("overview Excel and CSV export ASD references only when opted in, in combined and weekly files", () => {
+  const options = { ...fixture(), asdExams: asdFixture(), report: "overview" };
+  const excluded = rows(read(buildExportFiles(options)[0]), "Exam overview");
+  assert.equal(excluded.length, 3);
+  assert.ok(excluded.slice(1).every((row) => row.at(-1) === "Department"));
+  for (const format of ["xlsx", "csv"]) {
+    for (const packaging of ["combined", "weekly"]) {
+      const files = buildExportFiles({ ...options, includeAsd: true, format, packaging });
+      assert.equal(files.length, packaging === "weekly" ? 3 : 1);
+      if (packaging === "weekly") assert.equal(files[2].filename, "Week_3_Exam_Overview." + format);
+      const exported = files.flatMap((file) => {
+        const table = format === "xlsx" ? rows(read(file), "Exam overview")
+          : XLSX.utils.sheet_to_json(XLSX.read(file.data, { type: "string", raw: true }).Sheets.Sheet1, { header: 1 });
+        assert.equal(table[0].at(-1), "Schedule");
+        return table.slice(1);
+      });
+      assert.equal(exported.length, 5);
+      const references = exported.filter((row) => row[13] === "ASD (reference)");
+      assert.equal(references.length, 3);
+      assert.ok(references.every((row) => row.slice(8, 13).every((value) => value === undefined || value === "")),
+        "ASD resource and student totals are blank, not misleading zeroes");
+      assert.ok(!JSON.stringify(exported).includes("Student"));
+      assert.ok(!JSON.stringify(exported).includes("Invigilator"));
+      assert.ok(references.some((row) => Number(row[0]) === 3 && row[3] === "10:30" && row[4] === "12:00"));
+    }
+  }
+  const week3 = read(buildExportFiles({ ...options, includeAsd: true, weeks: [3] })[0]);
+  assert.equal(rows(week3, "Exam overview").length, 2);
+});
+
+test("ASD inclusion cannot affect complete, staff or student reports, or their weekly exports", () => {
+  const options = { ...fixture(), asdExams: asdFixture(), includeAsd: true };
+  for (const report of ["complete", "staff", "students"]) {
+    for (const packaging of ["combined", "weekly"]) {
+      const baseline = buildExportFiles({ ...options, report, packaging, includeAsd: false });
+      const files = buildExportFiles({ ...options, report, packaging });
+      assert.deepEqual(files.map((file) => file.filename), baseline.map((file) => file.filename));
+      for (const [index, file] of files.entries()) {
+        const workbook = read(file);
+        const original = read(baseline[index]);
+        assert.deepEqual(workbook.SheetNames, original.SheetNames);
+        for (const name of workbook.SheetNames) assert.deepEqual(rows(workbook, name), rows(original, name));
+        assert.ok(!JSON.stringify(workbook.Sheets).includes("ASD-"));
+      }
+    }
+    assert.throws(() => buildExportFiles({ ...options, report, weeks: [3] }), /Only weeks with scheduled/);
+    if (report !== "complete") assert.equal(buildExportFiles({ ...options, report, format: "csv" })[0].data,
+      buildExportFiles({ ...options, report, format: "csv", includeAsd: false })[0].data);
+  }
+  const direct = buildCombinedResourceWorkbook(options);
+  assert.deepEqual(rows(direct, "Schedule Index").slice(1).map((row) => row[0]), [1, 2]);
+  assert.ok(!direct.SheetNames.some((name) => name.startsWith("Week 3")));
+});
 
 test("export model uses confirmed resources, excludes empty weeks and counts sittings separately", () => {
   const options = fixture();
@@ -98,8 +202,8 @@ test("focused workbooks contain the right audience's data and staff has a separa
   const schedule = rows(overview, "Exam overview");
   assert.equal(schedule.length, 3);
   assert.ok(!schedule[0].some((header) => /student name|student id|invigilator name/i.test(header)));
-  assert.deepEqual(schedule[0].slice(-2), ["Primary invigilators needed", "During lab time"]);
-  assert.deepEqual(schedule.slice(1).map((row) => row.slice(-2)), [[2, "Yes"], [2, "No"]]);
+  assert.deepEqual(schedule[0].slice(-3), ["Primary invigilators needed", "During lab time", "Schedule"]);
+  assert.deepEqual(schedule.slice(1).map((row) => row.slice(-3)), [[2, "Yes", "Department"], [2, "No", "Department"]]);
   assert.equal(overview.Sheets["Exam overview"].L2.t, "n", "The requirement remains a numeric Excel value");
   assert.ok(!JSON.stringify(schedule.slice(1)).includes("Invigilator 0"), "Counts do not expose staff names");
   assert.equal(schedule[1][1].toISOString().slice(0, 10), "2026-10-19");
@@ -183,7 +287,7 @@ test("lab indicators identify only the replaced course, including all its overfl
   assert.deepEqual(model.exams.map((exam) => [exam.code, exam.roomNames.length, exam.primaryInvigilatorsNeeded, exam.duringLab]),
     [["A", 2, 3, true], ["B", 1, 2, false]]);
   assert.equal(model.exams[0].end, 600, "The approved 09:50 lab ending still qualifies for a 09:00-10:00 exam");
-  assert.equal(reportTable("overview", model).rows[1].at(-1), "No", "A simultaneous non-lab exam cannot inherit the lab marker");
+  assert.equal(reportTable("overview", model).rows[1].at(-2), "No", "A simultaneous non-lab exam cannot inherit the lab marker");
 });
 
 test("CSV exports include selected weeks, preserve Unicode and quotes, and neutralise spreadsheet formula injection", () => {
