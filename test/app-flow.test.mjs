@@ -23,6 +23,10 @@ const resourceSource = readFileSync(new URL("../src/ResourceAssignment.jsx", imp
   .replace(/^import .*;\r?$/gm, "")
   .replace("export default function ResourceAssignment", "function ResourceAssignment") + "\nglobalThis.ResourceAssignment = ResourceAssignment;";
 const { code: resourceComponentCode } = await transformWithEsbuild(resourceSource, "ResourceAssignment.jsx", { loader: "jsx", jsxFactory: "h", jsxFragment: "Fragment" });
+const poolSource = readFileSync(new URL("../src/ResourcePool.jsx", import.meta.url), "utf8")
+  .replace(/^import .*;\r?$/gm, "")
+  .replace("export default function ResourcePool", "function ResourcePool") + "\nglobalThis.ResourcePool = ResourcePool;";
+const { code: poolComponentCode } = await transformWithEsbuild(poolSource, "ResourcePool.jsx", { loader: "jsx", jsxFactory: "h", jsxFragment: "Fragment" });
 const exportSource = readFileSync(new URL("../src/ExportStudio.jsx", import.meta.url), "utf8")
   .replace(/^import .*;\r?$/gm, "")
   .replace("export default function ExportStudio", "function ExportStudio") + "\nglobalThis.ExportStudio = ExportStudio;";
@@ -79,6 +83,7 @@ function harness(component = "App", props) {
     document: { body: { appendChild() {}, removeChild() {} }, createElement: () => ({ click() { downloadNames.push(this.download); } }) },
     fetch: async () => ({ ok: true, arrayBuffer: async () => buffer("data/ReportReference/Report Template.xlsx") }),
   });
+  runInContext(poolComponentCode, context);
   runInContext(resourceComponentCode, context);
   runInContext(exportComponentCode, context);
   runInContext(code, context);
@@ -236,6 +241,108 @@ const enrolmentPath = root + "Students Registration 26-27 S1.xlsx";
 const crnPath = root + "CRN List 26-27 S1.xlsx";
 const asdPath = root + "Other Departments Schedule/Midterm Schedule 26-27 S1.xlsx";
 
+test("resource selection precedes generation and stays editable after the resource-aware draft", async () => {
+  const workbook = (rows) => {
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(rows), "First");
+    const data = XLSX.write(book, { type: "array", bookType: "xlsx" });
+    return { target: { files: [{ name: "input.xlsx", arrayBuffer: async () => data }], value: "input.xlsx" } };
+  };
+  const app = harness();
+  let tree = app.render();
+  const upload = find(find(tree, (node) => node.type === "label" && text(node) === "Upload Enrollment File"),
+    (node) => node.type === "input");
+  await upload.props.onChange(workbook([
+    ["Student ID", "Student Name", "Course Code", "Course Title", "CRN"],
+    ["S1", "Student One", "MAIN-1000", "Main Exam", "101"],
+    ["S2", "Student Two", "MAIN-1000", "Main Exam", "102"],
+  ]));
+  tree = app.render();
+  await review(tree).props.onUpload(workbook([
+    ["Campus", "Crn No", "Course Code", "Title", "Cr", "Maximum Load", "No Of Enrolled", "Session Id", "DAYS", "Time", "Primary Instructor", "Second Instructor", "Type", "Building", "Room"],
+    ["PAD", "101", "MAIN-1000", "Main Exam", 3, 25, 1, "01", "M", "0800 - 0950", "10: Alice", "20: Bob", "T", "P-B-4F", "13"],
+    ["PAD", "102", "MAIN-1000", "Main Exam", 3, 25, 1, "02", "T", "0800 - 0950", "30: Carol", "", "T", "P-B-4F", "14"],
+  ]));
+  tree = app.render();
+  button(tree, "Continue To ASD").props.onClick();
+  tree = app.render();
+  button(tree, "Skip ASD Step").props.onClick();
+  tree = app.render();
+  const selection = () => find(tree, (node) => node.props["aria-label"] === "Resource selection");
+  const pool = () => find(tree, (node) => node.type?.name === "ResourcePool");
+  const include = (name) => find(selection(), (node) => node.type === "input" && node.props["aria-label"] === "Include " + name);
+  assert.equal(pool().props.selectionOnly, true);
+  assert.ok(!text(selection()).includes("Invigilation Load"), "Do not show assignment/load controls before generation");
+  assert.ok(!nodes(tree).some((node) => node.type?.name === "ResourceAssignment"));
+  assert.ok(!nodes(tree).some((node) => node.type === "button" && text(node) === "Auto-Schedule Remaining Exams"));
+  assert.match(text(selection()), /3 invigilators selected/);
+  assert.match(text(selection()), /Target: two available standby invigilators per slot/);
+  assert.match(text(selection()), /08:00-09:50/);
+  const roomNames = pool().props.catalog.rooms.map((room) => room.name);
+  include(roomNames[0]).props.onChange({ target: { checked: false } });
+  tree = app.render();
+  include(roomNames[1]).props.onChange({ target: { checked: false } });
+  tree = app.render();
+  assert.equal(button(tree, "Continue To Scheduling").props.disabled, true);
+  include(roomNames[1]).props.onChange({ target: { checked: true } });
+  include("Carol").props.onChange({ target: { checked: false } });
+  include("Bob").props.onChange({ target: { checked: false } });
+  tree = app.render();
+  assert.equal(button(tree, "Continue To Scheduling").props.disabled, true, "One person cannot cover both an exam and backup");
+  include("Carol").props.onChange({ target: { checked: true } });
+  include("Bob").props.onChange({ target: { checked: true } });
+  tree = app.render();
+  assert.equal(button(tree, "Continue To Scheduling").props.disabled, false);
+  button(tree, "Continue To Scheduling").props.onClick();
+  tree = app.render();
+  button(tree, "Auto-Schedule Remaining Exams").props.onClick();
+  tree = app.render();
+  assert.match(text(tree), /1 exams added. 0 remain unplaced/);
+  button(tree, "Proceed To Resources").props.onClick();
+  tree = app.render();
+  const assignment = () => find(tree, (node) => node.type?.name === "ResourceAssignment").props;
+  assert.equal(assignment().validation.complete, true, "The generated draft includes its checked allocation");
+  assert.equal(button(tree, "Proceed To Export").props.disabled, false);
+  assert.match(text(tree), /Available standby capacity: 2 \(target 2\)/);
+  assert.equal(assignment().sessions[0].day, "Monday");
+  assert.equal(assignment().sessions[0].slotId, "12:00");
+  assert.equal(assignment().plan.backups[assignment().sessions[0].id].length, 1);
+  const excludedRoom = assignment().catalog.rooms.find((room) => room.name === roomNames[0]);
+  assert.equal(excludedRoom.enabled, false);
+  assert.ok(Object.values(assignment().plan.allocations).every((allocation) => allocation.roomId !== excludedRoom.id));
+  const model = exportReports.buildExportModel({ ...assignment(), startDate: "2026-10-19" });
+  assert.equal(model.duties.length, 2, "Unassigned standby people cannot become report duties");
+  assert.equal(model.workloads.filter((person) => person.exam + person.backup + person.teaching === 0).length, 1);
+  const primaryIds = Object.values(assignment().plan.allocations).flatMap((allocation) => allocation.invigilatorIds);
+  const backupIds = Object.values(assignment().plan.backups).flat();
+  const spare = assignment().catalog.invigilators.find((person) => !primaryIds.includes(person.id) && !backupIds.includes(person.id));
+  assignment().onPoolChange("invigilators", spare.id, { enabled: false });
+  tree = app.render();
+  assert.equal(button(tree, "Proceed To Export").props.disabled, true, "Pool edits invalidate the generated plan until review");
+  assert.match(text(tree), /Confirm valid room and staff assignments to assess standby capacity/);
+  button(tree, "Auto-Assign Resources").props.onClick();
+  tree = app.render();
+  assert.equal(assignment().validation.complete, true, "The existing one-backup report rule is still valid");
+  assert.match(text(tree), /Available standby capacity: 1 \(target 2\)/);
+  assert.ok(nodes(tree).some((node) => node.props.className === "resource-standby resource-standby--short"));
+  assignment().onPoolChange("invigilators", spare.id, { enabled: true });
+  tree = app.render();
+  button(tree, "Auto-Assign Resources").props.onClick();
+  tree = app.render();
+  button(tree, "Save Timetable").props.onClick();
+  const saved = JSON.parse(await app.downloads.at(-1).text());
+  assert.equal(saved.resourceCatalog.rooms.find((room) => room.name === roomNames[0]).enabled, false);
+  assert.ok(saved.resourcePlan.fingerprint);
+  button(tree, "Back To Scheduling").props.onClick();
+  tree = app.render();
+  button(tree, "Review Resource Pool").props.onClick();
+  tree = app.render();
+  assert.equal(include(roomNames[0]).props.checked, false);
+  assert.equal(include(roomNames[1]).props.checked, true);
+  assert.ok(!nodes(selection()).some((node) => node.type === "select"), "Pre-scheduling pool selection never exposes exam assignments");
+
+});
+
 test("wizard imports, exam toggles, draft, saved-state round trip and report exclusion work together", {
   skip: [enrolmentPath, crnPath, asdPath].some((path) => !existsSync(path)),
 }, async () => {
@@ -266,6 +373,10 @@ test("wizard imports, exam toggles, draft, saved-state round trip and report exc
   tree = app.render();
   const asdInput = find(tree, (node) => node.type === "input" && node.props.accept === ".json,.xlsx,.xls,.csv");
   await asdInput.props.onChange(fileEvent(asdPath));
+  tree = app.render();
+  assert.match(text(tree), /Select Resources Before Scheduling/);
+  assert.ok(!nodes(tree).some((node) => node.props.className === "timetable"));
+  button(tree, "Continue To Scheduling").props.onClick();
   tree = app.render();
   button(tree, "Auto-Schedule Remaining Exams").props.onClick();
   tree = app.render();
@@ -302,7 +413,9 @@ test("wizard imports, exam toggles, draft, saved-state round trip and report exc
   review(loadedTree).props.onExamChange(assignedId, false);
   button(loadedTree, "Continue To ASD").props.onClick();
   loadedTree = reloaded.render();
-  button(loadedTree, "Continue To Main").props.onClick();
+  button(loadedTree, "Continue To Resources").props.onClick();
+  loadedTree = reloaded.render();
+  button(loadedTree, "Continue To Scheduling").props.onClick();
   loadedTree = reloaded.render();
   button(loadedTree, "Save Timetable").props.onClick();
   const afterToggle = JSON.parse(await reloaded.downloads.at(-1).text());

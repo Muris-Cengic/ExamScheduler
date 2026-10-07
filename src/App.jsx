@@ -9,6 +9,7 @@ import CourseSelection from "./CourseSelection.jsx";
 import { assignmentIds, defaultHasExam, parseDepartmentWorkbook, readDepartmentSelection, retainAssignments, scopeDepartmentCourses } from "./department.js";
 import { autoSchedule } from "./autoSchedule.js";
 import ResourceAssignment from "./ResourceAssignment.jsx";
+import ResourcePool from "./ResourcePool.jsx";
 import { assignResources, buildExamSessions, emptyResourcePlan, parseResourceCatalog, readResourceCatalog, readResourcePlan, reconcileRoomDistribution, resourceFingerprint, validateResourcePlan } from "./resources.js";
 import { examInvigilatorsNeeded, examRoomSizes, readRoomDistributionChoices, roomCapacity } from "./examRooms.js";
 import { buildAsdOverviewExams, buildExportFiles, REPORT_VIEWS } from "./exportReports.js";
@@ -1165,10 +1166,12 @@ function App() {
     const result = autoSchedule({
       courses: selectedExamCourses, courseLookup, assignments,
       asdAssignments: hasAsdStep ? asdAssignments : {}, asdExamDurations,
-      weeks, timeSlots, settings: { ...settings, invigilatorCount: totalInvigilatorCapacity, examDurationMinutes: examDurationMinutesValue },
+      weeks, timeSlots, settings: { ...settings, examDurationMinutes: examDurationMinutesValue },
       roomDistributionChoices,
+      catalog: resourceCatalog,
     });
     setAssignments(result.assignments);
+    setResourcePlan(result.resourcePlan);
     setAutoScheduleResult(result);
     if (result.placed.length) setSelectedWeek(result.placed[0].week);
   };
@@ -1920,7 +1923,7 @@ function App() {
         setHasAsdStep(true);
         setSelectedWeek(plan.placements[0].week);
         setSchedulerPhase("main");
-        setWizardStep(departmentSelection ? "main" : "courses");
+        setWizardStep(departmentSelection ? "pool" : "courses");
         setAutoScheduleResult(null);
         setHoverTarget(null);
         setUploadError("");
@@ -2116,7 +2119,7 @@ function App() {
       );
       setSelectedWeek(selectedWeekSafe);
       setSchedulerPhase("main");
-      setWizardStep(departmentSelection ? "main" : "courses");
+      setWizardStep(departmentSelection ? "pool" : "courses");
       setAutoScheduleResult(null);
       setHoverTarget(null);
       setUploadError("");
@@ -2265,17 +2268,17 @@ function App() {
     setAsdExamDurations({});
     setImportNotice("");
     setSchedulerPhase("main");
-    setWizardStep("main");
+    setWizardStep("pool");
   };
 
-  const continueToMainStep = () => {
+  const continueToResourceSelection = () => {
     setHasAsdStep(true);
     const allowed = new Set(selectedExamCourses.map((course) => course.id));
     asdAssignedCourseIds.forEach((id) => allowed.delete(id));
     setAssignments((previous) => retainAssignments(previous, allowed));
     setAutoScheduleResult(null);
     setSchedulerPhase("main");
-    setWizardStep("main");
+    setWizardStep("pool");
   };
 
   const goToExportStep = () => {
@@ -2310,6 +2313,7 @@ function App() {
 
   const handleResourcePoolChange = (kind, id, change) => {
     setResourceCatalog((previous) => ({ ...previous, [kind]: previous[kind].map((resource) => resource.id === id ? { ...resource, ...change } : resource) }));
+    setAutoScheduleResult(null);
   };
 
   const handleResourceAllocationChange = (roomId, allocation) => {
@@ -2404,9 +2408,10 @@ function App() {
     { id: "load", label: "1. Load Data" },
     { id: "courses", label: "2. Department Exams" },
     { id: "asd", label: "3. ASD (Optional)" },
-    { id: "main", label: "4. Build Main Timetable" },
-    { id: "resources", label: "5. Assign Resources" },
-    { id: "export", label: "6. Export" },
+    { id: "pool", label: "4. Select Resources" },
+    { id: "main", label: "5. Build Main Timetable" },
+    { id: "resources", label: "6. Review Resources" },
+    { id: "export", label: "7. Export" },
   ];
 
   const wizardStepIndex = wizardSteps.findIndex((step) => step.id === wizardStep);
@@ -2533,17 +2538,26 @@ function App() {
                 <button
                   type="button"
                   className="primary-action"
-                  onClick={continueToMainStep}
+                  onClick={continueToResourceSelection}
                   disabled={!courses.length}
                 >
-                  Continue To Main
+                  Continue To Resources
                 </button>
+              </>
+            ) : null}
+
+            {wizardStep === "pool" ? (
+              <>
+                <button type="button" onClick={() => { setWizardStep("asd"); setSchedulerPhase(hasAsdStep ? "asd" : "setup"); }}>Back To ASD</button>
+                <button type="button" className="primary-action" onClick={goToMainStep}
+                  disabled={!resourceCatalog.rooms.some((room) => room.enabled) || totalInvigilatorCapacity < 2}>Continue To Scheduling</button>
               </>
             ) : null}
 
             {wizardStep === "main" ? (
               <>
-                <button type="button" className="primary-action" onClick={handleAutoSchedule} disabled={!departmentSelection || !availableCourses.length}>Auto-Schedule Remaining Exams</button>
+                <button type="button" className="primary-action" onClick={handleAutoSchedule} disabled={!departmentSelection || !availableCourses.length || !resourceCatalog.rooms.some((room) => room.enabled) || totalInvigilatorCapacity < 2}>Auto-Schedule Remaining Exams</button>
+                <button type="button" onClick={() => setWizardStep("pool")}>Review Resource Pool</button>
                 <button type="button" onClick={() => { setWizardStep("courses"); setAutoScheduleResult(null); }}>Review Department Exams</button>
                 <button type="button" onClick={handleSaveTimetable} disabled={!courses.length}>
                   Save Timetable
@@ -2630,9 +2644,23 @@ function App() {
           <h2>Automatic Draft</h2>
           <p>{autoScheduleResult.placed.length} exams added. {autoScheduleResult.unplaced.length} remain unplaced. Existing main and ASD placements were preserved.</p>
           {autoScheduleResult.unplaced.length > 0 ? <ul>{autoScheduleResult.unplaced.map(({ courseId, reason }) => <li key={courseId}><strong>{courseLookup[courseId]?.code || courseId}</strong>: {reason}</li>)}</ul> : null}
-          <p>Prefers earlier eligible times, with day/week balancing only between equally early choices. Multiple exams can share a slot when constraints allow. Uses the listed lab weekdays for single-CRN courses and the common windows otherwise. Labs starting before 09:00 use 09:00-10:00; a listed 09:50 lab end is treated as 10:00. The full exam must fit. Add an exam week or adjust settings if needed; you can also place remaining exams manually.</p>
+          {autoScheduleResult.warnings.length ? <ul className="auto-schedule-warnings">{autoScheduleResult.warnings.map((warning) => <li key={warning.sessionId}>{warning.message}</li>)}</ul> : null}
+          <p>Checks selected rooms, named staff, teaching commitments and overlapping bookings before each placement. Prefers the earliest week, weekday and time with two available standby invigilators, including assigned backups. If no such slot fits, a valid slot with the required backup coverage is used and flagged above. Existing backup report rules are unchanged. Multiple exams can share a slot when constraints allow. Single-CRN exams keep their lab room/instructor. Morning labs use 09:00-10:00, treating a 09:50 end as 10:00. Review the generated resource assignments next, or adjust the pool and rerun for remaining exams.</p>
         </section>
       ) : null}
+
+      {wizardStep === "pool" ? <section className="resource-panel" aria-label="Resource selection">
+        <h2>Select Resources Before Scheduling</h2>
+        <p>Choose the resource pool before generating your timetable. The first CRN sheet supplies rooms, staff and recurring class commitments. Lab exams replace their own lab only. You can change selections and assignments again after scheduling.</p>
+        <div className="resource-panel__summary" role="status">
+          <span>{resourceCatalog.rooms.filter((room) => room.enabled).length} rooms selected</span>
+          <span>{totalInvigilatorCapacity} invigilators selected</span>
+          <strong>Target: two available standby invigilators per slot</strong>
+        </div>
+        <ResourcePool catalog={resourceCatalog} onPoolChange={handleResourcePoolChange} selectionOnly />
+        {!resourceCatalog.rooms.some((room) => room.enabled) || totalInvigilatorCapacity < 2
+          ? <p>Select at least one room and two invigilators to continue. Actual availability is checked for the entire exam when scheduling.</p> : null}
+      </section> : null}
 
       {wizardStep === "resources" ? (
         <ResourceAssignment sessions={examSessions} catalog={resourceCatalog} plan={resourcePlan} validation={resourceValidation}

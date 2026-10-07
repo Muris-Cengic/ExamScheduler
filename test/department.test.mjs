@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import * as XLSX from "xlsx/xlsx.mjs";
-import { assignmentIds, defaultHasExam, parseDepartmentWorkbook, readDepartmentSelection, retainAssignments, scopeDepartmentCourses } from "../src/department.js";
+import { assignmentIds, defaultHasExam, parseDepartmentWorkbook, readDepartmentSelection, retainAssignments, roomIdentity, scopeDepartmentCourses } from "../src/department.js";
+import { buildExamSessions, parseResourceCatalog, standbyAvailability, validateResourcePlan } from "../src/resources.js";
 import { autoSchedule } from "../src/autoSchedule.js";
 import { parseAsdWorkbook, parseEnrolmentWorkbook, planAsdImport } from "../src/imports.js";
 
@@ -15,16 +16,28 @@ const book = (rows, name = "Input") => {
 };
 const student = (id, crn = "101") => ({ id, name: id, crn });
 const course = (id, students = [student("S1")], crns = ["101"], labSessions = []) => ({
-  id, code: id, title: id, students, studentCount: students.length, crns, labSessions,
+  id, code: id, title: id, students, studentCount: students.length, crns,
+  labSessions: labSessions.map((lab) => ({ campus: "Campus", building: "Building", room: id + " Lab", labInstructorId: "I0", ...lab })),
   crnDetails: crns.map((crn) => ({ crn, instructor: "", students: students.filter((s) => s.crn === crn) })),
 });
-const settings = { slotIntervalMinutes: 30, startHour: 8, endHour: 18, studentsPerRoom: 25, invigilatorCount: 15, examDurationMinutes: 60 };
+const settings = { slotIntervalMinutes: 30, startHour: 8, endHour: 18, studentsPerRoom: 25, examDurationMinutes: 60 };
 const slots = (start = 8, end = 18) => Array.from({ length: (end - start) * 2 }, (_, i) => {
   const minute = start * 60 + i * 30;
   return { id: `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}` };
 });
-const draft = (courses, options = {}) => autoSchedule({ courses, courseLookup: Object.fromEntries(courses.map((c) => [c.id, c])),
-  assignments: {}, weeks: [1], timeSlots: slots(), settings, ...options });
+function resourceFixture(courses, staffCount = 15, roomCount = 15) {
+  const rooms = new Map(Array.from({ length: roomCount }, (_, i) => ["R" + i, { id: "R" + i, name: "Room " + i, enabled: true, busy: [] }]));
+  courses.forEach((course) => (course.labSessions || []).forEach((lab) => {
+    const id = roomIdentity(lab.campus, lab.building, lab.room);
+    rooms.set(id, { id, name: lab.room, enabled: true, busy: [] });
+  }));
+  return { rooms: [...rooms.values()], invigilators: Array.from({ length: staffCount }, (_, i) => ({ id: "I" + i, name: "Staff " + i, enabled: true, busy: [] })) };
+}
+const draft = (courses, options = {}) => {
+  const courseLookup = options.courseLookup || Object.fromEntries(courses.map((c) => [c.id, c]));
+  return autoSchedule({ courses, courseLookup, assignments: {}, weeks: [1], timeSlots: slots(), settings,
+    catalog: options.catalog || resourceFixture(Object.values(courseLookup), options.staffCount), ...options });
+};
 
 test("only the first CRN sheet is used, even when a later sheet is named ISET CRNs", () => {
   const workbook = book([
@@ -148,19 +161,21 @@ test("multiple CRNs use only common windows, even when labs are available", () =
   assert.equal(evening.placed[0].slotId, "17:00");
 });
 
-test("earlier common windows outrank lighter days and weeks", () => {
+test("chronological scheduling prioritizes earlier weeks and weekdays before later morning windows", () => {
   const c = course("MAIN", [student("S1")], ["101", "102"]);
   const existing = course("EXISTING", Array.from({ length: 16 }, (_, i) => student("OTHER" + i)));
   const result = draft([c], {
     assignments: { 1: { Friday: { "09:00": ["EXISTING"] } }, 2: { Friday: { "09:00": ["EXISTING"] } } },
-    courseLookup: { MAIN: c, EXISTING: existing }, weeks: [1, 2], settings: { ...settings, invigilatorCount: 4 },
+    courseLookup: { MAIN: c, EXISTING: existing }, weeks: [2, 1], staffCount: 4,
   });
-  assert.equal(result.placed[0].slotId, "09:00", "An occupied early slot beats empty noon/evening slots in any week");
-  assert.equal(result.placed[0].day, "Friday");
+  assert.equal(result.placed[0].week, 1);
+  assert.equal(result.placed[0].slotId, "12:00", "Monday noon comes before Friday morning");
+  assert.equal(result.placed[0].day, "Monday");
   const blocked = draft([c], {
-    asdAssignments: { 1: { Friday: { "09:00": ["ASD"] } } }, courseLookup: { MAIN: c, ASD: course("ASD") },
+    asdAssignments: { 1: { Monday: { "12:00": ["ASD"] } } }, courseLookup: { MAIN: c, ASD: course("ASD") },
   });
-  assert.equal(blocked.placed[0].slotId, "10:30", "Friday's second morning slot beats an empty weekday noon slot");
+  assert.equal(blocked.placed[0].slotId, "17:00", "Monday evening comes before Tuesday noon");
+  assert.equal(blocked.placed[0].day, "Monday");
 });
 
 test("feasible exams can share noon slots instead of moving to an empty evening slot", () => {
@@ -169,49 +184,49 @@ test("feasible exams can share noon slots instead of moving to an empty evening 
   const assignments = { 1: Object.fromEntries(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
     .map((day) => [day, { "12:00": ["EXISTING"] }])) };
   const options = { assignments, courseLookup: { MAIN: c, EXISTING: existing }, timeSlots: slots(12, 18) };
-  const result = draft([c], { ...options, settings: { ...settings, invigilatorCount: 3 } });
+  const result = draft([c], { ...options, staffCount: 4 });
   assert.equal(result.unplaced.length, 0);
   assert.equal(result.placed[0].slotId, "12:00");
   assert.equal(result.placed[0].day, "Monday");
   assert.deepEqual(result.assignments[1].Monday["12:00"], ["EXISTING", "MAIN"]);
   assert.deepEqual(assignments[1].Monday["12:00"], ["EXISTING"], "Existing input maps are not mutated");
-  const limited = draft([c], { ...options, settings: { ...settings, invigilatorCount: 2 } });
+  const limited = draft([c], { ...options, staffCount: 2 });
   assert.equal(limited.placed[0].slotId, "17:00", "Concurrent room duties plus backup capacity still limit noon placement");
   const conflict = draft([c], { ...options, courseLookup: { MAIN: c, EXISTING: course("EXISTING") } });
   assert.equal(conflict.placed[0].slotId, "17:00", "Shared students still block the earlier slot");
 });
 
-test("a batch fills feasible noon slots in parallel before using evening slots", () => {
+test("a batch fills the earliest day and parallel slots before moving to later days", () => {
   const courses = Array.from({ length: 7 }, (_, i) => course("EXAM-" + i, [student("STUDENT-" + i)], ["101", "102"]));
   const options = { timeSlots: slots(12, 18) };
-  const enough = draft(courses, { ...options, settings: { ...settings, invigilatorCount: 3 } });
+  const enough = draft(courses, { ...options, staffCount: 4 });
   assert.equal(enough.unplaced.length, 0);
-  assert.ok(enough.placed.every((exam) => exam.slotId === "12:00"));
-  assert.ok(Object.values(enough.assignments[1]).some((day) => day["12:00"].length === 2), "Independent exams can share noon");
-  assert.ok(Object.values(enough.assignments[1]).every((day) => day["12:00"].length <= 2), "Reserve the slot backup as well as each room duty");
-  const limited = draft(courses, { ...options, settings: { ...settings, invigilatorCount: 2 } });
-  assert.equal(limited.placed.filter((exam) => exam.slotId === "12:00").length, 5);
-  assert.equal(limited.placed.filter((exam) => exam.slotId === "17:00").length, 2);
+  assert.deepEqual(enough.placed.map((exam) => [exam.day, exam.slotId]),
+    [["Monday", "12:00"], ["Monday", "12:00"], ["Monday", "17:00"], ["Monday", "17:00"],
+      ["Tuesday", "12:00"], ["Tuesday", "12:00"], ["Tuesday", "17:00"]]);
+  assert.deepEqual(enough.warnings, []);
+  const limited = draft(courses, { ...options, staffCount: 2 });
+  assert.equal(limited.unplaced.length, 0);
+  assert.equal(limited.placed.filter((exam) => exam.day === "Monday").length, 2);
+  assert.equal(limited.placed.filter((exam) => exam.day === "Tuesday").length, 2);
+  assert.equal(limited.warnings.length, 7, "One-backup fallback is explicit when two standby people cannot fit anywhere");
 });
 
-test("earlier-slot priority still prevents a third exam for a student on Friday", () => {
+test("chronological placement still prevents a third exam for a student on the same day", () => {
   const courses = ["A", "B", "C"].map((id) => course(id, [student("S1")], ["101", "102"]));
   const result = draft(courses);
   assert.equal(result.unplaced.length, 0);
-  assert.equal(result.placed[0].slotId, "09:00");
-  assert.equal(result.placed[1].slotId, "10:30");
-  assert.equal(result.placed[2].slotId, "12:00");
-  assert.equal(result.placed[2].day, "Monday");
-  assert.equal(result.placed.filter((exam) => exam.day === "Friday").length, 2);
+  assert.deepEqual(result.placed.map((exam) => [exam.day, exam.slotId]),
+    [["Monday", "12:00"], ["Monday", "17:00"], ["Tuesday", "12:00"]]);
 });
 
-test("equally early slots retain day and week load balancing", () => {
+test("earliest dates outrank lighter days and weeks when resource and student constraints allow", () => {
   const c = course("MAIN", [student("S1")], ["101", "102"]);
   const existing = course("EXISTING", [student("OTHER")]);
   const options = { assignments: { 1: { Monday: { "12:00": ["EXISTING"] } } },
     courseLookup: { MAIN: c, EXISTING: existing }, timeSlots: slots(12, 18) };
-  assert.equal(draft([c], options).placed[0].day, "Tuesday", "Choose a lighter day without changing the preferred start time");
-  assert.equal(draft([c], { ...options, weeks: [1, 2] }).placed[0].week, 2, "Choose a lighter week when start times and day loads tie");
+  assert.equal(draft([c], options).placed[0].day, "Monday", "An occupied earlier slot is retained when capacity allows");
+  assert.equal(draft([c], { ...options, weeks: [1, 2] }).placed[0].week, 1, "Do not use a later week just to balance the timetable");
 });
 
 test("single-CRN labs also prefer earlier feasible starts without leaving their lab window", () => {
@@ -219,14 +234,14 @@ test("single-CRN labs also prefer earlier feasible starts without leaving their 
   const existing = course("EXISTING", [student("OTHER")]);
   const result = draft([c], {
     assignments: { 1: { Thursday: { "15:00": ["EXISTING"] } } },
-    courseLookup: { LAB: c, EXISTING: existing }, settings: { ...settings, invigilatorCount: 3 },
+    courseLookup: { LAB: c, EXISTING: existing }, staffCount: 3,
   });
   assert.equal(result.placed[0].slotId, "15:00");
   assert.equal(result.placed[0].end, 960);
 });
 
 test("one CRN without a lab uses common windows; long exams stay unplaced", () => {
-  assert.equal(draft([course("NO_LAB")]).placed[0].slotId, "09:00");
+  assert.equal(draft([course("NO_LAB")]).placed[0].slotId, "12:00");
   const result = draft([course("LONG", [student("S1")], ["101", "102"])], { settings: { ...settings, examDurationMinutes: 120 } });
   assert.equal(result.placed.length, 0);
   assert.match(result.unplaced[0].reason, /No matching window/);
@@ -275,36 +290,36 @@ test("more than two exams in a day is avoided across both schedules", () => {
 
 test("staffing reserves two invigilators above 15 students plus slot backups; ASD excluded", () => {
   const c = course("MAIN", Array.from({ length: 16 }, (_, i) => student(`S${i}`)));
-  c.labSessions.push({ days: ["Monday"], startMinutes: 720, endMinutes: 780 });
-  const short = draft([c], { settings: { ...settings, invigilatorCount: 2 } });
+  c.labSessions.push({ days: ["Monday"], startMinutes: 720, endMinutes: 780, campus: "Campus", building: "Building", room: "Lab", labInstructorId: "I0" });
+  const short = draft([c], { staffCount: 2 });
   assert.equal(short.placed.length, 0);
-  assert.match(short.unplaced[0].reason, /insufficient invigilators/);
+  assert.match(short.unplaced[0].reason, /Slot backup not assigned|Invigilators not assigned/);
   const asd = course("ASD", Array.from({ length: 100 }, (_, i) => student(`OTHER${i}`)));
-  const enough = draft([c], { settings: { ...settings, invigilatorCount: 3 }, asdAssignments: { 1: { Monday: { "12:00": ["ASD"] } } }, courseLookup: { MAIN: c, ASD: asd } });
+  const enough = draft([c], { staffCount: 3, asdAssignments: { 1: { Monday: { "12:00": ["ASD"] } } }, courseLookup: { MAIN: c, ASD: asd } });
   assert.equal(enough.placed.length, 1);
 });
 
 test("auto-scheduling staffing uses the last-room saving while keeping slot backups separate", () => {
   const large = course("LARGE", Array.from({ length: 55 }, (_, i) => student(`S${i}`)));
-  const short = draft([large], { settings: { ...settings, invigilatorCount: 5 } });
+  const short = draft([large], { staffCount: 5 });
   assert.equal(short.placed.length, 0, "20/20/15 needs five room invigilators plus one backup");
-  assert.match(short.unplaced[0].reason, /insufficient invigilators/);
-  assert.equal(draft([large], { settings: { ...settings, invigilatorCount: 6 } }).placed.length, 1);
+  assert.match(short.unplaced[0].reason, /Slot backup not assigned|Invigilators not assigned/);
+  assert.equal(draft([large], { staffCount: 6 }).placed.length, 1);
   const small = course("SMALL", Array.from({ length: 26 }, (_, i) => student(`S${i}`)));
-  assert.equal(draft([small], { settings: { ...settings, invigilatorCount: 3 } }).placed.length, 1, "13/13 needs only two room invigilators plus one backup");
+  assert.equal(draft([small], { staffCount: 3 }).placed.length, 1, "13/13 needs only two room invigilators plus one backup");
 });
 
 test("automatic staffing respects only explicitly approved room consolidation", () => {
   const c = course("MAIN", Array.from({ length: 52 }, (_, i) => student(`S${i}`)));
-  assert.equal(draft([c], { settings: { ...settings, invigilatorCount: 5 } }).placed.length, 0);
-  assert.equal(draft([c], { settings: { ...settings, invigilatorCount: 5 }, roomDistributionChoices: { MAIN: "distribute" } }).placed.length, 1);
-  assert.equal(draft([c], { settings: { ...settings, invigilatorCount: 5, studentsPerRoom: 20 }, roomDistributionChoices: { MAIN: "distribute" } }).placed.length, 0, "A lower configured limit cannot be overridden");
+  assert.equal(draft([c], { staffCount: 5 }).placed.length, 0);
+  assert.equal(draft([c], { staffCount: 5, roomDistributionChoices: { MAIN: "distribute" } }).placed.length, 1);
+  assert.equal(draft([c], { staffCount: 5, settings: { ...settings, studentsPerRoom: 20 }, roomDistributionChoices: { MAIN: "distribute" } }).placed.length, 0, "A lower configured limit cannot be overridden");
 });
 
 test("simultaneous courses have separate rooms and invigilators", () => {
   const c = course("NEW", [student("NEW_STUDENT")], ["101"], [{ days: ["Monday"], startMinutes: 720, endMinutes: 780 }]);
   const existing = course("EXISTING", [student("OTHER")]);
-  const result = draft([c], { assignments: { 1: { Monday: { "12:00": ["EXISTING"] } } }, courseLookup: { NEW: c, EXISTING: existing }, settings: { ...settings, invigilatorCount: 3 } });
+  const result = draft([c], { assignments: { 1: { Monday: { "12:00": ["EXISTING"] } } }, courseLookup: { NEW: c, EXISTING: existing }, staffCount: 3 });
   assert.equal(result.placed.length, 1);
 });
 
@@ -326,7 +341,7 @@ test("staffing checks actual concurrent slots rather than combining consecutive 
   const result = draft([c], {
     assignments: { 1: { Monday: { "15:00": ["EARLY"], "16:00": ["LATE"] } } },
     courseLookup: { MAIN: c, EARLY: course("EARLY", [student("S2")]), LATE: course("LATE", [student("S3")]) },
-    settings: { ...settings, invigilatorCount: 3 },
+    staffCount: 4,
   });
   assert.equal(result.placed[0].slotId, "15:30");
 });
@@ -337,6 +352,99 @@ test("an additional week provides a valid lab slot when the first week is blocke
   assert.equal(result.placed[0].week, 2);
   assert.equal(result.placed[0].slotId, "09:00");
   assert.equal(result.unplaced.length, 0);
+});
+
+test("resource-aware placement checks rooms and staff for the entire exam rather than pool totals", () => {
+  const c = course("MAIN", Array.from({ length: 16 }, (_, i) => student("S" + i)), ["101", "102"]);
+  const catalog = resourceFixture([c], 4, 1);
+  catalog.rooms[0].busy = [{ code: "ROOM-CLASS", crn: "900", days: ["Monday"], start: 750, end: 780, isLab: false }];
+  catalog.invigilators[0].busy = [{ code: "STAFF-CLASS", crn: "901", days: ["Monday"], start: 750, end: 780, isLab: false }];
+  const before = JSON.stringify(catalog);
+  const result = draft([c], { catalog, settings: { ...settings, invigilatorCount: 999 } });
+  assert.deepEqual(result.placed.map((exam) => [exam.week, exam.day, exam.slotId]), [[1, "Monday", "17:00"]]);
+  const sessions = buildExamSessions(result.assignments, { MAIN: c }, 60);
+  assert.equal(validateResourcePlan(sessions, catalog, result.resourcePlan).complete, true);
+  assert.deepEqual(standbyAvailability(sessions[0], sessions, catalog, result.resourcePlan), { count: 2, assigned: 1, unassigned: 1 });
+  assert.equal(result.resourcePlan.backups[sessions[0].id].length, 1, "Two-person capacity cannot add a second report backup");
+  assert.deepEqual(result.warnings, []);
+  assert.equal(JSON.stringify(catalog), before);
+});
+
+test("the preferred two-person standby capacity can defer a slot; a one-backup fallback is explicit", () => {
+  const c = course("MAIN", [student("S1")], ["101", "102"]);
+  const catalog = resourceFixture([c], 3, 1);
+  catalog.invigilators[2].busy = [{ code: "CLASS", crn: "901", days: ["Monday"], start: 720, end: 780, isLab: false }];
+  const later = draft([c], { catalog });
+  assert.equal(later.placed[0].slotId, "17:00");
+  assert.equal(later.placed[0].day, "Monday");
+  assert.deepEqual(later.warnings, []);
+  catalog.invigilators[2].enabled = false;
+  const fallback = draft([c], { catalog, weeks: [2, 1] });
+  assert.equal(fallback.placed[0].week, 1);
+  assert.equal(fallback.placed[0].day, "Monday");
+  assert.equal(fallback.placed[0].slotId, "12:00");
+  assert.equal(fallback.warnings.length, 1);
+  assert.match(fallback.warnings[0].message, /Week 1 \/ Monday \/ 12:00-13:00: only 1 available standby/);
+  const sessions = buildExamSessions(fallback.assignments, { MAIN: c }, 60);
+  assert.equal(validateResourcePlan(sessions, catalog, fallback.resourcePlan).complete, true);
+});
+
+test("excluded resources and unspecified class times affect placement before generation", () => {
+  const c = course("MAIN", [student("S1")], ["101", "102"]);
+  const catalog = resourceFixture([c], 4, 2);
+  catalog.rooms[1].enabled = false;
+  catalog.invigilators[3].enabled = false;
+  const unknown = { code: "UNKNOWN", crn: "901", days: ["Monday"], start: 0, end: 1440, isLab: false, unknownTime: true };
+  catalog.rooms[0].busy = [unknown];
+  catalog.invigilators[0].busy = [unknown];
+  const result = draft([c], { catalog });
+  assert.equal(result.placed[0].day, "Tuesday");
+  assert.equal(result.placed[0].slotId, "12:00");
+  assert.ok(Object.values(result.resourcePlan.allocations).every((allocation) =>
+    allocation.roomId !== "R1" && !allocation.invigilatorIds.includes("I3")));
+  assert.ok(Object.values(result.resourcePlan.backups).every((ids) => !ids.includes("I3")));
+  catalog.rooms[0].enabled = false;
+  const noRooms = draft([c], { catalog });
+  assert.equal(noRooms.placed.length, 0);
+  assert.match(noRooms.unplaced[0].reason, /Room not assigned/);
+  assert.equal(assignmentIds(noRooms.assignments).size, 0);
+});
+
+test("single-CRN exams retain the lab room and teacher and skip unrelated teaching conflicts", () => {
+  const lab = { days: ["Monday", "Wednesday"], crn: "101", startMinutes: 480, endMinutes: 590 };
+  const c = course("LAB", Array.from({ length: 16 }, (_, i) => student("S" + i)), ["101"], [lab]);
+  const catalog = resourceFixture([c], 4, 0);
+  const ownLab = { code: "LAB", crn: "101", days: ["Monday", "Wednesday"], start: 480, end: 590, isLab: true };
+  catalog.rooms[0].busy = [ownLab];
+  catalog.invigilators[0].busy = [ownLab,
+    { code: "OTHER-LECTURE", crn: "902", days: ["Monday"], start: 570, end: 600, isLab: false }];
+  const result = draft([c], { catalog });
+  assert.equal(result.placed[0].day, "Wednesday");
+  assert.equal(result.placed[0].slotId, "09:00");
+  const sessions = buildExamSessions(result.assignments, { LAB: c }, 60);
+  const allocation = result.resourcePlan.allocations[sessions[0].rooms[0].id];
+  assert.equal(allocation.roomId, catalog.rooms[0].id);
+  assert.equal(allocation.invigilatorIds[0], "I0");
+  assert.equal(allocation.invigilatorIds.length, 2);
+  assert.equal(validateResourcePlan(sessions, catalog, result.resourcePlan).complete, true);
+  catalog.invigilators[0].enabled = false;
+  const excluded = draft([c], { catalog });
+  assert.equal(excluded.placed.length, 0, "A different available teacher cannot replace the required lab teacher");
+  assert.match(excluded.unplaced[0].reason, /Lab instructor unavailable/);
+});
+
+test("overlapping start times reserve distinct people and retain two standby people for each slot", () => {
+  const c = course("MAIN", [student("S1")], ["101"], [{ days: ["Monday"], startMinutes: 930, endMinutes: 990 }]);
+  const lookup = { MAIN: c, EARLY: course("EARLY", [student("S2")]), LATE: course("LATE", [student("S3")]) };
+  const assignments = { 1: { Monday: { "15:00": ["EARLY"], "16:00": ["LATE"] } } };
+  const catalog = resourceFixture(Object.values(lookup), 5, 2);
+  const result = draft([c], { assignments, courseLookup: lookup, catalog });
+  assert.equal(result.placed[0].slotId, "15:30");
+  const sessions = buildExamSessions(result.assignments, lookup, 60);
+  assert.equal(validateResourcePlan(sessions, catalog, result.resourcePlan).complete, true);
+  assert.ok(sessions.every((session) => standbyAvailability(session, sessions, catalog, result.resourcePlan).count >= 2));
+  const tooFew = draft([c], { assignments, courseLookup: lookup, catalog: resourceFixture(Object.values(lookup), 3, 2) });
+  assert.equal(tooFew.placed.length, 0, "Existing backups at other overlapping starts cannot be reused");
 });
 
 const root = "data/input/26-27 S1/";
@@ -364,10 +472,15 @@ test("supplied department list scopes enrolment and produces a valid automatic d
     asdAssignments[week][day][slotId].push(courseId);
   });
   const courseLookup = Object.fromEntries([...enrolment.courses, ...scope.courses].map((c) => [c.id, c]));
-  const result = draft(selected, { courseLookup, asdAssignments, asdExamDurations: plan.examDurations, weeks: plan.weeks });
+  const result = draft(selected, { courseLookup, asdAssignments, asdExamDurations: plan.examDurations, weeks: plan.weeks, catalog: parseResourceCatalog(catalog) });
   assert.equal(result.placed.length + result.unplaced.length, selected.length);
   assert.equal(result.placed.length, 26);
   assert.deepEqual(result.unplaced, []);
+  const sessions = buildExamSessions(result.assignments, courseLookup, 60);
+  const resources = parseResourceCatalog(catalog);
+  assert.equal(validateResourcePlan(sessions, resources, result.resourcePlan).complete, true);
+  assert.ok(sessions.every((session) => standbyAvailability(session, sessions, resources, result.resourcePlan).count >= 2));
+  assert.deepEqual(result.warnings, []);
   for (const placed of result.placed) {
     const c = courseLookup[placed.courseId];
     if (c.crns.length === 1 && c.labSessions.length) {

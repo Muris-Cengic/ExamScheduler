@@ -126,6 +126,9 @@
 .resource-panel button { padding: 0.7rem 1rem; border: 1px solid #cbd5e1; border-radius: 0.5rem; font: inherit; cursor: pointer; }
 .resource-panel button.primary-action { background: #2563eb; color: #fff; border-color: #2563eb; }
 .resource-panel__summary { display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; padding: 1rem; margin: 1rem 0; border-radius: 0.5rem; background: #eff6ff; }
+.resource-standby { padding: 0.65rem 0.85rem; border-left: 3px solid #46937a; background: #f0f8f4; font-size: 0.85rem; }
+.resource-standby--short, .auto-schedule-warnings { border-left: 3px solid #b7791f; background: #fffbeb; color: #854d0e; }
+.auto-schedule-warnings { padding: 0.75rem 1rem 0.75rem 2rem; line-height: 1.6; }
 .resource-pool { border: 1px solid #cbd5e1; border-radius: 0.5rem; padding: 1rem; margin-bottom: 1rem; }
 .resource-pool > summary,
 .resource-issues > summary { cursor: pointer; font-weight: 700; }

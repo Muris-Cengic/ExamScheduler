@@ -6,6 +6,7 @@ const normalise = (value) => String(value ?? "").trim().toLowerCase().replace(/[
 const overlaps = (a, b) => a.start < b.end && b.start < a.end;
 const sameDay = (a, b) => a.week === b.week && a.day === b.day;
 export const backupTarget = (roomCount) => Math.max(1, Math.floor(roomCount * 0.4));
+export const PREFERRED_STANDBY_COUNT = 2;
 export const clock = (value) => `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
 export const resourceSessionLabel = (session) => `Week ${session.week} / ${session.day} / ${clock(session.start)}-${clock(session.end)}`;
 export const resourceAssignmentAnchor = (id) => `resource-assignment-${encodeURIComponent(id)}`;
@@ -222,6 +223,17 @@ export function resourceChoiceSummary(resource, kind, session, sessions, plan, o
     return (booking.courseCode ? "Exam " + booking.courseCode : "Backup duty") + " " + clock(booking.start) + "-" + clock(booking.end);
   }
   return conflict.message;
+}
+
+export function standbyAvailability(session, sessions, catalog, plan) {
+  // Assigned backups are standby capacity, but bookings in other overlapping slots are not.
+  const assigned = new Set((plan?.backups?.[session.id] || []).filter(Boolean));
+  const occupied = new Set(planBookings(sessions, plan).filter((booking) => booking.kind === "invigilator" &&
+    !booking.owner.startsWith(session.id + "/backup/") && sameDay(booking, session) && overlaps(booking, session))
+    .map((booking) => booking.resourceId));
+  const available = catalog.invigilators.filter((person) => !occupied.has(person.id) && !availabilityConflict(person, session, sessions));
+  return { count: available.length, assigned: available.filter((person) => assigned.has(person.id)).length,
+    unassigned: available.filter((person) => !assigned.has(person.id)).length };
 }
 
 export function validateResourcePlan(sessions, catalog, plan) {

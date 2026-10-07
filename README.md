@@ -43,9 +43,24 @@ Both headerless Banner data and named-column layouts are supported on the first 
 - Choose the exam start date and add exam weeks before scheduling. The CRN upload
   extends timetable hours to at least 18:00 to include the evening exam window.
 
+## Select resources
+
+The wizard runs **Load Data > Department Exams > ASD (Optional) > Select Resources
+> Build Main Timetable > Review Resources > Export**. After creating/loading ASD,
+or skipping it, choose the active rooms and named invigilators before generating
+the main timetable. The pool comes from the CRN list's first sheet and shows each
+resource's recurring class commitments. Excluded resources cannot be used.
+At least one room and two invigilators must be selected to continue; this does
+not imply that they are available for any particular exam.
+
+The scheduler targets **two available standby invigilators per slot**, including
+that slot's assigned backups. This is reserved capacity, not two mandatory
+backup assignments. Unassigned standby people add no load and no report duties.
+You can review the pool again from scheduling and adjust it after generation.
+
 ## Automatic scheduling
 
-After the optional ASD step, use **Auto-Schedule Remaining Exams**:
+After selecting resources, use **Auto-Schedule Remaining Exams**:
 
 - Multiple listed CRNs: Monday-Friday, 12:00-13:00 or 17:00-18:00,
   plus Friday-only sessions at 09:00-10:00 and 10:30-11:30.
@@ -59,13 +74,18 @@ After the optional ASD step, use **Auto-Schedule Remaining Exams**:
   rooms and instructors throughout the full exam.
 - The draft uses only the configured exam weeks, hours and exam duration. It avoids
   overlapping students across main/ASD schedules, more than two exams per student
-  per day, and main staffing shortages (including slot-level backups).
-- Earlier eligible start times take priority over load balancing: Friday 09:00,
-  then Friday 10:30, then 12:00, then 17:00 for common-window exams. Day/week load
-  balancing breaks ties between equally early times. Multiple exams can share an
-  earlier slot when student and staffing constraints allow; an occupied 12:00
-  slot is not rejected merely because 17:00 is empty. Lab exams still use only
-  their permitted lab window. Later times are used when earlier choices are blocked.
+  per day, and room/staff shortages. Every proposed placement is trial-assigned
+  using the selected pool, full exam duration, class availability, fixed lab
+  resources and overlapping bookings, including assigned slot backups.
+- Placement prefers the **earliest week, then weekday, then time**: Monday noon
+  comes before Monday evening, Tuesday noon or Friday morning. Multiple exams
+  can share an earlier slot when student, room and staff constraints allow.
+  Timetable load balancing no longer pushes exams to a later date. Lab exams
+  still use only their permitted lab window.
+- The earliest valid slot retaining two standby people is preferred. If none
+  exists, the earliest slot with valid required backup coverage is used and a
+  standby-shortfall warning is shown. Actual assigned-backup limits are unchanged.
+  A draft includes the checked room/invigilator plan, ready for resource review.
 - Existing placements are preserved. Courses that cannot fit remain in the pool,
   with reasons shown. Add a week, adjust settings or place them manually, then rerun.
   This is a greedy draft, not a guarantee of an optimal or complete timetable.
@@ -74,8 +94,12 @@ After the optional ASD step, use **Auto-Schedule Remaining Exams**:
 
 ## Assign resources
 
-Before **Export**, continue to **Assign Resources** and use **Auto-Assign Resources**.
-Review the proposed assignments and adjust them with the room/staff selectors.
+Before **Export**, continue to **Review Resources**. Automatic drafts already
+include checked assignments; review and adjust them with the room/staff selectors.
+Use **Auto-Assign Resources** after manual scheduling or pool changes. Pool edits
+invalidate the old plan until it is reassigned/reviewed. Each valid slot shows
+available standby capacity separately from assigned backups; capacity below two
+is highlighted without changing existing backup report rules.
 
 - Rooms and named invigilators come from the CRN workbook's first sheet. Both
   primary and second instructors enter one pool; there are no invigilator types.

@@ -1,4 +1,5 @@
-import { backupTarget, clock, invigilatorWorkloads, isTeachingTimeDuty, resourceAssignmentAnchor, resourceChoiceReason, resourceChoiceSummary, resourceSessionLabel } from "./resources.js";
+import { backupTarget, isTeachingTimeDuty, PREFERRED_STANDBY_COUNT, resourceAssignmentAnchor, resourceChoiceReason, resourceChoiceSummary, resourceSessionLabel, standbyAvailability } from "./resources.js";
+import ResourcePool from "./ResourcePool.jsx";
 
 function InvigilatorOptions({ people, session, sessions, plan, owner, fixedId = "", placeholder }) {
   const choices = people.map((person) => {
@@ -22,7 +23,6 @@ function InvigilatorOptions({ people, session, sessions, plan, owner, fixedId = 
 }
 
 export default function ResourceAssignment({ sessions, catalog, plan, validation, onAssign, onPoolChange, onAllocationChange, onBackupChange, onDistributionChange }) {
-  const workloads = invigilatorWorkloads(catalog, sessions, plan);
   const roomOptions = (session, owner, fixedId = "") => catalog.rooms.map((resource) => {
     const reason = fixedId && resource.id !== fixedId ? "Original lab resource required" : resourceChoiceReason(resource, "room", session, sessions, plan, owner);
     return <option key={resource.id} value={resource.id} disabled={Boolean(reason)}>{resource.name}{reason ? " - " + reason : ""}</option>;
@@ -30,7 +30,7 @@ export default function ResourceAssignment({ sessions, catalog, plan, validation
   return (
     <section className="resource-panel">
       <div className="resource-panel__heading">
-        <div><h2>Assign Rooms &amp; Invigilators</h2><p>Students are balanced across rooms of at most 25, except the last room stays at 15 when that saves an invigilator without overfilling the others. You can explicitly approve up to 27 for an exam to avoid a small overflow room. One invigilator up to 15 students; two above 15. Backups cover the time slot, not every room.</p></div>
+        <div><h2>Review Rooms &amp; Invigilators</h2><p>Students are balanced across rooms of at most 25, except the last room stays at 15 when that saves an invigilator without overfilling the others. You can explicitly approve up to 27 for an exam to avoid a small overflow room. One invigilator up to 15 students; two above 15. Backups cover the time slot, not every room.</p></div>
         <button type="button" className="primary-action" onClick={onAssign}>Auto-Assign Resources</button>
       </div>
       <p className="resource-panel__note">Only the first sheet of the CRN list supplies courses, rooms, staff and teaching availability. Its regular classes block resources for the full exam duration; all other sheets are ignored. A single-CRN exam replaces its lab, keeping that room and lab instructor (the second instructor when listed). A morning lab ending at 09:50 is treated as ending at 10:00 for the exam and teaching-time load. Extra rooms and staff cover overflow. Other classes on the first sheet remain blocked. Availability outside listed classes is assumed within timetable hours.</p>
@@ -39,26 +39,7 @@ export default function ResourceAssignment({ sessions, catalog, plan, validation
         <span>{catalog.invigilators.filter((person) => person.enabled).length} invigilators</span>
         <strong>{validation.complete ? "Ready to export" : `${validation.issues.length} issues to resolve`}</strong>
       </div>
-      <details className="resource-pool">
-        <summary>Review Resource Pool</summary>
-        <p>All instructors enter the same invigilator pool. Extra invigilation duties are balanced overall and by time slot; backups are balanced separately. Duties entirely within an instructor's replaced lab hours do not add to their load.</p>
-        <div className="resource-pool__tables">
-          <div className="resource-table-wrap"><table><thead><tr><th>Include</th><th>Invigilator</th><th>Invigilation Load</th><th>Backup Load</th><th>During Teaching Hours</th><th>Class Times</th></tr></thead><tbody>
-            {workloads.map((person) => <tr key={person.id}>
-              <td><input type="checkbox" aria-label={`Include ${person.name}`} checked={person.enabled} onChange={(event) => onPoolChange("invigilators", person.id, { enabled: event.target.checked })} /></td>
-              <td>{person.name}</td>
-              <td>{person.exam}</td><td>{person.backup}</td><td>{person.teaching}</td>
-              <td><details><summary>{person.busy.length} meetings</summary>{person.busy.map((entry, index) => <div key={index}>{entry.days.map((day) => day.slice(0, 3)).join(", ")} {entry.unknownTime ? "Time unspecified (day blocked)" : `${clock(entry.start)}-${clock(entry.end)}`}: {entry.code} (CRN {entry.crn})</div>)}</details></td>
-            </tr>)}
-          </tbody></table></div>
-          <div className="resource-table-wrap"><table><thead><tr><th>Include</th><th>Room</th><th>Class Times</th></tr></thead><tbody>
-            {catalog.rooms.map((room) => <tr key={room.id}>
-              <td><input type="checkbox" aria-label={`Include ${room.name}`} checked={room.enabled} onChange={(event) => onPoolChange("rooms", room.id, { enabled: event.target.checked })} /></td>
-              <td>{room.name}</td><td><details><summary>{room.busy.length} meetings</summary>{room.busy.map((entry, index) => <div key={index}>{entry.days.map((day) => day.slice(0, 3)).join(", ")} {entry.unknownTime ? "Time unspecified (day blocked)" : `${clock(entry.start)}-${clock(entry.end)}`}: {entry.code} (CRN {entry.crn})</div>)}</details></td>
-            </tr>)}
-          </tbody></table></div>
-        </div>
-      </details>
+      <ResourcePool catalog={catalog} sessions={sessions} plan={plan} onPoolChange={onPoolChange} />
       {validation.issues.length > 0 ? <details className="resource-issues" open>
         <summary>Resource Issues ({validation.issues.length})</summary>
         <p>Resolve these issues before export. Teaching commitments come only from the CRN list's first sheet; replacing an exam's lab does not cancel other classes listed there.</p>
@@ -72,44 +53,51 @@ export default function ResourceAssignment({ sessions, catalog, plan, validation
         </li>)}</ul>
       </details> : null}
       <div className="resource-sessions">
-        {sessions.map((session) => <section className="resource-session" key={session.id} id={resourceAssignmentAnchor(session.id)}>
-          <h3>{resourceSessionLabel(session)}</h3>
-          {session.roomDecisions.map((decision) => <div className="resource-room-decision" key={decision.courseId}>
-            <h4>{decision.code}: Avoid an extra room?</h4>
-            <p>{decision.students} students include {decision.overflow} beyond {(decision.options[0].sizes.length - 1) * 25} normal seats. Choose whether to keep the extra room or approve up to 27 per room for this exam only. Different exams are never mixed.</p>
-            <div className="resource-room-decision__options" role="group" aria-label={`Room distribution for ${decision.code}`}>
-              {decision.options.map((option) => <button type="button" key={option.value} aria-pressed={decision.choice === option.value}
-                aria-label={`${option.label} for ${decision.code}`} onClick={() => onDistributionChange(decision.courseId, option.value)}>
-                <strong>{option.label}</strong>
-                <span>{option.sizes.length} {option.sizes.length === 1 ? "room" : "rooms"}: {option.sizes.join(" / ")} students</span>
-                <small>{option.value === "standard" ? "No capacity exception" : "Approve a maximum of 27 per room"}</small>
-              </button>)}
-            </div>
-            <p className="resource-room-decision__status">{decision.choice === "standard" ? "Normal room limit retained. No exception approved." : "Exception approved for this exam. Existing room/staff assignments are retained where possible; review any remaining resource issues."}</p>
-          </div>)}
-          <div className="resource-table-wrap"><table><thead><tr><th>Exam</th><th>Students</th><th>Room</th><th>Invigilators</th></tr></thead><tbody>
-            {session.rooms.map((room) => {
-              const allocation = plan?.allocations?.[room.id] || { roomId: "", invigilatorIds: [] };
-              return <tr key={room.id} id={resourceAssignmentAnchor(room.id)}>
-                <td><strong>{room.code}</strong><br />{room.title}{room.fixedRoomId ? <small className="resource-lab-label">Original lab room &amp; instructor</small> : null}</td>
-                <td>{room.students.length}{room.distributionChoice !== "standard" ? <small className="resource-capacity-label">Approved up to 27</small> : null}</td>
-                <td><select aria-label={`Room for ${room.id}`} value={allocation.roomId} onChange={(event) => onAllocationChange(room.id, { ...allocation, roomId: event.target.value })}><option value="">Select room</option>{roomOptions(session, room.id, room.fixedRoomId)}</select></td>
-                <td><div className="resource-invigilators">{Array.from({ length: room.requiredInvigilators }, (_, index) => <select key={index} aria-label={`Invigilator ${index + 1} for ${room.id}`} value={allocation.invigilatorIds[index] || ""} onChange={(event) => {
-                  const ids = Array.from({ length: room.requiredInvigilators }, (_, i) => allocation.invigilatorIds[i] || "");
-                  ids[index] = event.target.value;
-                  onAllocationChange(room.id, { ...allocation, invigilatorIds: ids });
-                }}><InvigilatorOptions people={catalog.invigilators} session={session} sessions={sessions} plan={plan}
-                  owner={`${room.id}/invigilator/${index}`} fixedId={index === 0 ? room.fixedInvigilatorId : ""} placeholder={"Select invigilator " + (index + 1)} /></select>)}</div></td>
-              </tr>;
-            })}
-          </tbody></table></div>
-          <div className="resource-backups"><strong>Slot backups (at least 1, at most {backupTarget(session.rooms.length)}):</strong>{Array.from({ length: backupTarget(session.rooms.length) }, (_, index) => <select key={index} aria-label={`Backup ${index + 1} for ${session.id}`} value={plan?.backups?.[session.id]?.[index] || ""} onChange={(event) => {
-            const ids = Array.from({ length: backupTarget(session.rooms.length) }, (_, i) => plan?.backups?.[session.id]?.[i] || "");
-            ids[index] = event.target.value;
-            onBackupChange(session.id, ids);
-          }}><InvigilatorOptions people={catalog.invigilators} session={session} sessions={sessions} plan={plan}
-            owner={`${session.id}/backup/${index}`} placeholder={index === 0 ? "Select required backup" : "No additional backup"} /></select>)}</div>
-        </section>)}
+        {sessions.map((session) => {
+          const standby = validation.complete ? standbyAvailability(session, sessions, catalog, plan) : null;
+          return <section className="resource-session" key={session.id} id={resourceAssignmentAnchor(session.id)}>
+            <h3>{resourceSessionLabel(session)}</h3>
+            <p className={standby && standby.count < PREFERRED_STANDBY_COUNT ? "resource-standby resource-standby--short" : "resource-standby"}>
+              {standby ? "Available standby capacity: " + standby.count + " (target " + PREFERRED_STANDBY_COUNT + "), including this slot's assigned backups."
+                : "Confirm valid room and staff assignments to assess standby capacity."} Other standby people remain unassigned; only assigned duties appear in reports.
+            </p>
+            {session.roomDecisions.map((decision) => <div className="resource-room-decision" key={decision.courseId}>
+              <h4>{decision.code}: Avoid an extra room?</h4>
+              <p>{decision.students} students include {decision.overflow} beyond {(decision.options[0].sizes.length - 1) * 25} normal seats. Choose whether to keep the extra room or approve up to 27 per room for this exam only. Different exams are never mixed.</p>
+              <div className="resource-room-decision__options" role="group" aria-label={`Room distribution for ${decision.code}`}>
+                {decision.options.map((option) => <button type="button" key={option.value} aria-pressed={decision.choice === option.value}
+                  aria-label={`${option.label} for ${decision.code}`} onClick={() => onDistributionChange(decision.courseId, option.value)}>
+                  <strong>{option.label}</strong>
+                  <span>{option.sizes.length} {option.sizes.length === 1 ? "room" : "rooms"}: {option.sizes.join(" / ")} students</span>
+                  <small>{option.value === "standard" ? "No capacity exception" : "Approve a maximum of 27 per room"}</small>
+                </button>)}
+              </div>
+              <p className="resource-room-decision__status">{decision.choice === "standard" ? "Normal room limit retained. No exception approved." : "Exception approved for this exam. Existing room/staff assignments are retained where possible; review any remaining resource issues."}</p>
+            </div>)}
+            <div className="resource-table-wrap"><table><thead><tr><th>Exam</th><th>Students</th><th>Room</th><th>Invigilators</th></tr></thead><tbody>
+              {session.rooms.map((room) => {
+                const allocation = plan?.allocations?.[room.id] || { roomId: "", invigilatorIds: [] };
+                return <tr key={room.id} id={resourceAssignmentAnchor(room.id)}>
+                  <td><strong>{room.code}</strong><br />{room.title}{room.fixedRoomId ? <small className="resource-lab-label">Original lab room &amp; instructor</small> : null}</td>
+                  <td>{room.students.length}{room.distributionChoice !== "standard" ? <small className="resource-capacity-label">Approved up to 27</small> : null}</td>
+                  <td><select aria-label={`Room for ${room.id}`} value={allocation.roomId} onChange={(event) => onAllocationChange(room.id, { ...allocation, roomId: event.target.value })}><option value="">Select room</option>{roomOptions(session, room.id, room.fixedRoomId)}</select></td>
+                  <td><div className="resource-invigilators">{Array.from({ length: room.requiredInvigilators }, (_, index) => <select key={index} aria-label={`Invigilator ${index + 1} for ${room.id}`} value={allocation.invigilatorIds[index] || ""} onChange={(event) => {
+                    const ids = Array.from({ length: room.requiredInvigilators }, (_, i) => allocation.invigilatorIds[i] || "");
+                    ids[index] = event.target.value;
+                    onAllocationChange(room.id, { ...allocation, invigilatorIds: ids });
+                  }}><InvigilatorOptions people={catalog.invigilators} session={session} sessions={sessions} plan={plan}
+                    owner={`${room.id}/invigilator/${index}`} fixedId={index === 0 ? room.fixedInvigilatorId : ""} placeholder={"Select invigilator " + (index + 1)} /></select>)}</div></td>
+                </tr>;
+              })}
+            </tbody></table></div>
+            <div className="resource-backups"><strong>Slot backups (at least 1, at most {backupTarget(session.rooms.length)}):</strong>{Array.from({ length: backupTarget(session.rooms.length) }, (_, index) => <select key={index} aria-label={`Backup ${index + 1} for ${session.id}`} value={plan?.backups?.[session.id]?.[index] || ""} onChange={(event) => {
+              const ids = Array.from({ length: backupTarget(session.rooms.length) }, (_, i) => plan?.backups?.[session.id]?.[i] || "");
+              ids[index] = event.target.value;
+              onBackupChange(session.id, ids);
+            }}><InvigilatorOptions people={catalog.invigilators} session={session} sessions={sessions} plan={plan}
+              owner={`${session.id}/backup/${index}`} placeholder={index === 0 ? "Select required backup" : "No additional backup"} /></select>)}</div>
+          </section>;
+        })}
       </div>
     </section>
   );
