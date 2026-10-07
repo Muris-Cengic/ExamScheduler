@@ -10,6 +10,7 @@ import * as department from "../src/department.js";
 import { autoSchedule } from "../src/autoSchedule.js";
 import * as resources from "../src/resources.js";
 import * as examRooms from "../src/examRooms.js";
+import * as examWindows from "../src/examWindows.js";
 import { buildResourceWorkbookForWeek } from "../src/reports.js";
 import * as exportReports from "../src/exportReports.js";
 
@@ -45,7 +46,7 @@ function harness(component = "App", props) {
     static revokeObjectURL() {}
   }
   const context = createContext({
-    ...imports, ...department, ...resources, ...examRooms, ...exportReports, buildResourceWorkbookForWeek, autoSchedule, XLSX, JSZip, Blob, URL: TestURL, console,
+    ...imports, ...department, ...resources, ...examRooms, ...examWindows, ...exportReports, buildResourceWorkbookForWeek, autoSchedule, XLSX, JSZip, Blob, URL: TestURL, console,
     CourseSelection: function CourseSelection() {}, Fragment: "fragment",
     ResourceAssignment: function ResourceAssignment() {},
     h: (type, props, ...children) => ({ type, props: props || {}, children: typeof type === "function" && type.name !== "CourseSelection" ? [type(props)] : children.flat(Infinity) }),
@@ -333,14 +334,52 @@ test("resource selection precedes generation and stays editable after the resour
   const saved = JSON.parse(await app.downloads.at(-1).text());
   assert.equal(saved.resourceCatalog.rooms.find((room) => room.name === roomNames[0]).enabled, false);
   assert.ok(saved.resourcePlan.fingerprint);
+  const mainId = assignment().sessions[0].rooms[0].courseId;
   button(tree, "Back To Scheduling").props.onClick();
   tree = app.render();
+  const fridayCell = (time) => {
+    const [hour, minute] = time.split(":").map(Number);
+    const index = (hour * 60 + minute - saved.settings.startHour * 60) / saved.settings.slotIntervalMinutes;
+    return find(tree, (node) => node.type === "td" && node.props["data-day"] === "Friday" && node.props["data-slot-index"] === index);
+  };
+  const drag = { preventDefault() {}, dataTransfer: { getData: () => mainId } };
+  for (const time of ["08:00", "09:30", "10:00", "11:00", "12:00", "17:00"]) {
+    assert.equal(fridayCell(time).props["aria-disabled"], true);
+    assert.match(fridayCell(time).props.title, /Friday exams must use 09:00-10:00 or 10:30-11:30/);
+    fridayCell(time).props.onDrop(drag);
+    tree = app.render();
+    button(tree, "Save Timetable").props.onClick();
+    assert.deepEqual(JSON.parse(await app.downloads.at(-1).text()).assignments, saved.assignments,
+      "An invalid Friday drop must not remove or move an existing exam");
+  }
+  let accepted = false;
+  fridayCell("12:00").props.onDragOver({ preventDefault() { accepted = true; } });
+  assert.equal(accepted, false);
+  for (const time of ["09:00", "10:30"]) {
+    assert.equal(fridayCell(time).props["aria-disabled"], undefined);
+    fridayCell(time).props.onDrop(drag);
+    tree = app.render();
+    button(tree, "Save Timetable").props.onClick();
+    const moved = JSON.parse(await app.downloads.at(-1).text());
+    assert.deepEqual(moved.assignments[1].Friday[time], [mainId]);
+    assert.equal(department.assignmentIds(moved.assignments).size, 1);
+    assert.deepEqual(moved.assignments[1].Monday["12:00"], []);
+  }
   button(tree, "Review Resource Pool").props.onClick();
   tree = app.render();
   assert.equal(include(roomNames[0]).props.checked, false);
   assert.equal(include(roomNames[1]).props.checked, true);
   assert.ok(!nodes(selection()).some((node) => node.type === "select"), "Pre-scheduling pool selection never exposes exam assignments");
-
+  button(tree, "Back To ASD").props.onClick();
+  tree = app.render();
+  button(tree, "Create ASD Timetable").props.onClick();
+  tree = app.render();
+  assert.equal(fridayCell("12:00").props["aria-disabled"], undefined, "ASD is not restricted by the main timetable rule");
+  fridayCell("12:00").props.onDrop(drag);
+  tree = app.render();
+  button(tree, "Save ASD Timetable").props.onClick();
+  const asd = JSON.parse(await app.downloads.at(-1).text());
+  assert.deepEqual(asd.assignments[1].Friday["12:00"], [mainId]);
 });
 
 test("wizard imports, exam toggles, draft, saved-state round trip and report exclusion work together", {

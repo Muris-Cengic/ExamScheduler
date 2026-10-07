@@ -10,6 +10,7 @@ import { assignmentIds, defaultHasExam, parseDepartmentWorkbook, readDepartmentS
 import { autoSchedule } from "./autoSchedule.js";
 import ResourceAssignment from "./ResourceAssignment.jsx";
 import ResourcePool from "./ResourcePool.jsx";
+import { FRIDAY_EXAM_NOTICE, isFridayExamTimeAllowed } from "./examWindows.js";
 import { assignResources, buildExamSessions, emptyResourcePlan, parseResourceCatalog, readResourceCatalog, readResourcePlan, reconcileRoomDistribution, resourceFingerprint, validateResourcePlan } from "./resources.js";
 import { examInvigilatorsNeeded, examRoomSizes, readRoomDistributionChoices, roomCapacity } from "./examRooms.js";
 import { buildAsdOverviewExams, buildExportFiles, REPORT_VIEWS } from "./exportReports.js";
@@ -1176,6 +1177,11 @@ function App() {
     if (result.placed.length) setSelectedWeek(result.placed[0].week);
   };
 
+  const isRestrictedMainStart = (day, slotId) => {
+    const start = parseSlotIdToMinutes(slotId);
+    return schedulerPhase === "main" && !isFridayExamTimeAllowed(day, start, start + examDurationMinutesValue);
+  };
+
   const updateHoverTarget = (day, slotIndex) => {
     const maxStartIndex = timeSlots.length - slotsPerExam;
 
@@ -1183,7 +1189,8 @@ function App() {
       slotsPerExam < 1 ||
       timeSlots.length === 0 ||
       maxStartIndex < 0 ||
-      slotIndex > maxStartIndex
+      slotIndex > maxStartIndex ||
+      isRestrictedMainStart(day, timeSlots[slotIndex]?.id)
     ) {
       setHoverTarget(null);
 
@@ -1208,6 +1215,10 @@ function App() {
   };
 
   const handleDragOverSlot = (event, day, slotIndex) => {
+    if (isRestrictedMainStart(day, timeSlots[slotIndex]?.id)) {
+      setHoverTarget(null);
+      return;
+    }
     event.preventDefault();
 
     updateHoverTarget(day, slotIndex);
@@ -1271,6 +1282,7 @@ function App() {
 
     if (!courseId || !courseLookup[courseId]) return;
     if (schedulerPhase === "main" && (!selectedExamCourses.some((course) => course.id === courseId) || asdAssignedCourseIds.has(courseId))) return;
+    if (isRestrictedMainStart(day, slotId)) return;
     setAutoScheduleResult(null);
 
     const setActiveAssignments =
@@ -2842,6 +2854,7 @@ function App() {
               <h2>{schedulerPhase === "asd" ? "ASD Course Pool" : "Course Pool"}</h2>
 
               <p>Drag a course into a timetable slot to schedule its exam.</p>
+              {schedulerPhase === "main" ? <p>{FRIDAY_EXAM_NOTICE}</p> : null}
 
               <div className="course-search">
                 <input
@@ -2978,6 +2991,7 @@ function App() {
 
                           const hasAnyCourses =
                             hasAnyActiveCourses || hasAnyLockedCourses;
+                          const restrictedStart = isRestrictedMainStart(day, slot.id);
 
                           const slotIsOccupied = occupiedSlotIds.has(slot.id);
 
@@ -3013,12 +3027,14 @@ function App() {
                           if (conflictMessages.length) {
                             cellClassNames.push("has-conflict");
                           }
+                          if (restrictedStart && !hasAnyCourses) cellClassNames.push("slot-start--restricted");
 
                           return (
                             <td
                               key={slot.id}
                               data-day={day}
                               data-slot-index={slotIndex}
+                              aria-disabled={restrictedStart || undefined}
                               onDragOver={(event) =>
                                 handleDragOverSlot(event, day, slotIndex)
                               }
@@ -3032,7 +3048,7 @@ function App() {
                                 handleDrop(day, slot.id, slotIndex, event)
                               }
                               className={cellClassNames.join(" ")}
-                              title={conflictMessages.join("\n")}
+                              title={[...(restrictedStart ? [FRIDAY_EXAM_NOTICE] : []), ...conflictMessages].join("\n")}
                             >
                               <div className="slot-content">
                                 <div className="slot-summary">
@@ -3081,7 +3097,7 @@ function App() {
                                     </span>
                                   ) : (
                                     <span className="slot-summary__empty">
-                                      Drop course here
+                                      {restrictedStart ? "No Friday exam start" : "Drop course here"}
                                     </span>
                                   )}
                                 </div>

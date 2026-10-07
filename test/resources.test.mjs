@@ -333,7 +333,8 @@ test("exam and backup workloads are balanced independently over the whole timeta
   const c = course("EXAM", 10);
   const assignments = {};
   for (let week = 1; week <= 3; week += 1) {
-    assignments[week] = Object.fromEntries(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map((day) => [day, { "09:00": ["EXAM"], "12:00": ["EXAM"] }]));
+    assignments[week] = Object.fromEntries(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+      .map((day) => [day, { "09:00": ["EXAM"], [day === "Friday" ? "10:30" : "12:00"]: ["EXAM"] }]));
   }
   const sessions = buildExamSessions(assignments, { EXAM: c }, 60);
   const resources = catalog(1, 4);
@@ -341,8 +342,8 @@ test("exam and backup workloads are balanced independently over the whole timeta
   assert.equal(validateResourcePlan(sessions, resources, plan).complete, true);
   const loads = invigilatorWorkloads(resources, sessions, plan);
   for (const role of ["exam", "backup"]) assert.ok(Math.max(...loads.map((load) => load[role])) - Math.min(...loads.map((load) => load[role])) <= 1);
-  for (const slot of ["09:00", "12:00"]) assert.ok(Math.max(...loads.map((load) => load.bySlot[slot] || 0)) - Math.min(...loads.map((load) => load.bySlot[slot] || 0)) <= 1);
-  for (const slot of ["09:00", "12:00"]) assert.ok(Math.max(...loads.map((load) => load.backupBySlot[slot] || 0)) - Math.min(...loads.map((load) => load.backupBySlot[slot] || 0)) <= 1);
+  for (const slot of ["09:00", "10:30", "12:00"]) assert.ok(Math.max(...loads.map((load) => load.bySlot[slot] || 0)) - Math.min(...loads.map((load) => load.bySlot[slot] || 0)) <= 1);
+  for (const slot of ["09:00", "10:30", "12:00"]) assert.ok(Math.max(...loads.map((load) => load.backupBySlot[slot] || 0)) - Math.min(...loads.map((load) => load.backupBySlot[slot] || 0)) <= 1);
 });
 
 test("replaced lab duties do not disadvantage the instructor when balancing extra invigilations", () => {

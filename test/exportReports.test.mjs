@@ -28,6 +28,27 @@ function fixture() {
 const read = (file) => XLSX.read(file.data, { type: "array", cellDates: true });
 const rows = (workbook, name) => XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 });
 
+test("invalid Friday placements block every main report without restricting ASD overview references", () => {
+  const options = fixture();
+  for (const time of ["08:00", "09:30", "10:00", "12:00", "17:00"]) {
+    const sessions = buildExamSessions({ 1: { Friday: { [time]: ["MAIN"] } } }, { MAIN: course("MAIN", 5) }, 60);
+    const plan = assignResources(sessions, options.catalog);
+    assert.ok(sessions[0].issues.includes("Friday exams must use 09:00-10:00 or 10:30-11:30."));
+    for (const report of ["complete", "overview", "staff", "students"]) {
+      assert.throws(() => buildExportFiles({ ...options, sessions, plan, report }), /Complete valid resource/);
+    }
+  }
+  for (const time of ["09:00", "10:30"]) {
+    const sessions = buildExamSessions({ 1: { Friday: { [time]: ["MAIN"] } } }, { MAIN: course("MAIN", 5) }, 60);
+    const plan = assignResources(sessions, options.catalog);
+    assert.equal(buildExportFiles({ ...options, sessions, plan, report: "overview" }).length, 1);
+  }
+  const asdExams = buildAsdOverviewExams({ assignments: { 1: { Friday: { "12:00": ["ASD"] } } },
+    courseLookup: { ASD: course("ASD", 5) } });
+  const overview = buildExportFiles({ ...options, asdExams, includeAsd: true, report: "overview", format: "csv" })[0];
+  assert.match(overview.data, /"Friday","12:00","13:00","ASD"/);
+});
+
 function asdFixture() {
   return buildAsdOverviewExams({
     assignments: { 1: { Monday: { "09:00": ["ASD-1", "ASD-1"], "08:00": ["ASD-2"] } },

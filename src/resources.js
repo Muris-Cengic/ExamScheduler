@@ -1,5 +1,6 @@
 import { labExamEndMinutes, roomIdentity } from "./department.js";
 import { examRoomLayout, roomConsolidationOptions } from "./examRooms.js";
+import { FRIDAY_EXAM_NOTICE, isFridayExamTimeAllowed } from "./examWindows.js";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const normalise = (value) => String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -81,6 +82,7 @@ export function buildExamSessions(assignments, courseLookup, duration, capacity 
     const [hour, minute] = slotId.split(":").map(Number);
     const start = hour * 60 + minute;
     const session = { id: `${week}/${day}/${slotId}`, week: Number(week), day, slotId, start, end: start + duration, rooms: [], roomDecisions: [], replacedLabs: [], issues: [] };
+    if (!isFridayExamTimeAllowed(day, start, session.end)) session.issues.push(FRIDAY_EXAM_NOTICE);
     ids.forEach((courseId) => {
       const course = courseLookup[courseId];
       if (!course?.students.length) { session.issues.push(`Missing enrolment for ${courseId}.`); return; }
@@ -276,7 +278,9 @@ export function validateResourcePlan(sessions, catalog, plan) {
     }
   };
   sessions.forEach((session) => {
-    session.issues.forEach((issue) => add(session, null, "Exam scheduling issue", issue, "Return to scheduling and check this exam's enrolment and listed lab times."));
+    session.issues.forEach((issue) => add(session, null, "Exam scheduling issue", issue, issue === FRIDAY_EXAM_NOTICE
+      ? "Move the exam to an allowed Friday session or a valid Monday-Thursday slot."
+      : "Return to scheduling and check this exam's enrolment and listed lab times."));
     session.rooms.forEach((room) => {
       const allocation = plan?.allocations?.[room.id];
       const ids = allocation?.invigilatorIds || [];

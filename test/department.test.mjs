@@ -181,7 +181,7 @@ test("chronological scheduling prioritizes earlier weeks and weekdays before lat
 test("feasible exams can share noon slots instead of moving to an empty evening slot", () => {
   const c = course("MAIN", [student("S1")], ["101", "102"]);
   const existing = course("EXISTING", [student("OTHER")]);
-  const assignments = { 1: Object.fromEntries(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+  const assignments = { 1: Object.fromEntries(["Monday", "Tuesday", "Wednesday", "Thursday"]
     .map((day) => [day, { "12:00": ["EXISTING"] }])) };
   const options = { assignments, courseLookup: { MAIN: c, EXISTING: existing }, timeSlots: slots(12, 18) };
   const result = draft([c], { ...options, staffCount: 4 });
@@ -269,6 +269,39 @@ test("Friday morning windows are available for multiple CRNs and labless courses
 test("Friday common windows do not replace a single-CRN course's lab rule", () => {
   const c = course("LAB", [student("S1")], ["101"], [{ days: ["Thursday"], startMinutes: 900, endMinutes: 1010 }]);
   assert.equal(draft([c], { timeSlots: slots(8, 12) }).placed.length, 0);
+});
+
+test("Friday never falls back to noon or evening after its two morning sessions are blocked", () => {
+  for (const crns of [["101", "102"], ["101"]]) {
+    const c = course("MAIN", [student("S1")], crns);
+    const asd = course("ASD", [student("S1")]);
+    const blocked = { 1: Object.fromEntries(["Monday", "Tuesday", "Wednesday", "Thursday"]
+      .map((day) => [day, { "12:00": ["ASD"], "17:00": ["ASD"] }])) };
+    const first = draft([c], { asdAssignments: blocked, courseLookup: { MAIN: c, ASD: asd } });
+    assert.equal(first.placed[0].day, "Friday");
+    assert.equal(first.placed[0].slotId, "09:00");
+    blocked[1].Friday = { "09:00": ["ASD"] };
+    const second = draft([c], { asdAssignments: blocked, courseLookup: { MAIN: c, ASD: asd } });
+    assert.equal(second.placed[0].slotId, "10:30");
+    blocked[1].Friday["10:30"] = ["ASD"];
+    const none = draft([c], { asdAssignments: blocked, courseLookup: { MAIN: c, ASD: asd } });
+    assert.equal(none.placed.length, 0, "Free Friday noon/evening resources cannot bypass the allowed windows");
+    assert.equal(none.unplaced.length, 1);
+  }
+});
+
+test("Friday lab exams must fit both an allowed session and their own listed lab hours", () => {
+  const morning = course("MORNING", [student("S1")], ["101"], [{ days: ["Friday"], startMinutes: 480, endMinutes: 590 }]);
+  const lateMorning = course("LATE", [student("S2")], ["101"], [{ days: ["Friday"], startMinutes: 600, endMinutes: 710 }]);
+  assert.equal(draft([morning]).placed[0].slotId, "09:00");
+  assert.equal(draft([lateMorning]).placed[0].slotId, "10:30");
+  for (const [startMinutes, endMinutes] of [[720, 830], [900, 1010], [600, 660]]) {
+    const c = course("LAB", [student("S1")], ["101"], [{ days: ["Friday"], startMinutes, endMinutes }]);
+    const result = draft([c]);
+    assert.equal(result.placed.length, 0);
+    assert.match(result.unplaced[0].reason, /Friday exams must use 09:00-10:00 or 10:30-11:30/);
+  }
+  assert.equal(draft([lateMorning], { settings: { ...settings, examDurationMinutes: 120 } }).placed.length, 0);
 });
 
 test("ASD overlap blocks labs; an adjacent exam at ASD's actual end is allowed", () => {
@@ -490,7 +523,7 @@ test("supplied department list scopes enrolment and produces a valid automatic d
         assert.equal(placed.slotId, "09:00");
         assert.equal(placed.end, 600);
       }
-    } else assert.ok([720, 1020].includes(placed.start) || (placed.day === "Friday" && [540, 630].includes(placed.start)));
+    } else assert.ok(placed.day === "Friday" ? [540, 630].includes(placed.start) : [720, 1020].includes(placed.start));
     assert.ok(defaultHasExam(c));
     for (const other of [...result.placed, ...plan.placements.map((p) => ({ ...p, start: p.startMinutes, end: p.endMinutes }))]) {
       if (other.courseId === placed.courseId || other.week !== placed.week || other.day !== placed.day || placed.start >= other.end || other.start >= placed.end) continue;

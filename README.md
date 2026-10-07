@@ -62,8 +62,12 @@ You can review the pool again from scheduling and adjust it after generation.
 
 After selecting resources, use **Auto-Schedule Remaining Exams**:
 
-- Multiple listed CRNs: Monday-Friday, 12:00-13:00 or 17:00-18:00,
-  plus Friday-only sessions at 09:00-10:00 and 10:30-11:30.
+- Multiple listed CRNs: Monday-Thursday, 12:00-13:00 or 17:00-18:00.
+  Friday is restricted to **09:00-10:00** and **10:30-11:30** for all main exams,
+  including lab exams. Friday lab exams must also fit their listed lab hours.
+  Noon, evening and other Friday starts are blocked in automatic and manual
+  scheduling. Invalid existing Friday placements must be moved before export.
+  The independent ASD timetable is not restricted by this department rule.
 - One listed CRN: a slot fully inside its lab meeting on that weekday. Without a
   listed lab, the common windows are used instead.
   Labs starting before 09:00 use the second-hour window, 09:00-10:00, rather than

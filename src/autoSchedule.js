@@ -1,15 +1,15 @@
 import { assignmentIds, labExamEndMinutes } from "./department.js";
 import { roomCapacity } from "./examRooms.js";
+import { FRIDAY_EXAM_NOTICE, FRIDAY_EXAM_WINDOWS, isFridayExamTimeAllowed } from "./examWindows.js";
 import { assignResources, buildExamSessions, PREFERRED_STANDBY_COUNT, resourceSessionLabel, standbyAvailability, validateResourcePlan } from "./resources.js";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const MORNING_LAB_START = 540;
 const MORNING_LAB_END = 600;
 const COMMON_WINDOWS = [
-  { days: DAYS, startMinutes: 720, endMinutes: 780 },
-  { days: DAYS, startMinutes: 1020, endMinutes: 1080 },
-  { days: ["Friday"], startMinutes: 540, endMinutes: 600 },
-  { days: ["Friday"], startMinutes: 630, endMinutes: 690 },
+  { days: DAYS.slice(0, -1), startMinutes: 720, endMinutes: 780 },
+  { days: DAYS.slice(0, -1), startMinutes: 1020, endMinutes: 1080 },
+  ...FRIDAY_EXAM_WINDOWS.map((window) => ({ days: ["Friday"], startMinutes: window.start, endMinutes: window.end })),
 ];
 const minutes = (id) => Number(id.split(":")[0]) * 60 + Number(id.split(":")[1]);
 const overlaps = (a, b) => a.start < b.end && b.start < a.end;
@@ -26,6 +26,7 @@ function candidatesFor(course, weeks, timeSlots, duration, interval) {
     timeSlots.forEach((slot) => {
       const start = minutes(slot.id);
       if (start >= window.startMinutes && start + duration <= window.endMinutes &&
+        isFridayExamTimeAllowed(day, start, start + duration) &&
         start + duration <= minutes(timeSlots[timeSlots.length - 1].id) + interval) {
         candidates.push({ week, day, slotId: slot.id, start, end: start + duration });
       }
@@ -106,7 +107,8 @@ export function autoSchedule({ courses, courseLookup, assignments, asdAssignment
         ? " Morning lab exams must fit within 09:00-10:00 and the lab hours (a 09:50 lab end is treated as 10:00); the exam duration is not shortened."
         : "";
       const reason = !item.students.size ? "No enrolment for the listed CRNs." : !item.candidates.length
-        ? "No matching window fits the exam duration and timetable hours." + morningLabNote
+        ? "No matching window fits the exam duration and timetable hours." + morningLabNote +
+          (item.course.labSessions?.some((lab) => lab.days.includes("Friday")) ? " " + FRIDAY_EXAM_NOTICE : "")
         : "No valid slot. " + [...reasons].slice(0, 3).join("; ") +
           (reasons.size > 3 ? " Additional slots are blocked by the same resource/student constraints. Review the pool, existing timetable or add a week." : "");
       unplaced.push({ courseId: item.course.id, reason });
