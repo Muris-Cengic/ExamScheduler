@@ -185,4 +185,21 @@
   .export-print .export-table tr { break-inside: avoid; }
   .export-print .export-table thead { display: table-header-group; }
   .export-print .export-course small { font-size: 8pt; }
+  .export-print .export-board-print { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 8pt; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .export-print .export-board-print thead { display: table-header-group; }
+  .export-print .export-board-print tr { break-inside: avoid; }
+  .export-print .export-board-print th,
+  .export-print .export-board-print td { width: 20%; padding: 0; border: 1px solid #cbd5e1; vertical-align: top; background: #f7f9fc; }
+  .export-print .export-board-print th { text-align: left; background: #edf2f8; }
+  .export-print .export-board-print th header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1mm 2mm; padding: 3mm; font-size: 9pt; }
+  .export-print .export-board-print th span { margin: 0; font-size: 8pt; color: #52657a; }
+  .export-print .export-board__exam { margin: 2mm; padding: 2.5mm; border-top-width: 0.6mm; overflow-wrap: anywhere; break-inside: avoid; }
+  .export-print .export-board__time { font-size: 8pt; }
+  .export-print .export-board__exam h4 { margin: 2mm 0 1mm; font-size: 10pt; }
+  .export-print .export-board__exam p { margin: 0 0 2mm; font-size: 8pt; line-height: 1.4; }
+  .export-print .export-board__exam small { font-size: 7.5pt; }
+  .export-print .export-board__exam .export-board__staffing { margin-top: 1mm; }
+  .export-print .export-board__exam ul { margin-top: 2mm; padding-top: 2mm; font-size: 8pt; }
+  .export-print .export-board__free { padding: 3mm; font-size: 8pt; }
+  .export-print .export-lab { margin-top: 2mm; font-size: 7.5pt; }
 }

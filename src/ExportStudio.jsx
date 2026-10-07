@@ -45,21 +45,42 @@ const overviewRows = (model) => model.exams.map((exam) => [
 ]);
 const overviewNote = "Primary invigilators are exam-room duties, including the lab instructor; slot backups are excluded. Lab time means this exam replaces its listed lab session.";
 
+function ExamCard({ exam }) {
+  return <article className="export-board__exam">
+    <span className="export-board__time">{reportTimeRange(exam.start, exam.end)}</span>
+    <h4>{exam.code}</h4><p>{exam.title}</p>
+    <small>{exam.studentCount} students / {exam.roomNames.length} {exam.roomNames.length === 1 ? "room" : "rooms"}</small>
+    <small className="export-board__staffing">{exam.primaryInvigilatorsNeeded} primary {exam.primaryInvigilatorsNeeded === 1 ? "invigilator" : "invigilators"} needed</small>
+    {exam.duringLab ? <span className="export-lab">During lab time</span> : null}
+    <ul>{exam.roomNames.map((room) => <li key={room}>{room}</li>)}</ul>
+  </article>;
+}
+
 function WeekBoard({ model, startDate, week }) {
   return <div className="export-board">
     {REPORT_DAYS.map((day) => <section key={day} className="export-board__day">
       <header><strong>{day.slice(0, 3)}</strong><span>{formatReportDate(reportDate(startDate, week, day))}</span></header>
-      {model.exams.filter((exam) => exam.day === day).map((exam) => <article key={exam.id} className="export-board__exam">
-        <span className="export-board__time">{reportTimeRange(exam.start, exam.end)}</span>
-        <h4>{exam.code}</h4><p>{exam.title}</p>
-        <small>{exam.studentCount} students / {exam.roomNames.length} {exam.roomNames.length === 1 ? "room" : "rooms"}</small>
-        <small className="export-board__staffing">{exam.primaryInvigilatorsNeeded} primary {exam.primaryInvigilatorsNeeded === 1 ? "invigilator" : "invigilators"} needed</small>
-        {exam.duringLab ? <span className="export-lab">During lab time</span> : null}
-        <ul>{exam.roomNames.map((room) => <li key={room}>{room}</li>)}</ul>
-      </article>)}
+      {model.exams.filter((exam) => exam.day === day).map((exam) => <ExamCard key={exam.id} exam={exam} />)}
       {!model.exams.some((exam) => exam.day === day) ? <p className="export-board__free">No exams</p> : null}
     </section>)}
   </div>;
+}
+
+function PrintWeekBoard({ model, startDate, week }) {
+  const columns = REPORT_DAYS.map((day) => model.exams.filter((exam) => exam.day === day));
+  const rowCount = Math.max(1, ...columns.map((exams) => exams.length));
+  // Table rows paginate between cards and repeat the weekday headers on long boards.
+  return <table className="export-board-print">
+    <caption className="sr-only">{"Week " + week + " exam board"}</caption>
+    <thead><tr>{REPORT_DAYS.map((day) => <th key={day} scope="col"><header>
+      <strong>{day}</strong><span>{formatReportDate(reportDate(startDate, week, day))}</span>
+    </header></th>)}</tr></thead>
+    <tbody>{Array.from({ length: rowCount }, (_, index) => <tr key={index}>
+      {columns.map((exams, column) => <td key={REPORT_DAYS[column]}>
+        {exams[index] ? <ExamCard exam={exams[index]} /> : index === 0 && !exams.length ? <p className="export-board__free">No exams</p> : null}
+      </td>)}
+    </tr>)}</tbody>
+  </table>;
 }
 
 function WorkbookMap({ model, week }) {
@@ -77,7 +98,7 @@ function WorkbookMap({ model, week }) {
   </div>;
 }
 
-function PrintReport({ report, model, startDate, sessions, catalog, plan }) {
+function PrintReport({ report, overviewMode, model, startDate, sessions, catalog, plan }) {
   return <div className="export-print">
     {model.selectedWeeks.map((week) => {
       const current = buildExportModel({ sessions, catalog, plan, startDate, weeks: [week] });
@@ -85,7 +106,8 @@ function PrintReport({ report, model, startDate, sessions, catalog, plan }) {
         <header><span>Department exams / confirmed resources</span><h1>{REPORT_VIEWS.find((view) => view.id === report).label}</h1>
           <p>{"Week " + week + " / " + formatReportDate(reportDate(startDate, week, "Monday"), true) + " - " + formatReportDate(reportDate(startDate, week, "Friday"), true)}</p></header>
         {report === "overview" ? <><p className="export-overview-note">{overviewNote}</p>
-          <PreviewTable label="Exam overview" columns={overviewColumns} rows={overviewRows(current)} /></> : null}
+          {overviewMode === "board" ? <PrintWeekBoard model={current} startDate={startDate} week={week} />
+            : <PreviewTable label="Exam overview" columns={overviewColumns} rows={overviewRows(current)} />}</> : null}
         {report === "complete" ? <><h2>Room assignments</h2><PreviewTable label="Room assignments" columns={["Course", "Day / time", "Room", "Students", "Invigilators", "Room limit"]} rows={ledgerRows(current)} /></> : null}
         {report === "complete" || report === "staff" ? <><h2>Staff duties</h2><PreviewTable label="Staff duties" columns={["Invigilator", "Day / time", "Duty", "Course", "Room", "Load"]} rows={staffRows(current)} />
           <h2>Workload summary</h2><PreviewTable label="Workload summary" columns={["Invigilator", "Exam load", "Backup load", "Teaching duties", "Extra duties"]} rows={loadRows(current)} /></> : null}
@@ -161,6 +183,7 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, ready
           <button type="button" className="export-download__primary" disabled={disabled}
             onClick={() => onExport({ report, format, packaging, weeks: selectedWeeks })}>{isExporting ? "Exporting..." : report === "complete" ? "Export Timetable" : format === "xlsx" ? "Download Excel" : "Download CSV"}</button>
           <button type="button" disabled={disabled} onClick={() => window.print()}>Print / Save PDF</button>
+          {report === "overview" ? <small className="export-print-layout" role="status">Print layout: {mode === "board" ? "Week board" : "Chronological list"}. Change it using the preview views. All included weeks are printed; Excel and CSV remain tables.</small> : null}
           <small>{report === "complete" || report === "students" ? "Contains student names and IDs. Share only with authorised recipients." : "Only the selected report and included weeks are exported."}</small>
         </div>
       </aside>
@@ -199,6 +222,6 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, ready
         </>}
       </main>
     </div>
-    {selected ? <PrintReport report={report} model={selected} sessions={sessions} catalog={catalog} plan={plan} startDate={startDate} /> : null}
+    {selected ? <PrintReport report={report} overviewMode={mode} model={selected} sessions={sessions} catalog={catalog} plan={plan} startDate={startDate} /> : null}
   </section>;
 }

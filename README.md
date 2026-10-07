@@ -169,6 +169,12 @@ formula execution.
 report containing all included weeks. Choose the browser's PDF destination to
 save it. Preview week tabs and search affect only the on-screen preview, not
 downloads or print; the print layout includes every selected record.
+For **Exam overview**, choose **Week board** or **Chronological list** in the
+preview before printing. The PDF uses that layout for every included week.
+The board keeps five weekday columns, compact rooms, staffing requirements and
+lab-time badges. Each week starts on a new page; busy weeks continue onto further
+pages with repeated day headers rather than clipping exam cards. Excel and CSV
+downloads remain tabular regardless of the preview layout.
 All export formats require complete, valid resource assignments. Share reports
 containing student names and IDs only with authorised recipients.
 

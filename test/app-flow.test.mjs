@@ -28,7 +28,7 @@ const exportSource = readFileSync(new URL("../src/ExportStudio.jsx", import.meta
   .replace("export default function ExportStudio", "function ExportStudio") + "\nglobalThis.ExportStudio = ExportStudio;";
 const { code: exportComponentCode } = await transformWithEsbuild(exportSource, "ExportStudio.jsx", { loader: "jsx", jsxFactory: "h", jsxFragment: "Fragment" });
 
-function harness() {
+function harness(component = "App", props) {
   const hooks = [];
   const downloads = [];
   const downloadNames = [];
@@ -93,7 +93,7 @@ function harness() {
         dirty = false;
         index = 0;
         effects = [];
-        tree = context.App();
+        tree = context[component](props);
         effects.forEach((effect) => effect());
         assert.ok(++attempts < 10, "Render must settle");
       } while (dirty);
@@ -470,6 +470,9 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   assert.ok(nodes(preview()).some((node) => node.props.className === "export-board"));
   assert.ok(!text(preview()).includes("Bob"));
   assert.ok(!text(printView()).includes("Bob"));
+  assert.equal(nodes(printView()).filter((node) => node.props.className === "export-board-print").length, 1);
+  assert.ok(!nodes(printView()).some((node) => node.type?.name === "PreviewTable"), "Week board printing does not fall back to the chronological table");
+  assert.match(text(find(panel(), (node) => node.props.className === "export-print-layout")), /Print layout: Week board/);
   assert.match(text(find(preview(), (node) => node.props.className === "export-board__exam")), /1 primary invigilator needed/);
   assert.ok(!nodes(preview()).some((node) => node.props.className === "export-lab"), "Non-lab exams have no lab badge");
   assert.ok(!text(preview()).includes("PAD"));
@@ -481,12 +484,23 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   assert.match(text(labCard), /2 primary invigilators needed/);
   assert.match(text(labCard), /P-B-4F\/13/);
   assert.equal(text(find(labCard, (node) => node.props.className === "export-lab")), "During lab time");
+  const printedBoards = nodes(printView()).filter((node) => node.type?.name === "PrintWeekBoard");
+  assert.deepEqual(JSON.parse(JSON.stringify(printedBoards.map((board) => board.props.week))), [1, 2]);
+  assert.ok(printedBoards.every((board) => nodes(board).filter((node) => node.type === "th" && node.props.scope === "col").length === 5));
+  assert.match(text(printedBoards[0]), /2 primary invigilators needed/);
+  assert.match(text(printedBoards[0]), /During lab time/);
+  assert.match(text(printedBoards[1]), /1 primary invigilator needed/);
+  assert.ok(!nodes(printedBoards[1]).some((node) => node.props.className === "export-lab"));
+  assert.ok(!text(printView()).includes("PAD"));
+  button(tree, "Print / Save PDF").props.onClick();
+  assert.equal(app.prints(), 1);
+  button(tree, "Chronological list").props.onClick();
+  tree = app.render();
+  assert.match(text(find(panel(), (node) => node.props.className === "export-print-layout")), /Print layout: Chronological list/);
+  assert.ok(!nodes(printView()).some((node) => node.props.className === "export-board-print"));
   const printedOverviews = nodes(printView()).filter((node) => node.type?.name === "PreviewTable" && node.props.label === "Exam overview");
   assert.deepEqual(JSON.parse(JSON.stringify(printedOverviews.map((table) => table.props.rows[0].slice(-2)))), [[2, "Yes"], [1, "No"]]);
   assert.ok(printedOverviews.every((table) => table.props.columns.includes("Primary invigilators needed") && table.props.columns.includes("During lab time")));
-  assert.ok(!text(printView()).includes("PAD"));
-  button(tree, "Chronological list").props.onClick();
-  tree = app.render();
   const labList = find(preview(), (node) => node.type?.name === "PreviewTable" && node.props.label === "Exam overview preview");
   assert.deepEqual(JSON.parse(JSON.stringify(labList.props.rows[0].slice(-3))), ["P-B-4F/13", 2, "Yes"]);
   weekInput(1).props.onChange();
@@ -569,7 +583,7 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   assert.match(text(preview()), /No matching records/);
   assert.match(text(printView()), /Bob 0/, "Preview search must not filter print output");
   button(tree, "Print / Save PDF").props.onClick();
-  assert.equal(app.prints(), 1);
+  assert.equal(app.prints(), 2);
   await button(tree, "Download Excel").props.onClick();
   const students = XLSX.read(await app.downloads.at(-1).arrayBuffer(), { type: "array" });
   assert.equal(XLSX.utils.sheet_to_json(students.Sheets["Student room lists"]).length, 10, "Preview search must not filter exports");
@@ -589,4 +603,66 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   tree = app.render();
   assert.equal(radio("Excel (.xlsx)").props.checked, true);
   assert.equal(radio("CSV (.csv)").props.disabled, true);
+});
+
+test("week-board printing keeps every exam in busy days and all included weeks, independently of the active preview", () => {
+  const courses = Object.fromEntries(Array.from({ length: 13 }, (_, i) => {
+    const id = "EXAM-" + i;
+    return [id, { id, code: id, title: "Exam " + i, crns: ["CRN-" + i], labSessions: [],
+      students: [{ id: "S" + i, name: "Private Student " + i, crn: "CRN-" + i }] }];
+  }));
+  const slots = Object.fromEntries(Array.from({ length: 6 }, (_, i) => [
+    String(8 + i).padStart(2, "0") + ":00", ["EXAM-" + (2 * i), "EXAM-" + (2 * i + 1)],
+  ]));
+  const sessions = resources.buildExamSessions({ 1: { Monday: slots }, 2: { Tuesday: { "12:00": ["EXAM-12"] } } }, courses, 60);
+  const catalog = {
+    rooms: Array.from({ length: 2 }, (_, i) => ({ id: "R" + i, name: "PAD / P-B-4F / " + (13 + i), enabled: true, busy: [] })),
+    invigilators: Array.from({ length: 4 }, (_, i) => ({ id: "I" + i, name: "Staff " + i, enabled: true, busy: [] })),
+  };
+  const plan = resources.assignResources(sessions, catalog);
+  const app = harness("ExportStudio", { sessions, catalog, plan, startDate: "2026-10-19", ready: true, isExporting: false, onExport() {} });
+  let tree = app.render();
+  find(tree, (node) => node.type === "button" && node.props["aria-label"] === "Exam overview").props.onClick();
+  tree = app.render();
+  const printView = () => find(tree, (node) => node.props.className === "export-print");
+  const printedBoards = () => nodes(printView()).filter((node) => node.props.className === "export-board-print");
+  const cardCodes = (board) => nodes(board).filter((node) => node.type === "h4").map(text);
+  assert.equal(printedBoards().length, 2);
+  assert.deepEqual(cardCodes(printedBoards()[0]), Object.keys(courses).slice(0, 12));
+  assert.deepEqual(cardCodes(printedBoards()[1]), ["EXAM-12"]);
+  assert.equal(nodes(printedBoards()[0]).filter((node) => node.type === "tbody")[0].children.length, 12, "A dense day is not truncated to a fixed number of cards");
+  assert.equal(nodes(printedBoards()[0]).filter((node) => node.props.className === "export-board__free").length, 4);
+  assert.match(text(printedBoards()[0]), /Monday19 OctTuesday20 OctWednesday21 OctThursday22 OctFriday23 Oct/);
+  assert.match(text(printedBoards()[0]), /08:00-09:00/);
+  assert.match(text(printedBoards()[0]), /13:00-14:00/);
+  assert.ok(!text(printView()).includes("Private Student"));
+  assert.ok(!text(printView()).includes("PAD"));
+  const preview = () => find(tree, (node) => node.props.className === "export-preview");
+  button(preview(), "Week 2").props.onClick();
+  tree = app.render();
+  assert.ok(!text(preview()).includes("EXAM-0"), "The screen switches weeks");
+  assert.equal(printedBoards().length, 2, "The print still contains every included week");
+  find(tree, (node) => node.type === "input" && node.props["aria-label"] === "Include Week 1").props.onChange();
+  tree = app.render();
+  assert.equal(printedBoards().length, 1);
+  assert.deepEqual(cardCodes(printedBoards()[0]), ["EXAM-12"]);
+  button(tree, "Print / Save PDF").props.onClick();
+  assert.equal(app.prints(), 1);
+  button(tree, "Chronological list").props.onClick();
+  tree = app.render();
+  assert.equal(printedBoards().length, 0);
+  const table = find(printView(), (node) => node.type?.name === "PreviewTable");
+  assert.equal(table.props.rows.length, 1);
+  assert.equal(table.props.rows[0][0], "EXAM-12");
+  button(tree, "Week board").props.onClick();
+  tree = app.render();
+  assert.equal(printedBoards().length, 1, "Switching back restores the printable board");
+  find(tree, (node) => node.type === "button" && node.props["aria-label"] === "Staff duties").props.onClick();
+  tree = app.render();
+  assert.equal(printedBoards().length, 0, "The board mode cannot replace another report's print layout");
+  assert.ok(!nodes(tree).some((node) => node.props.className === "export-print-layout"));
+  find(tree, (node) => node.type === "input" && node.props["aria-label"] === "Include Week 2").props.onChange();
+  tree = app.render();
+  assert.equal(button(tree, "Print / Save PDF").props.disabled, true);
+  assert.ok(!nodes(tree).some((node) => node.props.className === "export-print"), "No print content is generated for an empty selection");
 });
