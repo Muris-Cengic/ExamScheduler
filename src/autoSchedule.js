@@ -1,22 +1,24 @@
 import { assignmentIds, labExamEndMinutes } from "./department.js";
-import { roomCapacity } from "./examRooms.js";
+import { examInvigilatorsNeeded, roomCapacity } from "./examRooms.js";
 import { FRIDAY_EXAM_NOTICE, FRIDAY_EXAM_WINDOWS, isFridayExamTimeAllowed } from "./examWindows.js";
 import { assignResources, buildExamSessions, PREFERRED_STANDBY_COUNT, resourceSessionLabel, standbyAvailability, validateResourcePlan } from "./resources.js";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const MORNING_LAB_START = 540;
 const MORNING_LAB_END = 600;
+const EVENING_START = 1020;
 const COMMON_WINDOWS = [
   { days: DAYS.slice(0, -1), startMinutes: 720, endMinutes: 780 },
-  { days: DAYS.slice(0, -1), startMinutes: 1020, endMinutes: 1080 },
+  { days: DAYS.slice(0, -1), startMinutes: EVENING_START, endMinutes: 1080 },
   ...FRIDAY_EXAM_WINDOWS.map((window) => ({ days: ["Friday"], startMinutes: window.start, endMinutes: window.end })),
 ];
 const minutes = (id) => Number(id.split(":")[0]) * 60 + Number(id.split(":")[1]);
 const overlaps = (a, b) => a.start < b.end && b.start < a.end;
 const shareStudents = (a, b) => [...a.students].some((id) => b.students.has(id));
+const usesLabWindow = (course) => course.crns.length === 1 && course.labSessions?.length > 0;
 
 function candidatesFor(course, weeks, timeSlots, duration, interval) {
-  const lab = course.crns.length === 1 && course.labSessions?.length > 0;
+  const lab = usesLabWindow(course);
   // Early labs use the second morning hour, including the approved 09:50-to-10:00 allowance.
   const windows = lab ? course.labSessions.map((window) => window.startMinutes < MORNING_LAB_START
     ? { ...window, startMinutes: MORNING_LAB_START, endMinutes: Math.min(labExamEndMinutes(window), MORNING_LAB_END) }
@@ -59,18 +61,21 @@ export function autoSchedule({ courses, courseLookup, assignments, asdAssignment
   addEntries(asdAssignments, true);
   const scheduled = new Set([...assignmentIds(next), ...assignmentIds(asdAssignments)]);
   const chronological = (a, b) => a.week - b.week || DAYS.indexOf(a.day) - DAYS.indexOf(b.day) || a.start - b.start;
-  const pending = courses.filter((course) => !scheduled.has(course.id)).map((course) => ({
-    course, candidates: timeSlots.length ? candidatesFor(course, weeks, timeSlots, duration, interval).sort(chronological) : [],
-    students: new Set(course.students.map((student) => student.id)),
-  })).sort((a, b) => a.candidates.length - b.candidates.length || b.students.size - a.students.size || a.course.code.localeCompare(b.course.code));
+  const pending = courses.filter((course) => !scheduled.has(course.id)).map((course) => {
+    const students = new Set(course.students.map((student) => student.id));
+    return { course, students, lab: usesLabWindow(course), reasons: new Set(),
+      invigilators: examInvigilatorsNeeded(students.size, capacity, roomDistributionChoices[course.id]),
+      candidates: timeSlots.length ? candidatesFor(course, weeks, timeSlots, duration, interval).sort(chronological) : [],
+    };
+  }).sort((a, b) => a.candidates.length - b.candidates.length || b.invigilators - a.invigilators || b.students.size - a.students.size || a.course.code.localeCompare(b.course.code));
   const placed = [];
   const unplaced = [];
   let resourcePlan;
-  pending.forEach((item) => {
-    const reasons = new Set();
+  const place = (item, candidates) => {
+    const { reasons } = item;
     let best;
     let fallback;
-    for (const candidate of item.candidates) {
+    for (const candidate of candidates) {
       if (!item.students.size) break;
       const exam = { ...candidate, students: item.students };
       const sameDay = entries.filter((entry) => entry.week === exam.week && entry.day === exam.day);
@@ -102,7 +107,28 @@ export function autoSchedule({ courses, courseLookup, assignments, asdAssignment
       fallback ??= choice;
     }
     best ??= fallback;
-    if (!item.students.size || !best) {
+    if (!best) return;
+    const { candidate } = best;
+    next[candidate.week] ??= {};
+    next[candidate.week][candidate.day] ??= {};
+    next[candidate.week][candidate.day][candidate.slotId] ??= [];
+    next[candidate.week][candidate.day][candidate.slotId].push(item.course.id);
+    resourcePlan = best.plan;
+    scheduled.add(item.course.id);
+    entries.push({ ...candidate, id: item.course.id, students: item.students, locked: false });
+    placed.push({ courseId: item.course.id, ...candidate });
+  };
+  // Reserve fixed lab windows, then give staffing-heavy flexible exams first choice of daytime capacity.
+  pending.filter((item) => item.lab).forEach((item) => place(item, item.candidates));
+  const flexible = pending.filter((item) => !item.lab);
+  flexible.forEach((item) => place(item, item.candidates.filter((candidate) => candidate.start < EVENING_START)));
+  // Finish the daytime pass for every course before filling evenings with the lightest staffing demand first.
+  flexible.filter((item) => !scheduled.has(item.course.id))
+    .sort((a, b) => a.invigilators - b.invigilators || a.students.size - b.students.size || a.course.code.localeCompare(b.course.code))
+    .forEach((item) => place(item, item.candidates.filter((candidate) => candidate.start >= EVENING_START)));
+  pending.forEach((item) => {
+    if (!scheduled.has(item.course.id)) {
+      const { reasons } = item;
       const morningLabNote = item.course.crns.length === 1 && item.course.labSessions?.some((lab) => lab.startMinutes < MORNING_LAB_START)
         ? " Morning lab exams must fit within 09:00-10:00 and the lab hours (a 09:50 lab end is treated as 10:00); the exam duration is not shortened."
         : "";
@@ -112,16 +138,7 @@ export function autoSchedule({ courses, courseLookup, assignments, asdAssignment
         : "No valid slot. " + [...reasons].slice(0, 3).join("; ") +
           (reasons.size > 3 ? " Additional slots are blocked by the same resource/student constraints. Review the pool, existing timetable or add a week." : "");
       unplaced.push({ courseId: item.course.id, reason });
-      return;
     }
-    const { candidate } = best;
-    next[candidate.week] ??= {};
-    next[candidate.week][candidate.day] ??= {};
-    next[candidate.week][candidate.day][candidate.slotId] ??= [];
-    next[candidate.week][candidate.day][candidate.slotId].push(item.course.id);
-    resourcePlan = best.plan;
-    entries.push({ ...candidate, id: item.course.id, students: item.students, locked: false });
-    placed.push({ courseId: item.course.id, ...candidate });
   });
   const sessions = buildExamSessions(next, courseLookup, duration, capacity, roomDistributionChoices);
   resourcePlan ??= assignResources(sessions, catalog);

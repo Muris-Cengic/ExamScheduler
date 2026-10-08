@@ -161,7 +161,7 @@ test("multiple CRNs use only common windows, even when labs are available", () =
   assert.equal(evening.placed[0].slotId, "17:00");
 });
 
-test("chronological scheduling prioritizes earlier weeks and weekdays before later morning windows", () => {
+test("daytime scheduling prioritizes earlier weeks and weekdays before using evenings", () => {
   const c = course("MAIN", [student("S1")], ["101", "102"]);
   const existing = course("EXISTING", Array.from({ length: 16 }, (_, i) => student("OTHER" + i)));
   const result = draft([c], {
@@ -174,8 +174,27 @@ test("chronological scheduling prioritizes earlier weeks and weekdays before lat
   const blocked = draft([c], {
     asdAssignments: { 1: { Monday: { "12:00": ["ASD"] } } }, courseLookup: { MAIN: c, ASD: course("ASD") },
   });
-  assert.equal(blocked.placed[0].slotId, "17:00", "Monday evening comes before Tuesday noon");
-  assert.equal(blocked.placed[0].day, "Monday");
+  assert.equal(blocked.placed[0].slotId, "12:00", "Tuesday noon comes before Monday evening");
+  assert.equal(blocked.placed[0].day, "Tuesday");
+});
+
+test("noon in a later configured week comes before an evening in the first week", () => {
+  const c = course("MAIN", [student("S1")], ["101", "102"]);
+  const blocked = { 1: Object.fromEntries(["Monday", "Tuesday", "Wednesday", "Thursday"]
+    .map((day) => [day, { "12:00": ["ASD"] }])) };
+  blocked[1].Friday = { "09:00": ["ASD"], "10:30": ["ASD"] };
+  const result = draft([c], { weeks: [2, 1], asdAssignments: blocked,
+    courseLookup: { MAIN: c, ASD: course("ASD") } });
+  assert.deepEqual(result.placed.map((exam) => [exam.week, exam.day, exam.slotId]), [[2, "Monday", "12:00"]]);
+  assert.deepEqual(result.unplaced, []);
+});
+
+test("Friday morning is tried before earlier weekday evenings when all noon sessions conflict", () => {
+  const c = course("MAIN", [student("S1")], ["101", "102"]);
+  const blocked = { 1: Object.fromEntries(["Monday", "Tuesday", "Wednesday", "Thursday"]
+    .map((day) => [day, { "12:00": ["ASD"] }])) };
+  const result = draft([c], { asdAssignments: blocked, courseLookup: { MAIN: c, ASD: course("ASD") } });
+  assert.deepEqual(result.placed.map((exam) => [exam.day, exam.slotId]), [["Friday", "09:00"]]);
 });
 
 test("feasible exams can share noon slots instead of moving to an empty evening slot", () => {
@@ -196,28 +215,76 @@ test("feasible exams can share noon slots instead of moving to an empty evening 
   assert.equal(conflict.placed[0].slotId, "17:00", "Shared students still block the earlier slot");
 });
 
-test("a batch fills the earliest day and parallel slots before moving to later days", () => {
+test("a batch fills parallel noon slots across all days before moving to evenings", () => {
   const courses = Array.from({ length: 7 }, (_, i) => course("EXAM-" + i, [student("STUDENT-" + i)], ["101", "102"]));
   const options = { timeSlots: slots(12, 18) };
   const enough = draft(courses, { ...options, staffCount: 4 });
   assert.equal(enough.unplaced.length, 0);
   assert.deepEqual(enough.placed.map((exam) => [exam.day, exam.slotId]),
-    [["Monday", "12:00"], ["Monday", "12:00"], ["Monday", "17:00"], ["Monday", "17:00"],
-      ["Tuesday", "12:00"], ["Tuesday", "12:00"], ["Tuesday", "17:00"]]);
+    [["Monday", "12:00"], ["Monday", "12:00"], ["Tuesday", "12:00"], ["Tuesday", "12:00"],
+      ["Wednesday", "12:00"], ["Wednesday", "12:00"], ["Thursday", "12:00"]]);
   assert.deepEqual(enough.warnings, []);
   const limited = draft(courses, { ...options, staffCount: 2 });
   assert.equal(limited.unplaced.length, 0);
   assert.equal(limited.placed.filter((exam) => exam.day === "Monday").length, 2);
   assert.equal(limited.placed.filter((exam) => exam.day === "Tuesday").length, 2);
+  assert.deepEqual(limited.placed.map((exam) => [exam.day, exam.slotId]),
+    [["Monday", "12:00"], ["Tuesday", "12:00"], ["Wednesday", "12:00"], ["Thursday", "12:00"],
+      ["Monday", "17:00"], ["Tuesday", "17:00"], ["Wednesday", "17:00"]]);
   assert.equal(limited.warnings.length, 7, "One-backup fallback is explicit when two standby people cannot fit anywhere");
 });
 
-test("chronological placement still prevents a third exam for a student on the same day", () => {
+test("daytime placement puts a student's conflicting exams in noon slots on successive days", () => {
   const courses = ["A", "B", "C"].map((id) => course(id, [student("S1")], ["101", "102"]));
   const result = draft(courses);
   assert.equal(result.unplaced.length, 0);
   assert.deepEqual(result.placed.map((exam) => [exam.day, exam.slotId]),
-    [["Monday", "12:00"], ["Monday", "17:00"], ["Tuesday", "12:00"]]);
+    [["Monday", "12:00"], ["Tuesday", "12:00"], ["Wednesday", "12:00"]]);
+});
+
+test("daytime capacity goes to exams needing more invigilators, accounting for room consolidation", () => {
+  const standard = course("STANDARD", Array.from({ length: 51 }, (_, i) => student("S" + i)), ["101", "102"]);
+  const consolidated = course("CONSOLIDATED", Array.from({ length: 52 }, (_, i) => student("C" + i)), ["101", "102"]);
+  const courses = [consolidated, standard];
+  const catalog = resourceFixture(courses, 7, 3);
+  catalog.rooms.forEach((room) => { room.busy = [{ code: "CLASS", crn: "900", days: ["Tuesday", "Wednesday", "Thursday", "Friday"], start: 0, end: 1440, isLab: false }]; });
+  const choices = { CONSOLIDATED: "distribute" };
+  const result = draft(courses, { catalog, roomDistributionChoices: choices });
+  assert.deepEqual(result.placed.map((exam) => [exam.courseId, exam.day, exam.slotId]),
+    [["STANDARD", "Monday", "12:00"], ["CONSOLIDATED", "Monday", "17:00"]]);
+  const sessions = buildExamSessions(result.assignments, Object.fromEntries(courses.map((c) => [c.id, c])), 60, 25, choices);
+  assert.deepEqual(sessions.map((session) => session.rooms.reduce((sum, room) => sum + room.requiredInvigilators, 0)), [5, 4],
+    "The larger consolidated exam needs less staffing and belongs in evening, not the 51-student exam");
+  assert.equal(validateResourcePlan(sessions, catalog, result.resourcePlan).complete, true);
+  assert.deepEqual(result.warnings, []);
+});
+
+test("evening fallback places exams needing the fewest invigilators first, not the largest exam first", () => {
+  const courses = [["LARGE", 51], ["MEDIUM", 16], ["SMALL", 10]].map(([id, count]) =>
+    course(id, Array.from({ length: count }, (_, i) => student(id + i)), ["101", "102"]));
+  const catalog = resourceFixture(courses, 7, 3);
+  catalog.rooms.forEach((room) => { room.busy = [
+    { code: "NOON", crn: "900", days: ["Monday", "Tuesday", "Wednesday", "Thursday"], start: 720, end: 780, isLab: false },
+    { code: "FRIDAY", crn: "901", days: ["Friday"], start: 540, end: 690, isLab: false },
+  ]; });
+  const result = draft(courses, { catalog });
+  assert.deepEqual(result.placed.map((exam) => [exam.courseId, exam.day, exam.slotId]),
+    [["SMALL", "Monday", "17:00"], ["MEDIUM", "Monday", "17:00"], ["LARGE", "Tuesday", "17:00"]]);
+  const sessions = buildExamSessions(result.assignments, Object.fromEntries(courses.map((c) => [c.id, c])), 60);
+  assert.equal(validateResourcePlan(sessions, catalog, result.resourcePlan).complete, true);
+  assert.deepEqual(result.warnings, []);
+});
+
+test("fixed evening labs keep their required window while flexible courses still try daytime first", () => {
+  const lab = course("LAB", [student("LAB-STUDENT")], ["101"], [{ days: ["Monday"], startMinutes: 1020, endMinutes: 1080 }]);
+  const flexible = course("FLEXIBLE", [student("OTHER")], ["101", "102"]);
+  const result = draft([flexible, lab]);
+  assert.deepEqual(result.placed.map((exam) => [exam.courseId, exam.day, exam.slotId]),
+    [["LAB", "Monday", "17:00"], ["FLEXIBLE", "Monday", "12:00"]]);
+  const sessions = buildExamSessions(result.assignments, { LAB: lab, FLEXIBLE: flexible }, 60);
+  const labRoom = sessions.find((session) => session.slotId === "17:00").rooms[0];
+  assert.equal(result.resourcePlan.allocations[labRoom.id].roomId, labRoom.fixedRoomId);
+  assert.equal(result.resourcePlan.allocations[labRoom.id].invigilatorIds[0], labRoom.fixedInvigilatorId);
 });
 
 test("earliest dates outrank lighter days and weeks when resource and student constraints allow", () => {
@@ -394,7 +461,7 @@ test("resource-aware placement checks rooms and staff for the entire exam rather
   catalog.invigilators[0].busy = [{ code: "STAFF-CLASS", crn: "901", days: ["Monday"], start: 750, end: 780, isLab: false }];
   const before = JSON.stringify(catalog);
   const result = draft([c], { catalog, settings: { ...settings, invigilatorCount: 999 } });
-  assert.deepEqual(result.placed.map((exam) => [exam.week, exam.day, exam.slotId]), [[1, "Monday", "17:00"]]);
+  assert.deepEqual(result.placed.map((exam) => [exam.week, exam.day, exam.slotId]), [[1, "Tuesday", "12:00"]]);
   const sessions = buildExamSessions(result.assignments, { MAIN: c }, 60);
   assert.equal(validateResourcePlan(sessions, catalog, result.resourcePlan).complete, true);
   assert.deepEqual(standbyAvailability(sessions[0], sessions, catalog, result.resourcePlan), { count: 2, assigned: 1, unassigned: 1 });
@@ -408,8 +475,8 @@ test("the preferred two-person standby capacity can defer a slot; a one-backup f
   const catalog = resourceFixture([c], 3, 1);
   catalog.invigilators[2].busy = [{ code: "CLASS", crn: "901", days: ["Monday"], start: 720, end: 780, isLab: false }];
   const later = draft([c], { catalog });
-  assert.equal(later.placed[0].slotId, "17:00");
-  assert.equal(later.placed[0].day, "Monday");
+  assert.equal(later.placed[0].slotId, "12:00");
+  assert.equal(later.placed[0].day, "Tuesday");
   assert.deepEqual(later.warnings, []);
   catalog.invigilators[2].enabled = false;
   const fallback = draft([c], { catalog, weeks: [2, 1] });
@@ -420,6 +487,21 @@ test("the preferred two-person standby capacity can defer a slot; a one-backup f
   assert.match(fallback.warnings[0].message, /Week 1 \/ Monday \/ 12:00-13:00: only 1 available standby/);
   const sessions = buildExamSessions(fallback.assignments, { MAIN: c }, 60);
   assert.equal(validateResourcePlan(sessions, catalog, fallback.resourcePlan).complete, true);
+});
+
+test("valid daytime backup coverage outranks gaining a second standby person in the evening", () => {
+  const c = course("MAIN", [student("S1")], ["101", "102"]);
+  const catalog = resourceFixture([c], 3, 1);
+  catalog.invigilators[2].busy = [
+    { code: "NOON", crn: "900", days: ["Monday", "Tuesday", "Wednesday", "Thursday"], start: 720, end: 780, isLab: false },
+    { code: "FRIDAY", crn: "901", days: ["Friday"], start: 540, end: 690, isLab: false },
+  ];
+  const result = draft([c], { catalog });
+  assert.deepEqual(result.placed.map((exam) => [exam.day, exam.slotId]), [["Monday", "12:00"]]);
+  assert.equal(result.warnings.length, 1);
+  const sessions = buildExamSessions(result.assignments, { MAIN: c }, 60);
+  assert.equal(validateResourcePlan(sessions, catalog, result.resourcePlan).complete, true);
+  assert.deepEqual(standbyAvailability(sessions[0], sessions, catalog, result.resourcePlan), { count: 1, assigned: 1, unassigned: 0 });
 });
 
 test("excluded resources and unspecified class times affect placement before generation", () => {

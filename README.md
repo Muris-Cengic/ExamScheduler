@@ -81,15 +81,23 @@ After selecting resources, use **Auto-Schedule Remaining Exams**:
   per day, and room/staff shortages. Every proposed placement is trial-assigned
   using the selected pool, full exam duration, class availability, fixed lab
   resources and overlapping bookings, including assigned slot backups.
-- Placement prefers the **earliest week, then weekday, then time**: Monday noon
-  comes before Monday evening, Tuesday noon or Friday morning. Multiple exams
-  can share an earlier slot when student, room and staff constraints allow.
-  Timetable load balancing no longer pushes exams to a later date. Lab exams
-  still use only their permitted lab window.
-- The earliest valid slot retaining two standby people is preferred. If none
-  exists, the earliest slot with valid required backup coverage is used and a
-  standby-shortfall warning is shown. Actual assigned-backup limits are unchanged.
-  A draft includes the checked room/invigilator plan, ready for resource review.
+- Flexible exams try **12:00-13:00 across all available days and configured
+  weeks before 17:00-18:00**. Allowed Friday morning sessions are also tried in
+  the daytime pass. Within that pass, earlier weeks and weekdays come first;
+  multiple exams can share a slot when student, room and staff constraints allow.
+- Exams needing more room invigilators get first choice of daytime capacity.
+  After every flexible exam has tried daytime, remaining exams are placed in
+  evening slots in **fewest invigilators needed first** order. Staffing demand
+  uses unique enrolled students, room splitting and approved consolidation,
+  not just course size. This reduces evening staffing where constraints allow.
+  Fixed lab exams are reserved first and remain within their listed lab windows,
+  including an evening lab when that is the course's only permitted time.
+- Within each pass, the earliest valid slot retaining two standby people is
+  preferred. If none exists, a slot with valid required backup coverage is used
+  and a standby-shortfall warning is shown; a valid daytime placement is not
+  moved to evening just to gain extra standby capacity. Actual assigned-backup
+  limits are unchanged. A draft includes the checked room/invigilator plan,
+  ready for resource review.
 - Existing placements are preserved. Courses that cannot fit remain in the pool,
   with reasons shown. Add a week, adjust settings or place them manually, then rerun.
   This is a greedy draft, not a guarantee of an optimal or complete timetable.
