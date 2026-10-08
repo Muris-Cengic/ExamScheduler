@@ -236,11 +236,53 @@ const find = (tree, predicate) => {
   return result;
 };
 const button = (tree, label) => find(tree, (node) => node.type === "button" && text(node) === label);
+const step = (tree, id) => find(tree, (node) => node.type === "button" && node.props["data-step"] === id);
+const exportReady = (tree) => find(tree, (node) => node.type?.name === "ResourceAssignment").props.validation.complete;
 const review = (tree) => find(tree, (node) => node.type?.name === "CourseSelection");
 const root = "data/input/26-27 S1/";
 const enrolmentPath = root + "Students Registration 26-27 S1.xlsx";
 const crnPath = root + "CRN List 26-27 S1.xlsx";
 const asdPath = root + "Other Departments Schedule/Midterm Schedule 26-27 S1.xlsx";
+
+test("every step is directly accessible, with actions separate and prerequisites enforced", () => {
+  const app = harness();
+  let tree = app.render();
+  const header = () => find(tree, (node) => node.props.className === "app__header");
+  const navigation = () => find(header(), (node) => node.type === "nav" && node.props["aria-label"] === "Schedule steps");
+  const actions = () => find(tree, (node) => node.props.className === "step-actions");
+  assert.equal(nodes(navigation()).filter((node) => node.type === "button").length, 7);
+  assert.equal(step(tree, "load").props["aria-label"], "Step 1: Student Enrollment");
+  assert.equal(step(tree, "courses").props["aria-label"], "Step 2: CRN Info");
+  assert.equal(step(tree, "asd").props["aria-label"], "Step 3: ASD Schedule (optional)");
+  assert.ok(!nodes(header()).some((node) => node.type === "input"));
+  assert.ok(!text(header()).includes("Upload student"));
+  const scrollRequests = [];
+  navigation().props.ref.current = {
+    querySelector(selector) {
+      assert.equal(selector, '[aria-current="step"]');
+      return { scrollIntoView(options) { scrollRequests.push(options); } };
+    },
+  };
+  for (const id of ["export", "asd", "resources", "main", "courses", "pool", "load"]) {
+    step(tree, id).props.onClick();
+    tree = app.render();
+    assert.equal(step(tree, id).props["aria-current"], "step");
+    assert.equal(nodes(navigation()).filter((node) => node.props["aria-current"] === "step").length, 1);
+    assert.ok(nodes(navigation()).filter((node) => node.type === "button").every((node) => node.props.type === "button" && !node.props.disabled));
+    assert.ok(!nodes(actions()).some((node) => node.props["data-step"]));
+    assert.equal(nodes(actions()).filter((node) => node.type === "button" && text(node) === "Load Timetable").length, id === "load" ? 1 : 0,
+      "Load Timetable is available only in Student Enrollment");
+    if (id !== "load") assert.match(text(find(tree, (node) => node.props["aria-label"] === "Step prerequisites")), /Load enrolment in Student Enrollment/);
+    if (id === "asd") assert.equal(button(tree, "Create ASD Timetable").props.disabled, true);
+    if (id === "main") assert.equal(button(tree, "Auto-Schedule Remaining Exams").props.disabled, true);
+  }
+  assert.equal(scrollRequests.length, 7, "Programmatic navigation keeps the active step visible on narrow screens");
+  assert.ok(scrollRequests.every((options) => options.block === "nearest" && options.inline === "nearest"));
+  button(tree, "Settings").props.onClick();
+  tree = app.render();
+  assert.ok(nodes(tree).some((node) => node.props.role === "dialog"));
+  assert.ok(!nodes(header()).some((node) => node.props.role === "dialog"));
+});
 
 test("resource selection precedes generation and stays editable after the resource-aware draft", async () => {
   const workbook = (rows) => {
@@ -259,13 +301,22 @@ test("resource selection precedes generation and stays editable after the resour
     ["S2", "Student Two", "MAIN-1000", "Main Exam", "102"],
   ]));
   tree = app.render();
+  step(tree, "export").props.onClick();
+  tree = app.render();
+  assert.match(text(find(tree, (node) => node.props["aria-label"] === "Step prerequisites")), /Load your CRN list in CRN Info/);
+  step(tree, "main").props.onClick();
+  tree = app.render();
+  assert.equal(button(tree, "Auto-Schedule Remaining Exams").props.disabled, true);
+  assert.ok(!nodes(tree).some((node) => node.props.className === "timetable"));
+  step(tree, "courses").props.onClick();
+  tree = app.render();
   await review(tree).props.onUpload(workbook([
     ["Campus", "Crn No", "Course Code", "Title", "Cr", "Maximum Load", "No Of Enrolled", "Session Id", "DAYS", "Time", "Primary Instructor", "Second Instructor", "Type", "Building", "Room"],
     ["PAD", "101", "MAIN-1000", "Main Exam", 3, 25, 1, "01", "M", "0800 - 0950", "10: Alice", "20: Bob", "T", "P-B-4F", "13"],
     ["PAD", "102", "MAIN-1000", "Main Exam", 3, 25, 1, "02", "T", "0800 - 0950", "30: Carol", "", "T", "P-B-4F", "14"],
   ]));
   tree = app.render();
-  button(tree, "Continue To ASD").props.onClick();
+  step(tree, "asd").props.onClick();
   tree = app.render();
   button(tree, "Skip ASD Step").props.onClick();
   tree = app.render();
@@ -279,31 +330,44 @@ test("resource selection precedes generation and stays editable after the resour
   assert.match(text(selection()), /3 invigilators selected/);
   assert.match(text(selection()), /Target: two available standby invigilators per slot/);
   assert.match(text(selection()), /08:00-09:50/);
+  const schedulingDisabled = () => {
+    step(tree, "main").props.onClick();
+    tree = app.render();
+    const disabled = button(tree, "Auto-Schedule Remaining Exams").props.disabled;
+    step(tree, "pool").props.onClick();
+    tree = app.render();
+    return disabled;
+  };
   const roomNames = pool().props.catalog.rooms.map((room) => room.name);
   include(roomNames[0]).props.onChange({ target: { checked: false } });
   tree = app.render();
   include(roomNames[1]).props.onChange({ target: { checked: false } });
   tree = app.render();
-  assert.equal(button(tree, "Continue To Scheduling").props.disabled, true);
+  assert.equal(schedulingDisabled(), true);
   include(roomNames[1]).props.onChange({ target: { checked: true } });
   include("Carol").props.onChange({ target: { checked: false } });
   include("Bob").props.onChange({ target: { checked: false } });
   tree = app.render();
-  assert.equal(button(tree, "Continue To Scheduling").props.disabled, true, "One person cannot cover both an exam and backup");
+  assert.equal(schedulingDisabled(), true, "One person cannot cover both an exam and backup");
   include("Carol").props.onChange({ target: { checked: true } });
   include("Bob").props.onChange({ target: { checked: true } });
   tree = app.render();
-  assert.equal(button(tree, "Continue To Scheduling").props.disabled, false);
-  button(tree, "Continue To Scheduling").props.onClick();
+  assert.equal(schedulingDisabled(), false);
+  step(tree, "main").props.onClick();
   tree = app.render();
   button(tree, "Auto-Schedule Remaining Exams").props.onClick();
   tree = app.render();
   assert.match(text(tree), /1 exams added. 0 remain unplaced/);
-  button(tree, "Proceed To Resources").props.onClick();
+  for (const id of ["asd", "courses", "pool", "main"]) {
+    step(tree, id).props.onClick();
+    tree = app.render();
+  }
+  assert.ok(nodes(tree).some((node) => node.props.className === "auto-schedule-result"), "Jumping between steps keeps the draft result");
+  step(tree, "resources").props.onClick();
   tree = app.render();
   const assignment = () => find(tree, (node) => node.type?.name === "ResourceAssignment").props;
   assert.equal(assignment().validation.complete, true, "The generated draft includes its checked allocation");
-  assert.equal(button(tree, "Proceed To Export").props.disabled, false);
+  assert.equal(!exportReady(tree), false);
   assert.match(text(tree), /Available standby capacity: 2 \(target 2\)/);
   assert.equal(assignment().sessions[0].day, "Monday");
   assert.equal(assignment().sessions[0].slotId, "12:00");
@@ -319,8 +383,16 @@ test("resource selection precedes generation and stays editable after the resour
   const spare = assignment().catalog.invigilators.find((person) => !primaryIds.includes(person.id) && !backupIds.includes(person.id));
   assignment().onPoolChange("invigilators", spare.id, { enabled: false });
   tree = app.render();
-  assert.equal(button(tree, "Proceed To Export").props.disabled, true, "Pool edits invalidate the generated plan until review");
+  assert.equal(!exportReady(tree), true, "Pool edits invalidate the generated plan until review");
   assert.match(text(tree), /Confirm valid room and staff assignments to assess standby capacity/);
+  const outdatedPlan = JSON.stringify(assignment().plan);
+  step(tree, "export").props.onClick();
+  tree = app.render();
+  assert.equal(button(tree, "Export Timetable").props.disabled, true, "Jumping to export cannot bypass resource validation");
+  assert.equal(button(tree, "Print / Save PDF").props.disabled, true);
+  step(tree, "resources").props.onClick();
+  tree = app.render();
+  assert.equal(JSON.stringify(assignment().plan), outdatedPlan, "Navigation preserves allocations, including outdated ones that need review");
   button(tree, "Auto-Assign Resources").props.onClick();
   tree = app.render();
   assert.equal(assignment().validation.complete, true, "The existing one-backup report rule is still valid");
@@ -335,7 +407,15 @@ test("resource selection precedes generation and stays editable after the resour
   assert.equal(saved.resourceCatalog.rooms.find((room) => room.name === roomNames[0]).enabled, false);
   assert.ok(saved.resourcePlan.fingerprint);
   const mainId = assignment().sessions[0].rooms[0].courseId;
-  button(tree, "Back To Scheduling").props.onClick();
+  for (const id of ["load", "asd", "export", "courses", "pool", "resources", "main"]) {
+    step(tree, id).props.onClick();
+    tree = app.render();
+  }
+  button(tree, "Save Timetable").props.onClick();
+  const afterNavigation = JSON.parse(await app.downloads.at(-1).text());
+  const withoutTimestamp = ({ savedAt: _savedAt, ...snapshot }) => snapshot;
+  assert.deepEqual(withoutTimestamp(afterNavigation), withoutTimestamp(saved), "Step navigation must not change schedule data or resource selections");
+  step(tree, "main").props.onClick();
   tree = app.render();
   const fridayCell = (time) => {
     const [hour, minute] = time.split(":").map(Number);
@@ -365,12 +445,12 @@ test("resource selection precedes generation and stays editable after the resour
     assert.equal(department.assignmentIds(moved.assignments).size, 1);
     assert.deepEqual(moved.assignments[1].Monday["12:00"], []);
   }
-  button(tree, "Review Resource Pool").props.onClick();
+  step(tree, "pool").props.onClick();
   tree = app.render();
   assert.equal(include(roomNames[0]).props.checked, false);
   assert.equal(include(roomNames[1]).props.checked, true);
   assert.ok(!nodes(selection()).some((node) => node.type === "select"), "Pre-scheduling pool selection never exposes exam assignments");
-  button(tree, "Back To ASD").props.onClick();
+  step(tree, "asd").props.onClick();
   tree = app.render();
   button(tree, "Create ASD Timetable").props.onClick();
   tree = app.render();
@@ -380,6 +460,13 @@ test("resource selection precedes generation and stays editable after the resour
   button(tree, "Save ASD Timetable").props.onClick();
   const asd = JSON.parse(await app.downloads.at(-1).text());
   assert.deepEqual(asd.assignments[1].Friday["12:00"], [mainId]);
+  step(tree, "main").props.onClick();
+  tree = app.render();
+  button(tree, "Save Timetable").props.onClick();
+  const afterAsd = JSON.parse(await app.downloads.at(-1).text());
+  assert.equal(department.assignmentIds(afterAsd.assignments).has(mainId), false,
+    "Placing an ASD exam removes its duplicate main placement without requiring a Continue button");
+  assert.equal(department.assignmentIds(afterAsd.asdAssignments).has(mainId), true);
 });
 
 test("wizard imports, exam toggles, draft, saved-state round trip and report exclusion work together", {
@@ -390,7 +477,7 @@ test("wizard imports, exam toggles, draft, saved-state round trip and report exc
   const enrolmentLabel = find(tree, (node) => node.type === "label" && text(node) === "Upload Enrollment File");
   await find(enrolmentLabel, (node) => node.type === "input").props.onChange(fileEvent(enrolmentPath));
   tree = app.render();
-  assert.equal(button(tree, "Continue To ASD").props.disabled, true);
+  assert.equal(step(tree, "asd").props.disabled, undefined);
   await review(tree).props.onUpload(fileEvent(crnPath));
   tree = app.render();
   assert.equal(review(tree).props.courses.length, 37);
@@ -408,14 +495,14 @@ test("wizard imports, exam toggles, draft, saved-state round trip and report exc
   tree = app.render();
   const firstId = review(tree).props.courses.find((course) => department.defaultHasExam(course)).id;
   review(tree).props.onExamChange(firstId, false);
-  button(tree, "Continue To ASD").props.onClick();
+  step(tree, "asd").props.onClick();
   tree = app.render();
   const asdInput = find(tree, (node) => node.type === "input" && node.props.accept === ".json,.xlsx,.xls,.csv");
   await asdInput.props.onChange(fileEvent(asdPath));
   tree = app.render();
-  assert.match(text(tree), /Select Resources Before Scheduling/);
+  assert.match(text(tree), /Select Resources/);
   assert.ok(!nodes(tree).some((node) => node.props.className === "timetable"));
-  button(tree, "Continue To Scheduling").props.onClick();
+  step(tree, "main").props.onClick();
   tree = app.render();
   button(tree, "Auto-Schedule Remaining Exams").props.onClick();
   tree = app.render();
@@ -444,25 +531,25 @@ test("wizard imports, exam toggles, draft, saved-state round trip and report exc
   let loadedTree = reloaded.render();
   await find(loadedTree, (node) => node.type === "input" && node.props.accept === "application/json").props.onChange(jsonEvent(snapshot));
   loadedTree = reloaded.render();
-  button(loadedTree, "Review Department Exams").props.onClick();
+  step(loadedTree, "courses").props.onClick();
   loadedTree = reloaded.render();
   assert.equal(review(loadedTree).props.examChoices[firstId], false);
   assert.equal(review(loadedTree).props.courses.reduce((sum, course) => sum + course.labSessions.length, 0), 46);
   const assignedId = [...department.assignmentIds(snapshot.assignments)].find((id) => id !== "ISET-4001");
   review(loadedTree).props.onExamChange(assignedId, false);
-  button(loadedTree, "Continue To ASD").props.onClick();
+  step(loadedTree, "asd").props.onClick();
   loadedTree = reloaded.render();
-  button(loadedTree, "Continue To Resources").props.onClick();
+  step(loadedTree, "pool").props.onClick();
   loadedTree = reloaded.render();
-  button(loadedTree, "Continue To Scheduling").props.onClick();
+  step(loadedTree, "main").props.onClick();
   loadedTree = reloaded.render();
   button(loadedTree, "Save Timetable").props.onClick();
   const afterToggle = JSON.parse(await reloaded.downloads.at(-1).text());
   assert.equal(department.assignmentIds(afterToggle.assignments).size, 24);
   assert.equal(department.assignmentIds(afterToggle.assignments).has(assignedId), false);
-  button(loadedTree, "Proceed To Resources").props.onClick();
+  step(loadedTree, "resources").props.onClick();
   loadedTree = reloaded.render();
-  assert.equal(button(loadedTree, "Proceed To Export").props.disabled, true);
+  assert.equal(!exportReady(loadedTree), true);
   find(loadedTree, (node) => node.type?.name === "ResourceAssignment").props.onAssign();
   loadedTree = reloaded.render();
   const fullResources = find(loadedTree, (node) => node.type?.name === "ResourceAssignment").props;
@@ -498,7 +585,7 @@ test("wizard imports, exam toggles, draft, saved-state round trip and report exc
     const target = decodeURIComponent(link.props.href.slice(1));
     assert.ok(nodes(loadedTree).some((node) => node.props.id === target), "Each issue links to a real assignment row or time slot");
   });
-  assert.equal(button(loadedTree, "Proceed To Export").props.disabled, true);
+  assert.equal(!exportReady(loadedTree), true);
   find(loadedTree, (node) => node.type?.name === "ResourceAssignment").props.onPoolChange("invigilators", pinned.fixedInvigilatorId, { enabled: true });
   loadedTree = reloaded.render();
 
@@ -510,7 +597,7 @@ test("wizard imports, exam toggles, draft, saved-state round trip and report exc
   } } };
   await find(loadedTree, (node) => node.type === "input" && node.props.accept === "application/json").props.onChange(jsonEvent(eveningSnapshot));
   loadedTree = reloaded.render();
-  button(loadedTree, "Proceed To Resources").props.onClick();
+  step(loadedTree, "resources").props.onClick();
   loadedTree = reloaded.render();
   find(loadedTree, (node) => node.type?.name === "ResourceAssignment").props.onAssign();
   loadedTree = reloaded.render();
@@ -529,18 +616,18 @@ test("wizard imports, exam toggles, draft, saved-state round trip and report exc
   assert.ok(savedResources.resourcePlan.fingerprint);
   await find(loadedTree, (node) => node.type === "input" && node.props.accept === "application/json").props.onChange(jsonEvent(savedResources));
   loadedTree = reloaded.render();
-  button(loadedTree, "Proceed To Resources").props.onClick();
+  step(loadedTree, "resources").props.onClick();
   loadedTree = reloaded.render();
-  assert.equal(button(loadedTree, "Proceed To Export").props.disabled, false);
+  assert.equal(!exportReady(loadedTree), false);
   const ready = find(loadedTree, (node) => node.type?.name === "ResourceAssignment").props;
   const firstAllocation = ready.plan.allocations[ready.sessions[0].rooms[0].id];
   ready.onPoolChange("invigilators", firstAllocation.invigilatorIds[0], { enabled: false });
   loadedTree = reloaded.render();
-  assert.equal(button(loadedTree, "Proceed To Export").props.disabled, true);
+  assert.equal(!exportReady(loadedTree), true);
   find(loadedTree, (node) => node.type?.name === "ResourceAssignment").props.onPoolChange("invigilators", firstAllocation.invigilatorIds[0], { enabled: true });
   loadedTree = reloaded.render();
-  assert.equal(button(loadedTree, "Proceed To Export").props.disabled, false);
-  button(loadedTree, "Proceed To Export").props.onClick();
+  assert.equal(!exportReady(loadedTree), false);
+  step(loadedTree, "export").props.onClick();
   loadedTree = reloaded.render();
   await button(loadedTree, "Export Timetable").props.onClick();
   const exportedBlob = reloaded.downloads.at(-1);
@@ -606,7 +693,7 @@ test("room consolidation choices require a click, preserve other exams, survive 
   let tree = app.render();
   await find(tree, (node) => node.type === "input" && node.props.accept === "application/json").props.onChange(jsonEvent(snapshot));
   tree = app.render();
-  button(tree, "Proceed To Resources").props.onClick();
+  step(tree, "resources").props.onClick();
   tree = app.render();
   button(tree, "Auto-Assign Resources").props.onClick();
   tree = app.render();
@@ -635,12 +722,12 @@ test("room consolidation choices require a click, preserve other exams, survive 
   tree = reloaded.render();
   await find(tree, (node) => node.type === "input" && node.props.accept === "application/json").props.onChange(jsonEvent(saved));
   tree = reloaded.render();
-  button(tree, "Proceed To Resources").props.onClick();
+  step(tree, "resources").props.onClick();
   tree = reloaded.render();
   assert.equal(decisionButton("Distribute across remaining rooms").props["aria-pressed"], true);
   assert.equal(panel().validation.complete, true);
   assert.equal(panel().sessions[0].rooms.find((room) => room.courseId === other.id).maxStudents, 25);
-  button(tree, "Proceed To Export").props.onClick();
+  step(tree, "export").props.onClick();
   tree = reloaded.render();
   await button(tree, "Export Timetable").props.onClick();
   const exported = XLSX.read(await reloaded.downloads.at(-1).arrayBuffer(), { type: "array" });
@@ -648,12 +735,12 @@ test("room consolidation choices require a click, preserve other exams, survive 
   const examRows = reportRows.slice(1).filter((row) => row[1] === exam.code);
   assert.deepEqual(examRows.map((row) => row[3]), [26, 26]);
   assert.ok(examRows.every((row) => /Approved up to 27/.test(row[14])));
-  button(tree, "Back To Resources").props.onClick();
+  step(tree, "resources").props.onClick();
   tree = reloaded.render();
   decisionButton("Keep the extra room (normal limit)").props.onClick();
   tree = reloaded.render();
   assert.deepEqual(examRooms().map((room) => room.students.length), [19, 18, 15]);
-  assert.equal(button(tree, "Proceed To Export").props.disabled, true, "The restored room must be assigned before export");
+  assert.equal(!exportReady(tree), true, "The restored room must be assigned before export");
 });
 
 test("export workspace previews audiences, combines or splits weeks, exports CSV and prints only selected report data", async () => {
@@ -694,11 +781,11 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   let tree = app.render();
   await find(tree, (node) => node.type === "input" && node.props.accept === "application/json").props.onChange(jsonEvent(snapshot));
   tree = app.render();
-  button(tree, "Proceed To Resources").props.onClick();
+  step(tree, "resources").props.onClick();
   tree = app.render();
   button(tree, "Auto-Assign Resources").props.onClick();
   tree = app.render();
-  button(tree, "Proceed To Export").props.onClick();
+  step(tree, "export").props.onClick();
   tree = app.render();
   const panel = () => find(tree, (node) => node.props.className === "export-studio");
   const preview = () => find(panel(), (node) => node.props.className === "export-preview");

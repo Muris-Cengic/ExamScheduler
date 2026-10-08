@@ -1,4 +1,4 @@
-# Exam Scheduling Helper
+# Midterm Exam Scheduling Helper
 
 React/Vite app for preparing a main exam timetable around an optional ASD schedule.
 
@@ -9,9 +9,22 @@ npm install
 npm run dev
 ```
 
+## Navigation
+
+Use the compact step bar to jump directly to **Student Enrollment, CRN Info, ASD Schedule, Resource Pool,
+Timetable, Assignments or Export**. Every step stays accessible; missing inputs
+are shown in that step, and scheduling/export actions enforce their prerequisites.
+Navigation preserves exam choices, placements and resource allocations, including
+outdated allocations that still need review.
+
+Step actions are separate from navigation. **Settings** opens an overlay from the
+action strip. Detailed exam, placement and resource rules are collapsible; blocking
+issues and resource shortages stay visible. On narrow screens, the step bar scrolls
+horizontally and keeps the current step in view.
+
 ## Import enrolment
 
-In **Load Data**, choose the exam start date and upload an Excel or CSV file.
+In **Student Enrollment**, choose the exam start date and upload an Excel or CSV file.
 Supported inputs:
 
 - A registration report with `STUDENT_ID : ..., Student Name : ...` identity rows,
@@ -25,7 +38,7 @@ The new registration report contains no instructor names; the department CRN lis
 
 ## Select department exams
 
-After enrolment, **Department Exams** accepts an Excel/CSV CRN list. For the supplied
+After enrolment, **CRN Info** accepts an Excel/CSV CRN list. For the supplied
 `data/input/26-27 S1/CRN List 26-27 S1.xlsx`, the first sheet is `ISET CRNs`.
 Only the **first sheet** is read, regardless of its name. All other sheets are
 ignored for department courses, resource pools and teaching availability.
@@ -45,18 +58,19 @@ Both headerless Banner data and named-column layouts are supported on the first 
 
 ## Select resources
 
-The wizard runs **Load Data > Department Exams > ASD (Optional) > Select Resources
-> Build Main Timetable > Review Resources > Export**. After creating/loading ASD,
+The workflow is **Student Enrollment > CRN Info > ASD Schedule (Optional) > Resource Pool > Timetable
+> Assignments > Export**. After creating/loading ASD,
 or skipping it, choose the active rooms and named invigilators before generating
 the main timetable. The pool comes from the CRN list's first sheet and shows each
 resource's recurring class commitments. Excluded resources cannot be used.
-At least one room and two invigilators must be selected to continue; this does
-not imply that they are available for any particular exam.
+Auto-scheduling requires at least one selected room and two invigilators; this
+does not imply that they are available for any particular exam. Step navigation
+is not blocked by resource selection.
 
 The scheduler targets **two available standby invigilators per slot**, including
 that slot's assigned backups. This is reserved capacity, not two mandatory
 backup assignments. Unassigned standby people add no load and no report duties.
-You can review the pool again from scheduling and adjust it after generation.
+Use **Resource Pool** to change selections at any time, including after generation.
 
 ## Automatic scheduling
 
@@ -106,7 +120,7 @@ After selecting resources, use **Auto-Schedule Remaining Exams**:
 
 ## Assign resources
 
-Before **Export**, continue to **Review Resources**. Automatic drafts already
+Before **Export**, review **Assignments**. Automatic drafts already
 include checked assignments; review and adjust them with the room/staff selectors.
 Use **Auto-Assign Resources** after manual scheduling or pool changes. Pool edits
 invalidate the old plan until it is reassigned/reviewed. Each valid slot shows
@@ -243,7 +257,7 @@ Excel/CSV schedules need `Course`, `Department`, `Day` and `Time` columns.
 - Courses without loaded enrolment are skipped and listed in the import notice.
   Ambiguous matches or conflicting sessions produce an error.
 - Dates such as `Monday, 19 October` use the selected exam start date's year.
-  Set the correct year in Load Data before importing. Explicit years and Excel dates are supported.
+  Set the correct year in Student Enrollment before importing. Explicit years and Excel dates are supported.
 - Time ranges such as `12:00 - 1:00 PM` and `10:30 - 11:30 AM` are supported.
   The timetable expands its weeks/hours and uses 30-minute slots when needed.
 - Imported exam durations are retained for timetable display and cross-schedule student conflicts.

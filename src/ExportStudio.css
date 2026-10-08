@@ -28,8 +28,8 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
-  gap: 26px;
-  padding: clamp(24px, 3vw, 44px);
+  gap: 16px;
+  padding: clamp(16px, 2vw, 24px);
   border: 1px solid #c9d8ed;
   border-radius: 16px;
   background: radial-gradient(ellipse at 100% 0, #d8f1ee 0%, transparent 55%),
@@ -38,7 +38,7 @@
   animation: export-arrive 350ms ease-out;
 }
 .export-kicker { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; color: var(--export-muted); }
-.export-hero h2 { font-family: Georgia, "Times New Roman", serif; font-weight: 400; font-size: clamp(28px, 3vw, 45px); letter-spacing: -0.035em; margin: 10px 0; line-height: 1.15; }
+.export-hero h2 { font-family: Georgia, "Times New Roman", serif; font-weight: 400; font-size: clamp(24px, 2vw, 30px); letter-spacing: -0.035em; margin: 0; line-height: 1.15; }
 .export-hero p { margin: 0; color: var(--export-muted); }
 .export-ready { border: 1px solid #b6ded4; border-radius: 999px; background: #eefaf4; color: #17634a; font-weight: 700; font-size: 12px; padding: 8px 14px; white-space: nowrap; }
 .export-ready::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #248161; margin-right: 8px; vertical-align: middle; }

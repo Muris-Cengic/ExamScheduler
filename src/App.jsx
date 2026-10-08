@@ -11,7 +11,7 @@ import { autoSchedule } from "./autoSchedule.js";
 import ResourceAssignment from "./ResourceAssignment.jsx";
 import ResourcePool from "./ResourcePool.jsx";
 import { FRIDAY_EXAM_NOTICE, isFridayExamTimeAllowed } from "./examWindows.js";
-import { assignResources, buildExamSessions, emptyResourcePlan, parseResourceCatalog, readResourceCatalog, readResourcePlan, reconcileRoomDistribution, resourceFingerprint, validateResourcePlan } from "./resources.js";
+import { assignResources, buildExamSessions, parseResourceCatalog, readResourceCatalog, readResourcePlan, reconcileRoomDistribution, resourceFingerprint, validateResourcePlan } from "./resources.js";
 import { examInvigilatorsNeeded, examRoomSizes, readRoomDistributionChoices, roomCapacity } from "./examRooms.js";
 import { buildAsdOverviewExams, buildExportFiles, REPORT_VIEWS } from "./exportReports.js";
 import ExportStudio from "./ExportStudio.jsx";
@@ -703,6 +703,7 @@ function App() {
   const templateHeadersRef = useRef(null);
   const loadInputRef = useRef(null);
   const loadAsdInputRef = useRef(null);
+  const stepNavigationRef = useRef(null);
 
   const [isExporting, setIsExporting] = useState(false);
   const [isTimetableScrolled, setIsTimetableScrolled] = useState(false);
@@ -1283,7 +1284,17 @@ function App() {
     if (!courseId || !courseLookup[courseId]) return;
     if (schedulerPhase === "main" && (!selectedExamCourses.some((course) => course.id === courseId) || asdAssignedCourseIds.has(courseId))) return;
     if (isRestrictedMainStart(day, slotId)) return;
+    const requiredSlots = schedulerPhase === "asd" ? asdExamSlots[courseId] || slotsPerExam : slotsPerExam;
+    if (slotsPerExam < 1 || timeSlots.length === 0 || slotIndex === undefined || slotIndex > timeSlots.length - requiredSlots) return;
     setAutoScheduleResult(null);
+
+    if (schedulerPhase === "asd") {
+      setAssignments((previous) => {
+        const allowed = assignmentIds(previous);
+        allowed.delete(courseId);
+        return retainAssignments(previous, allowed);
+      });
+    }
 
     const setActiveAssignments =
       schedulerPhase === "asd" ? setAsdAssignments : setAssignments;
@@ -1312,19 +1323,6 @@ function App() {
 
       if (!next[selectedWeek]) {
         next[selectedWeek] = targetWeek;
-      }
-
-      const requiredSlots = schedulerPhase === "asd" ? asdExamSlots[courseId] || slotsPerExam : slotsPerExam;
-      const maxStartIndex = timeSlots.length - requiredSlots;
-
-      if (
-        slotsPerExam < 1 ||
-        timeSlots.length === 0 ||
-        maxStartIndex < 0 ||
-        slotIndex === undefined ||
-        slotIndex > maxStartIndex
-      ) {
-        return previous;
       }
 
       const targetList = targetWeek[day][slotId];
@@ -2283,30 +2281,15 @@ function App() {
     setWizardStep("pool");
   };
 
-  const continueToResourceSelection = () => {
-    setHasAsdStep(true);
-    const allowed = new Set(selectedExamCourses.map((course) => course.id));
-    asdAssignedCourseIds.forEach((id) => allowed.delete(id));
-    setAssignments((previous) => retainAssignments(previous, allowed));
-    setAutoScheduleResult(null);
-    setSchedulerPhase("main");
-    setWizardStep("pool");
+  const navigateToStep = (step) => {
+    setWizardStep(step);
+    setSchedulerPhase(step === "asd" ? hasAsdStep ? "asd" : "setup" : "main");
+    setHoverTarget(null);
   };
 
-  const goToExportStep = () => {
-    if (!resourceValidation.complete) return;
-    setSchedulerPhase("main");
-    setWizardStep("export");
-  };
-
-  const goToResourcesStep = () => {
-    setSchedulerPhase("main");
-    setWizardStep("resources");
-    if (!resourcePlan || resourcePlan.fingerprint !== resourceFingerprint(examSessions, resourceCatalog)) {
-      setResourcePlan(emptyResourcePlan(examSessions, resourceCatalog));
-    }
-    setExportError("");
-  };
+  useEffect(() => {
+    stepNavigationRef.current?.querySelector('[aria-current="step"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [wizardStep]);
 
   const handleAssignResources = () => {
     setResourcePlan(assignResources(examSessions, resourceCatalog));
@@ -2334,11 +2317,6 @@ function App() {
 
   const handleResourceBackupChange = (sessionId, ids) => {
     setResourcePlan((previous) => ({ ...previous, fingerprint: resourceFingerprint(examSessions, resourceCatalog), allocations: previous?.allocations || {}, backups: { ...previous?.backups, [sessionId]: ids } }));
-  };
-
-  const goToMainStep = () => {
-    setSchedulerPhase("main");
-    setWizardStep("main");
   };
 
   const handleTimetableScroll = (event) => {
@@ -2390,18 +2368,6 @@ function App() {
         </div>
       ) : null}
 
-      {position === "bottom" && schedulerPhase === "main" ? (
-        <div className="week-tabs__controls">
-          <button
-            type="button"
-            className="primary-action week-tabs__export"
-            onClick={goToResourcesStep}
-            disabled={isExporting || mainSummary.totalCourses < 1}
-          >
-            Assign Resources
-          </button>
-        </div>
-      ) : null}
     </div>
   );
 
@@ -2417,222 +2383,96 @@ function App() {
   }, [courses, departmentScope, wizardStep, schedulerPhase]);
 
   const wizardSteps = [
-    { id: "load", label: "1. Load Data" },
-    { id: "courses", label: "2. Department Exams" },
-    { id: "asd", label: "3. ASD (Optional)" },
-    { id: "pool", label: "4. Select Resources" },
-    { id: "main", label: "5. Build Main Timetable" },
-    { id: "resources", label: "6. Review Resources" },
-    { id: "export", label: "7. Export" },
+    { id: "load", label: "Student Enrollment", title: "Student Enrollment" },
+    { id: "courses", label: "CRN Info", title: "CRN Info" },
+    { id: "asd", label: "ASD Schedule", title: "ASD Schedule", optional: true },
+    { id: "pool", label: "Resource Pool", title: "Select Resources" },
+    { id: "main", label: "Timetable", title: "Main Timetable" },
+    { id: "resources", label: "Assignments", title: "Resource Assignments" },
+    { id: "export", label: "Export", title: "Export" },
   ];
 
   const wizardStepIndex = wizardSteps.findIndex((step) => step.id === wizardStep);
+  const currentStep = wizardSteps[wizardStepIndex];
+  const stepNotice = wizardStep !== "load" && !courses.length
+    ? "Load enrolment in Student Enrollment to use this step."
+    : ["pool", "main", "resources", "export"].includes(wizardStep) && !departmentSelection
+      ? "Load your CRN list in CRN Info to use this step."
+      : "";
+  const canSchedule = Boolean(departmentSelection && availableCourses.length && resourceCatalog.rooms.some((room) => room.enabled) && totalInvigilatorCapacity >= 2);
 
   return (
     <div className="app">
       <header className="app__header">
-        <div>
-          <h1>Exam Scheduling Helper</h1>
-
-          <p>
-            Upload student enrolment file to start building the exam timetable.
-          </p>
+        <div className="app__brand">
+          <h1>Midterm Exam Scheduling Helper</h1>
+          <span className="app__position">Step {wizardStepIndex + 1} / {wizardSteps.length}</span>
         </div>
-
-        <div className="app__actions app__actions--wizard">
-          <input
-            ref={loadInputRef}
-            type="file"
-            accept="application/json"
-            onChange={handleLoadTimetable}
-            hidden
-          />
-          <input
-            ref={loadAsdInputRef}
-            type="file"
-            accept=".json,.xlsx,.xls,.csv"
-            onChange={handleLoadAsdTimetable}
-            hidden
-          />
-
+        <nav className="step-navigation" aria-label="Schedule steps" ref={stepNavigationRef}>
           <ol className="wizard-steps">
-            {wizardSteps.map((step, index) => {
-              const stateClass =
-                index < wizardStepIndex
-                  ? "is-done"
-                  : index === wizardStepIndex
-                    ? "is-current"
-                    : "is-pending";
-
-              return (
-                <li key={step.id} className={stateClass}>
-                  {step.label}
-                </li>
-              );
-            })}
+            {wizardSteps.map((step, index) => (
+              <li key={step.id}>
+                <button type="button" data-step={step.id} aria-label={"Step " + (index + 1) + ": " + step.title + (step.optional ? " (optional)" : "")}
+                  aria-current={step.id === wizardStep ? "step" : undefined} onClick={() => navigateToStep(step.id)}>
+                  <span className="wizard-steps__number" aria-hidden="true">{index + 1}</span>
+                  <span>{step.label}</span>
+                  {step.optional ? <small>optional</small> : null}
+                </button>
+              </li>
+            ))}
           </ol>
-
-          <section className="wizard-panel">
-            {wizardStep === "load" ? (
-              <>
-                <div className="start-date-control">
-                  <label htmlFor="start-date-input">Exam start date</label>
-                  <input
-                    id="start-date-input"
-                    type="date"
-                    value={startDate}
-                    onChange={handleStartDateChange}
-                  />
-                </div>
-
-                <label className="file-input">
-                  <input
-                    type="file"
-                    accept=".xlsx,.xls,.csv"
-                    onChange={handleFileUpload}
-                  />
-                  <span>Upload Enrollment File</span>
-                </label>
-
-                <button type="button" onClick={handleTriggerLoadTimetable}>
-                  Load Full Timetable Snapshot
-                </button>
-
-                {courses.length ? (
-                  <button
-                    type="button"
-                    className="primary-action"
-                    onClick={() => setWizardStep("courses")}
-                  >
-                    Continue
-                  </button>
-                ) : null}
-              </>
-            ) : null}
-
-            {wizardStep === "courses" ? (
-              <>
-                <div className="start-date-control">
-                  <label htmlFor="review-start-date">Exam start date</label>
-                  <input id="review-start-date" type="date" value={startDate} onChange={handleStartDateChange} />
-                </div>
-                <button type="button" onClick={addWeek} disabled={weeks.length >= MAX_WEEKS}>+ Add Exam Week ({weeks.length})</button>
-                <button type="button" onClick={() => setWizardStep("load")}>Back To Data</button>
-                <button type="button" className="primary-action" disabled={!departmentSelection || !selectedExamCourses.length} onClick={() => {
-                  setWizardStep("asd");
-                  setSchedulerPhase(hasAsdStep ? "asd" : "setup");
-                }}>Continue To ASD</button>
-              </>
-            ) : null}
-
-            {wizardStep === "asd" ? (
-              <>
-                <button type="button" onClick={startAsdStep}>
-                  Create ASD Timetable
-                </button>
-                <button type="button" onClick={handleTriggerLoadAsdTimetable}>
-                  Load ASD Excel / JSON
-                </button>
-                <button type="button" onClick={() => setWizardStep("courses")}>Review Department Exams</button>
-                {schedulerPhase === "asd" ? (
-                  <>
-                    <button type="button" onClick={handleSaveAsdTimetable}>
-                      Save ASD Timetable
-                    </button>
-                    <button type="button" onClick={resetSchedule} disabled={isExporting}>
-                      Clear ASD Timetable
-                    </button>
-                  </>
-                ) : null}
-                <button type="button" onClick={skipAsdStep}>
-                  Skip ASD Step
-                </button>
-                <button
-                  type="button"
-                  className="primary-action"
-                  onClick={continueToResourceSelection}
-                  disabled={!courses.length}
-                >
-                  Continue To Resources
-                </button>
-              </>
-            ) : null}
-
-            {wizardStep === "pool" ? (
-              <>
-                <button type="button" onClick={() => { setWizardStep("asd"); setSchedulerPhase(hasAsdStep ? "asd" : "setup"); }}>Back To ASD</button>
-                <button type="button" className="primary-action" onClick={goToMainStep}
-                  disabled={!resourceCatalog.rooms.some((room) => room.enabled) || totalInvigilatorCapacity < 2}>Continue To Scheduling</button>
-              </>
-            ) : null}
-
-            {wizardStep === "main" ? (
-              <>
-                <button type="button" className="primary-action" onClick={handleAutoSchedule} disabled={!departmentSelection || !availableCourses.length || !resourceCatalog.rooms.some((room) => room.enabled) || totalInvigilatorCapacity < 2}>Auto-Schedule Remaining Exams</button>
-                <button type="button" onClick={() => setWizardStep("pool")}>Review Resource Pool</button>
-                <button type="button" onClick={() => { setWizardStep("courses"); setAutoScheduleResult(null); }}>Review Department Exams</button>
-                <button type="button" onClick={handleSaveTimetable} disabled={!courses.length}>
-                  Save Timetable
-                </button>
-                <button type="button" onClick={handleTriggerLoadTimetable} disabled={isExporting}>
-                  Load Timetable
-                </button>
-                {hasAsdStep ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSchedulerPhase("asd");
-                      setWizardStep("asd");
-                    }}
-                    disabled={isExporting}
-                  >
-                    Edit ASD Timetable
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={resetSchedule}
-                  disabled={!courses.length || isExporting}
-                >
-                  Clear Timetable
-                </button>
-                <button
-                  type="button"
-                  className="primary-action"
-                  onClick={goToResourcesStep}
-                  disabled={mainSummary.totalCourses < 1}
-                >
-                  Proceed To Resources
-                </button>
-              </>
-            ) : null}
-
-            {wizardStep === "resources" ? (
-              <>
-                <button type="button" onClick={handleSaveTimetable}>Save Timetable</button>
-                <button type="button" onClick={goToMainStep}>Back To Scheduling</button>
-                <button type="button" className="primary-action" onClick={goToExportStep} disabled={!resourceValidation.complete}>Proceed To Export</button>
-              </>
-            ) : null}
-
-            {wizardStep === "export" ? (
-              <>
-                <button type="button" onClick={handleSaveTimetable} disabled={isExporting}>Save Timetable</button>
-                <button type="button" onClick={goToResourcesStep} disabled={isExporting}>
-                  Back To Resources
-                </button>
-              </>
-            ) : null}
-          </section>
-
-          {(wizardStep === "main" || wizardStep === "asd" || wizardStep === "courses") ? (
-            <button type="button" onClick={() => setIsSettingsOpen(true)}>
-              Open Settings
-            </button>
-          ) : null}
-        </div>
+        </nav>
       </header>
 
+      <input ref={loadInputRef} type="file" accept="application/json" onChange={handleLoadTimetable} hidden />
+      <input ref={loadAsdInputRef} type="file" accept=".json,.xlsx,.xls,.csv" onChange={handleLoadAsdTimetable} hidden />
+
+      <section className="step-actions" aria-label={currentStep.title + " actions"}>
+        {wizardStep === "load" ? <>
+          <div className="start-date-control">
+            <label htmlFor="start-date-input">Exam start date</label>
+            <input id="start-date-input" type="date" value={startDate} onChange={handleStartDateChange} />
+          </div>
+          <label className="file-input">
+            <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFileUpload} />
+            <span>Upload Enrollment File</span>
+          </label>
+          <button type="button" onClick={handleTriggerLoadTimetable} disabled={isExporting}>Load Timetable</button>
+        </> : null}
+
+        {wizardStep === "courses" ? <>
+          <div className="start-date-control">
+            <label htmlFor="review-start-date">Exam start date</label>
+            <input id="review-start-date" type="date" value={startDate} onChange={handleStartDateChange} />
+          </div>
+          <button type="button" onClick={addWeek} disabled={weeks.length >= MAX_WEEKS}>+ Add Exam Week ({weeks.length})</button>
+        </> : null}
+
+        {wizardStep === "asd" ? <>
+          <button type="button" onClick={startAsdStep} disabled={!courses.length || isExporting}>Create ASD Timetable</button>
+          <button type="button" onClick={handleTriggerLoadAsdTimetable} disabled={!courses.length || isExporting}>Load ASD Excel / JSON</button>
+          {schedulerPhase === "asd" ? <>
+            <button type="button" onClick={handleSaveAsdTimetable} disabled={isExporting}>Save ASD Timetable</button>
+            <button type="button" onClick={resetSchedule} disabled={!asdAssignedCourseIds.size || isExporting}>Clear ASD Timetable</button>
+          </> : null}
+          <button type="button" onClick={skipAsdStep} disabled={!courses.length || isExporting}>{hasAsdStep ? "Remove ASD Schedule" : "Skip ASD Step"}</button>
+        </> : null}
+
+        {wizardStep === "main" ? <>
+          <button type="button" className="primary-action" onClick={handleAutoSchedule} disabled={!canSchedule || isExporting}>Auto-Schedule Remaining Exams</button>
+          <button type="button" onClick={handleSaveTimetable} disabled={!courses.length || isExporting}>Save Timetable</button>
+          <button type="button" onClick={resetSchedule} disabled={!mainSummary.totalCourses || isExporting}>Clear Timetable</button>
+        </> : null}
+
+        {wizardStep === "resources" || wizardStep === "export" ? (
+          <button type="button" onClick={handleSaveTimetable} disabled={!courses.length || isExporting}>Save Timetable</button>
+        ) : null}
+        <button type="button" className="step-actions__settings" onClick={() => setIsSettingsOpen(true)} disabled={isExporting}>Settings</button>
+      </section>
+
+      {stepNotice ? <section className="step-empty" aria-label="Step prerequisites">
+        <h2>{currentStep.title}</h2><p>{stepNotice}</p>
+      </section> : null}
       {uploadError ? (
         <div className="alert alert--error">{uploadError}</div>
       ) : null}
@@ -2654,16 +2494,18 @@ function App() {
       {wizardStep === "main" && autoScheduleResult ? (
         <section className="auto-schedule-result" role="status">
           <h2>Automatic Draft</h2>
-          <p>{autoScheduleResult.placed.length} exams added. {autoScheduleResult.unplaced.length} remain unplaced. Existing main and ASD placements were preserved.</p>
+          <p>{autoScheduleResult.placed.length} exams added. {autoScheduleResult.unplaced.length} remain unplaced.</p>
           {autoScheduleResult.unplaced.length > 0 ? <ul>{autoScheduleResult.unplaced.map(({ courseId, reason }) => <li key={courseId}><strong>{courseLookup[courseId]?.code || courseId}</strong>: {reason}</li>)}</ul> : null}
           {autoScheduleResult.warnings.length ? <ul className="auto-schedule-warnings">{autoScheduleResult.warnings.map((warning) => <li key={warning.sessionId}>{warning.message}</li>)}</ul> : null}
-          <p>Checks selected rooms, named staff, teaching commitments and overlapping bookings before each placement. Flexible exams try noon across all available days and weeks, plus allowed Friday morning sessions, before 17:00-18:00. Exams needing more invigilators get first choice of daytime slots; remaining evening exams are placed in fewest invigilators needed first order. Earlier weeks and weekdays take priority within each pass, aiming for two available standby invigilators, including assigned backups. If only required backup coverage fits, the slot is used and flagged above rather than moving a valid daytime exam to evening. Existing backup report rules are unchanged. Multiple exams can share a slot when constraints allow. Fixed lab exams are reserved first and keep their listed times, room and instructor. Morning labs use 09:00-10:00, treating a 09:50 end as 10:00. Review the generated resource assignments next, or adjust the pool and rerun for remaining exams.</p>
+          <details className="schedule-rules"><summary>Placement rules</summary>
+            <p>Noon and Friday mornings before evenings; staffing-heavy exams get daytime priority. Evening exams use fewest invigilators first. Target: two available standby people, including assigned backups. Required backup limits still apply.</p>
+            <p>Lab exams keep their listed times, room and instructor. Morning labs use 09:00-10:00, allowing a listed 09:50 end. Student conflicts, two exams per day, class commitments and resource availability are checked. Existing placements stay unchanged.</p>
+          </details>
         </section>
       ) : null}
 
-      {wizardStep === "pool" ? <section className="resource-panel" aria-label="Resource selection">
-        <h2>Select Resources Before Scheduling</h2>
-        <p>Choose the resource pool before generating your timetable. The first CRN sheet supplies rooms, staff and recurring class commitments. Lab exams replace their own lab only. You can change selections and assignments again after scheduling.</p>
+      {wizardStep === "pool" && !stepNotice ? <section className="resource-panel" aria-label="Resource selection">
+        <h2>Select Resources</h2>
         <div className="resource-panel__summary" role="status">
           <span>{resourceCatalog.rooms.filter((room) => room.enabled).length} rooms selected</span>
           <span>{totalInvigilatorCapacity} invigilators selected</span>
@@ -2671,10 +2513,10 @@ function App() {
         </div>
         <ResourcePool catalog={resourceCatalog} onPoolChange={handleResourcePoolChange} selectionOnly />
         {!resourceCatalog.rooms.some((room) => room.enabled) || totalInvigilatorCapacity < 2
-          ? <p>Select at least one room and two invigilators to continue. Actual availability is checked for the entire exam when scheduling.</p> : null}
+          ? <p>Auto-scheduling requires at least one selected room and two invigilators.</p> : null}
       </section> : null}
 
-      {wizardStep === "resources" ? (
+      {wizardStep === "resources" && !stepNotice ? (
         <ResourceAssignment sessions={examSessions} catalog={resourceCatalog} plan={resourcePlan} validation={resourceValidation}
           onAssign={handleAssignResources} onPoolChange={handleResourcePoolChange}
           onAllocationChange={handleResourceAllocationChange} onBackupChange={handleResourceBackupChange}
@@ -2759,7 +2601,7 @@ function App() {
               </label>
 
               <label>
-                <span>#Students per room</span>
+                <span>Students per room</span>
                 <input
                   type="number"
                   min="1"
@@ -2772,7 +2614,7 @@ function App() {
                 />
               </label>
 
-              <p>Invigilators are taken from the CRN list. Manage the named pool in the Resources step.</p>
+              <p>Manage invigilators in Resource Pool.</p>
             </div>
 
             <div className="settings-overlay__actions">
@@ -2791,50 +2633,31 @@ function App() {
       {courses.length && wizardStep !== "export" ? (
         <section className="overview">
           <div>
-            <strong>#Courses:</strong> {wizardStep === "load" || schedulerPhase === "asd" ? courses.length : departmentScope.courses.length}
+            <strong>Courses:</strong> {wizardStep === "load" || schedulerPhase === "asd" ? courses.length : departmentScope.courses.length}
           </div>
 
           <div>
-            <strong>#Students:</strong> {totalUniqueStudentsAcrossCourses}
+            <strong>Students:</strong> {totalUniqueStudentsAcrossCourses}
           </div>
           {departmentSelection && schedulerPhase !== "asd" ? <div><strong>Selected exams:</strong> {selectedExamCourses.length}</div> : null}
         </section>
-      ) : !courses.length ? (
+      ) : !courses.length && wizardStep === "load" ? (
         <section className="placeholder">
-          No courses loaded yet. Upload a .xlsx or .csv file with student
-          courses.
+          Enrolment: Excel or CSV. Saved timetables: JSON.
         </section>
       ) : null}
 
       {courses.length && wizardStep === "asd" && schedulerPhase === "setup" ? (
         <section className="overview overview--setup">
           <div>
-            <strong>ASD pre-step:</strong> Optional. Create/load ASD timetable
-            first, or skip and continue directly to your timetable.
-            Excel imports use the exam start date's year for dates without a year.
+            ASD is optional and participates in student conflict checks only.
+            Excel dates without a year use the exam start year.
           </div>
         </section>
       ) : null}
 
-      {courses.length && schedulerPhase !== "setup" && (wizardStep === "main" || wizardStep === "asd") ? (
+      {courses.length && !stepNotice && schedulerPhase !== "setup" && (wizardStep === "main" || wizardStep === "asd") ? (
         <>
-          {schedulerPhase === "asd" ? (
-            <section className="overview overview--mode">
-              <div>
-                <strong>Current mode:</strong> ASD timetable creation.
-              </div>
-            </section>
-          ) : null}
-
-          {schedulerPhase === "main" && hasAsdStep ? (
-            <section className="overview overview--mode">
-              <div>
-                <strong>ASD timetable loaded:</strong> ASD courses are locked
-                and displayed in gray.
-              </div>
-            </section>
-          ) : null}
-
           <section className="conflicts conflicts--full">
             <h2>Conflicts</h2>
 
@@ -2845,7 +2668,7 @@ function App() {
                 ))}
               </ul>
             ) : (
-              <p>No conflicts detected. Great job!</p>
+              <p>No conflicts detected.</p>
             )}
           </section>
 
@@ -2853,8 +2676,9 @@ function App() {
             <aside className="course-list">
               <h2>{schedulerPhase === "asd" ? "ASD Course Pool" : "Course Pool"}</h2>
 
-              <p>Drag a course into a timetable slot to schedule its exam.</p>
+              <p>Drag courses onto the timetable.</p>
               {schedulerPhase === "main" ? <p>{FRIDAY_EXAM_NOTICE}</p> : null}
+              {schedulerPhase === "main" && hasAsdStep ? <p>Gray exams are locked ASD references.</p> : null}
 
               <div className="course-search">
                 <input
@@ -3245,7 +3069,7 @@ function App() {
         </>
       ) : null}
 
-      {courses.length && wizardStep === "export" ? (
+      {courses.length && !stepNotice && wizardStep === "export" ? (
         <ExportStudio sessions={examSessions} catalog={resourceCatalog} plan={resourcePlan} startDate={exportStartDate}
           asdExams={asdOverviewExams}
           ready={resourceValidation.complete} isExporting={isExporting} onExport={handleExportSchedule} />

@@ -12,7 +12,7 @@ export default function CourseSelection({ courses, selection, onUpload, examChoi
       <div className="course-review__heading">
         <div>
           <h2>Select Department Exams</h2>
-          <p>Upload your department CRN list. Only its first sheet is used for courses, rooms, instructors and teaching availability.</p>
+          <p>CRN list: first sheet only.</p>
         </div>
         <label className="file-input">
           <input type="file" accept=".xlsx,.xls,.csv" onChange={onUpload} />
@@ -22,13 +22,15 @@ export default function CourseSelection({ courses, selection, onUpload, examChoi
       {selection ? (
         <>
           <div className="course-review__controls">
-            <p><strong>First sheet:</strong> {selection.sheetName}. Other sheets are ignored.</p>
+            <p><strong>Source:</strong> {selection.sheetName}</p>
             <label>Find a course
               <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Code, title or CRN" />
             </label>
             <p><strong>{examCount}</strong> exams selected / {courses.length} department courses</p>
           </div>
-          <p className="course-review__hint">Multiple CRNs: 12:00-13:00 or 17:00-18:00, plus Friday 09:00-10:00 and 10:30-11:30. Single CRN: its lab meeting; if there is no lab, use the common windows. Project, internship and OCT courses default to no exam; change these choices below if needed.</p>
+          <details className="schedule-rules"><summary>Exam rules</summary>
+            <p>Multiple CRNs: noon before 17:00-18:00; Friday only 09:00-10:00 or 10:30-11:30. Single CRN: its lab meeting, or common windows if no lab is listed. Project, internship and OCT courses default to no exam.</p>
+          </details>
           {missingCrns.length > 0 ? <p className="alert alert--info">{missingCrns.length} listed CRNs have no loaded enrolment: {missingCrns.join(", ")}. Empty courses cannot be scheduled.</p> : null}
           <div className="course-review__table-wrap">
             <table className="course-review__table">
@@ -49,7 +51,7 @@ export default function CourseSelection({ courses, selection, onUpload, examChoi
             {!visible.length ? <p>No courses match your search.</p> : null}
           </div>
         </>
-      ) : <p className="course-review__empty">Choose the CRN List workbook, then review exam eligibility before continuing. The first sheet is used regardless of its name.</p>}
+      ) : <p className="course-review__empty">Upload the CRN list to choose courses with an exam.</p>}
     </section>
   );
 }

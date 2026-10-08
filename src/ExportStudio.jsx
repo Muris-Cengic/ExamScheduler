@@ -150,8 +150,7 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, asdEx
   const chooseReport = (id) => { setReport(id); if (id === "complete") setFormat("xlsx"); setSearch(""); setLimit(50); };
   return <section className="export-studio" aria-label="Export workspace">
     <header className="export-hero">
-      <div><span className="export-kicker">07 / Publish &amp; share</span><h2>A schedule. The right view.</h2>
-        <p>Package the confirmed timetable for the people who need it.</p></div>
+      <div><h2>Export Schedule</h2></div>
       <span className={"export-ready" + (ready ? "" : " export-ready--blocked")}>{ready ? "Resources confirmed" : "Resources need attention"}</span>
       <div className="export-stats" aria-live="polite">
         <div><strong>{selectedWeeks.length}</strong><span>included weeks</span></div>
