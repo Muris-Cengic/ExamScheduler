@@ -11,6 +11,12 @@ npm run dev
 
 ## Navigation
 
+The app opens with only **Create Schedule** and **Load Schedule**. Create opens
+Student Enrollment; Load restores a saved main timetable from a JSON file and
+opens Timetable. Canceling the file picker or loading an invalid file keeps the
+start screen visible. Step navigation, settings and scheduling controls appear
+only after creating or successfully loading a schedule.
+
 Use the compact step bar to jump directly to **Student Enrollment, CRN Info, ASD Schedule, Resource Pool,
 Timetable, Assignments or Export**. Every step stays accessible; missing inputs
 are shown in that step, and scheduling/export actions enforce their prerequisites.

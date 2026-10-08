@@ -235,7 +235,7 @@ const find = (tree, predicate) => {
   assert.ok(result, "Expected control exists");
   return result;
 };
-const button = (tree, label) => find(tree, (node) => node.type === "button" && text(node) === label);
+const button = (tree, label) => find(tree, (node) => node.type === "button" && (text(node) === label || node.props["aria-label"] === label));
 const step = (tree, id) => find(tree, (node) => node.type === "button" && node.props["data-step"] === id);
 const exportReady = (tree) => find(tree, (node) => node.type?.name === "ResourceAssignment").props.validation.complete;
 const review = (tree) => find(tree, (node) => node.type?.name === "CourseSelection");
@@ -244,9 +244,72 @@ const enrolmentPath = root + "Students Registration 26-27 S1.xlsx";
 const crnPath = root + "CRN List 26-27 S1.xlsx";
 const asdPath = root + "Other Departments Schedule/Midterm Schedule 26-27 S1.xlsx";
 
+test("the start screen shows only create and load choices before opening the workspace", () => {
+  const app = harness();
+  let tree = app.render();
+  assert.equal(text(find(tree, (node) => node.type === "h1")), "Midterm Exam Scheduling Helper");
+  assert.deepEqual(nodes(tree).filter((node) => node.type === "button").map((node) => node.props["aria-label"]),
+    ["Create Schedule", "Load Schedule"]);
+  assert.ok(!nodes(tree).some((node) => node.type === "nav" || node.props.role === "dialog" || node.props.className === "step-actions"));
+  const inputs = nodes(tree).filter((node) => node.type === "input");
+  assert.equal(inputs.length, 1);
+  assert.equal(inputs[0].props.accept, "application/json");
+  assert.equal(inputs[0].props.hidden, true);
+  assert.ok(!nodes(tree).some((node) => node.type?.name === "CourseSelection" || node.type?.name === "ResourceAssignment" || node.props.className === "timetable"));
+  button(tree, "Create Schedule").props.onClick();
+  tree = app.render();
+  assert.equal(step(tree, "load").props["aria-current"], "step");
+  assert.equal(nodes(tree).filter((node) => node.props["data-step"]).length, 7);
+  find(tree, (node) => node.type === "label" && text(node) === "Upload Enrollment File");
+  assert.ok(!nodes(tree).some((node) => node.props.className === "start-screen"));
+});
+
+test("canceled and invalid loads stay on the start screen and loading disables both choices", async () => {
+  const app = harness();
+  let tree = app.render();
+  const input = () => find(tree, (node) => node.type === "input" && node.props.accept === "application/json");
+  let pickerRequests = 0;
+  input().props.ref.current = { click() { pickerRequests += 1; } };
+  button(tree, "Load Schedule").props.onClick();
+  tree = app.render();
+  assert.equal(pickerRequests, 1);
+  await input().props.onChange({ target: { files: [], value: "" } });
+  tree = app.render();
+  assert.ok(!nodes(tree).some((node) => node.type === "nav" || node.props.role === "alert"));
+  assert.equal(button(tree, "Create Schedule").props.disabled, false);
+
+  let resolveFile;
+  const event = { target: { files: [{ name: "invalid.json", text: () => new Promise((resolve) => { resolveFile = resolve; }) }], value: "invalid.json" } };
+  const pending = input().props.onChange(event);
+  tree = app.render();
+  assert.equal(text(find(tree, (node) => node.props.role === "status")), "Loading schedule...");
+  assert.equal(button(tree, "Create Schedule").props.disabled, true);
+  assert.equal(button(tree, "Load Schedule").props.disabled, true);
+  assert.equal(input().props.disabled, true);
+  button(tree, "Create Schedule").props.onClick();
+  button(tree, "Load Schedule").props.onClick();
+  tree = app.render();
+  assert.ok(!nodes(tree).some((node) => node.type === "nav"));
+  assert.equal(pickerRequests, 1, "Ignore new actions while a schedule is loading");
+  resolveFile(JSON.stringify({ type: "main", version: -1 }));
+  await pending;
+  tree = app.render();
+  assert.match(text(find(tree, (node) => node.props.role === "alert")), /version is not supported/);
+  assert.ok(!nodes(tree).some((node) => node.type === "nav" || node.props.role === "status"));
+  assert.equal(button(tree, "Create Schedule").props.disabled, false);
+  assert.equal(button(tree, "Load Schedule").props.disabled, false);
+  assert.equal(event.target.value, "", "An invalid file can be selected again after correction");
+  button(tree, "Create Schedule").props.onClick();
+  tree = app.render();
+  assert.equal(step(tree, "load").props["aria-current"], "step");
+  assert.ok(!nodes(tree).some((node) => node.props.role === "alert"));
+});
+
 test("every step is directly accessible, with actions separate and prerequisites enforced", () => {
   const app = harness();
   let tree = app.render();
+  button(tree, "Create Schedule").props.onClick();
+  tree = app.render();
   const header = () => find(tree, (node) => node.props.className === "app__header");
   const navigation = () => find(header(), (node) => node.type === "nav" && node.props["aria-label"] === "Schedule steps");
   const actions = () => find(tree, (node) => node.props.className === "step-actions");
@@ -293,6 +356,8 @@ test("resource selection precedes generation and stays editable after the resour
   };
   const app = harness();
   let tree = app.render();
+  button(tree, "Create Schedule").props.onClick();
+  tree = app.render();
   const upload = find(find(tree, (node) => node.type === "label" && text(node) === "Upload Enrollment File"),
     (node) => node.type === "input");
   await upload.props.onChange(workbook([
@@ -474,6 +539,8 @@ test("wizard imports, exam toggles, draft, saved-state round trip and report exc
 }, async () => {
   const app = harness();
   let tree = app.render();
+  button(tree, "Create Schedule").props.onClick();
+  tree = app.render();
   const enrolmentLabel = find(tree, (node) => node.type === "label" && text(node) === "Upload Enrollment File");
   await find(enrolmentLabel, (node) => node.type === "input").props.onChange(fileEvent(enrolmentPath));
   tree = app.render();
@@ -529,8 +596,11 @@ test("wizard imports, exam toggles, draft, saved-state round trip and report exc
 
   const reloaded = harness();
   let loadedTree = reloaded.render();
+  button(loadedTree, "Load Schedule").props.onClick();
   await find(loadedTree, (node) => node.type === "input" && node.props.accept === "application/json").props.onChange(jsonEvent(snapshot));
   loadedTree = reloaded.render();
+  assert.equal(step(loadedTree, "main").props["aria-current"], "step", "Loading from the start screen opens Timetable directly");
+  assert.ok(!nodes(loadedTree).some((node) => node.props.className === "start-screen"));
   step(loadedTree, "courses").props.onClick();
   loadedTree = reloaded.render();
   assert.equal(review(loadedTree).props.examChoices[firstId], false);

@@ -649,6 +649,8 @@ function computeSummary(assignments, courseLookup, timeSlots, studentsPerRoom, r
 }
 
 function App() {
+  const [isWorkspaceOpen, setIsWorkspaceOpen] = useState(false);
+  const [isLoadingTimetable, setIsLoadingTimetable] = useState(false);
   const [schedulerPhase, setSchedulerPhase] = useState("setup");
   const [wizardStep, setWizardStep] = useState("load");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -1464,17 +1466,29 @@ function App() {
     downloadBlob(blob, filename);
   };
 
+  const handleCreateSchedule = () => {
+    if (isLoadingTimetable) return;
+    setUploadError("");
+    setWizardStep("load");
+    setSchedulerPhase("setup");
+    setIsWorkspaceOpen(true);
+  };
+
   const handleTriggerLoadTimetable = () => {
+    if (isLoadingTimetable) return;
+    setUploadError("");
     loadInputRef.current?.click();
   };
 
   const handleLoadTimetable = async (event) => {
     const file = event.target.files?.[0];
 
-    if (!file) {
+    if (!file || isLoadingTimetable) {
       return;
     }
 
+    setIsLoadingTimetable(true);
+    setUploadError("");
     try {
       const text = await file.text();
       const parsed = JSON.parse(text);
@@ -1497,6 +1511,7 @@ function App() {
       const savedResourceCatalog = readResourceCatalog(parsed.resourceCatalog);
       const savedResourcePlan = readResourcePlan(parsed.resourcePlan);
       const savedRoomDistributionChoices = readRoomDistributionChoices(parsed.roomDistributionChoices);
+      const savedAsdExamDurations = readAsdExamDurations(parsed.asdExamDurations);
       const savedExamChoices = isPlainObject(parsed.examChoices) ? parsed.examChoices : {};
       if (Object.values(savedExamChoices).some((choice) => typeof choice !== "boolean")) {
         throw new Error("Invalid exam choices in snapshot.");
@@ -1831,7 +1846,7 @@ function App() {
       setRoomDistributionChoices(savedRoomDistributionChoices);
       setAutoScheduleResult(null);
       setAsdAssignments(() => reshapedAsdAssignments);
-      setAsdExamDurations(readAsdExamDurations(parsed.asdExamDurations));
+      setAsdExamDurations(savedAsdExamDurations);
       setImportNotice("");
       setHasAsdStep(hasAsdStepSafe);
       setSelectedWeek(selectedWeekSafe);
@@ -1842,6 +1857,7 @@ function App() {
       setWizardStep("main");
       setHoverTarget(null);
       setUploadError("");
+      setIsWorkspaceOpen(true);
     } catch (error) {
       console.error("Failed to load saved timetable", error);
 
@@ -1852,6 +1868,7 @@ function App() {
 
       setUploadError(errorMessage);
     } finally {
+      setIsLoadingTimetable(false);
       if (event.target) {
         event.target.value = "";
       }
@@ -2289,7 +2306,7 @@ function App() {
 
   useEffect(() => {
     stepNavigationRef.current?.querySelector('[aria-current="step"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [wizardStep]);
+  }, [wizardStep, isWorkspaceOpen]);
 
   const handleAssignResources = () => {
     setResourcePlan(assignResources(examSessions, resourceCatalog));
@@ -2401,6 +2418,35 @@ function App() {
       : "";
   const canSchedule = Boolean(departmentSelection && availableCourses.length && resourceCatalog.rooms.some((room) => room.enabled) && totalInvigilatorCapacity >= 2);
 
+  if (!isWorkspaceOpen) {
+    return <div className="app app--start">
+      <main className="start-screen" aria-labelledby="start-title">
+        <h1 id="start-title">Midterm Exam Scheduling Helper</h1>
+        <div className="start-choices">
+          <button type="button" className="start-choice start-choice--create" aria-label="Create Schedule" aria-describedby="create-schedule-note"
+            onClick={handleCreateSchedule} disabled={isLoadingTimetable}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+              <path d="M14 3H5v18h14V8L14 3Z M14 3v5h5 M8 14h8 M12 10v8" />
+            </svg>
+            <strong>Create Schedule</strong>
+            <small id="create-schedule-note">Start with student enrollment.</small>
+          </button>
+          <button type="button" className="start-choice" aria-label="Load Schedule" aria-describedby="load-schedule-note"
+            onClick={handleTriggerLoadTimetable} disabled={isLoadingTimetable}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+              <path d="M3 8V5h6l2 3h10v13H3V8Z M12 11v7 M9 15l3 3 3-3" />
+            </svg>
+            <strong>Load Schedule</strong>
+            <small id="load-schedule-note">Open a saved timetable (.json).</small>
+          </button>
+        </div>
+        <input ref={loadInputRef} type="file" accept="application/json" onChange={handleLoadTimetable} disabled={isLoadingTimetable} hidden />
+        {isLoadingTimetable ? <p className="start-status" role="status">Loading schedule...</p> : null}
+        {uploadError ? <div className="alert alert--error" role="alert">{uploadError}</div> : null}
+      </main>
+    </div>;
+  }
+
   return (
     <div className="app">
       <header className="app__header">
@@ -2424,7 +2470,7 @@ function App() {
         </nav>
       </header>
 
-      <input ref={loadInputRef} type="file" accept="application/json" onChange={handleLoadTimetable} hidden />
+      <input ref={loadInputRef} type="file" accept="application/json" onChange={handleLoadTimetable} disabled={isLoadingTimetable} hidden />
       <input ref={loadAsdInputRef} type="file" accept=".json,.xlsx,.xls,.csv" onChange={handleLoadAsdTimetable} hidden />
 
       <section className="step-actions" aria-label={currentStep.title + " actions"}>
@@ -2437,7 +2483,7 @@ function App() {
             <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFileUpload} />
             <span>Upload Enrollment File</span>
           </label>
-          <button type="button" onClick={handleTriggerLoadTimetable} disabled={isExporting}>Load Timetable</button>
+          <button type="button" onClick={handleTriggerLoadTimetable} disabled={isExporting || isLoadingTimetable}>Load Timetable</button>
         </> : null}
 
         {wizardStep === "courses" ? <>
