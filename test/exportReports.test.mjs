@@ -4,7 +4,7 @@ import * as XLSX from "xlsx/xlsx.mjs";
 import JSZip from "jszip";
 import { assignResources, buildExamSessions, emptyResourcePlan, resourceFingerprint } from "../src/resources.js";
 import { roomIdentity } from "../src/department.js";
-import { buildAsdOverviewExams, buildCombinedResourceWorkbook, buildCourseSeating, buildExportFiles, buildExportModel, courseSeatingInfo, formatRoomDisplayName, reportDate, reportTable } from "../src/exportReports.js";
+import { buildAsdOverviewExams, buildCombinedResourceWorkbook, buildCourseSeating, buildExportFiles, buildExportModel, courseSeatingInfo, formatRoomDisplayName, reportDate, reportFileName, reportTable } from "../src/exportReports.js";
 
 const course = (id, count, options = {}) => ({
   id, code: id, title: id + " course", crns: ["101"], labSessions: [],
@@ -34,6 +34,41 @@ const seatingRows = (workbook, name) => {
   assert.ok(header > 0, "Exam details must precede the two-column student table");
   return contents.slice(header + 1);
 };
+
+test("report filenames describe the term, layout, actual ASD inclusion and weekly packages", () => {
+  const base = { report: "overview", startDate: "2026-10-19", overviewMode: "table" };
+  assert.equal(reportFileName(base), "Midterm Exam Schedule Fall 26-27 Chronological.xlsx");
+  assert.equal(reportFileName({ ...base, format: "pdf", overviewMode: "board" }), "Midterm Exam Schedule Fall 26-27 Overview Board.pdf");
+  assert.equal(reportFileName({ ...base, format: "pdf", overviewMode: "board", includeAsd: true }), "Midterm Exam Schedule Fall 26-27 ASD Included Overview Board.pdf");
+  assert.equal(reportFileName({ ...base, format: "csv", week: 2 }), "Midterm Exam Schedule Fall 26-27 Chronological Week 2.csv");
+  assert.equal(reportFileName({ ...base, format: "zip", includeAsd: true }), "Midterm Exam Schedule Fall 26-27 ASD Included Chronological Weekly Files.zip");
+  for (const [report, suffix] of [["complete", "Complete Report"], ["staff", "Staff Duties"], ["students", "Student Room Lists"], ["seating", "Course Seating"]]) {
+    assert.equal(reportFileName({ ...base, report, includeAsd: true, format: "zip" }),
+      "Midterm Exam Schedule Fall 26-27 " + suffix + (report === "seating" ? "" : " Weekly Files") + ".zip");
+  }
+  for (const [startDate, term] of [["2027-01-01", "Spring 26-27"], ["2027-06-01", "Summer 26-27"], ["2027-08-01", "Fall 27-28"]]) {
+    assert.equal(reportFileName({ ...base, startDate }), "Midterm Exam Schedule " + term + " Chronological.xlsx");
+  }
+  for (const change of [{ startDate: "invalid" }, { report: "unknown" }, { format: "exe" }, { overviewMode: "unknown" }, { week: 0 }]) {
+    assert.throws(() => reportFileName({ ...base, ...change }), /Invalid report filename/);
+  }
+});
+
+test("exported filenames use the setup date instead of the Monday-aligned calendar and flag only included ASD entries", () => {
+  const options = { ...fixture(), report: "overview", overviewMode: "table", startDate: "2026-07-27", examStartDate: "2026-08-01" };
+  const file = buildExportFiles(options)[0];
+  assert.equal(file.filename, "Midterm Exam Schedule Fall 26-27 Chronological.xlsx");
+  assert.equal(read(file).Sheets["Exam overview"].B2.w, "27/07/2026");
+  assert.equal(read(file).Props.Title, "Midterm Exam Schedule Fall 26-27 Chronological");
+  const weekly = buildExportFiles({ ...options, asdExams: asdFixture(), includeAsd: true, packaging: "weekly" });
+  assert.deepEqual(weekly.map((item) => item.filename), [
+    "Midterm Exam Schedule Fall 26-27 ASD Included Chronological Week 1.xlsx",
+    "Midterm Exam Schedule Fall 26-27 Chronological Week 2.xlsx",
+    "Midterm Exam Schedule Fall 26-27 ASD Included Chronological Week 3.xlsx",
+  ]);
+  assert.equal(buildExportFiles({ ...options, asdExams: asdFixture(), includeAsd: true, weeks: [2] })[0].filename,
+    "Midterm Exam Schedule Fall 26-27 Chronological Week 2.xlsx");
+});
 
 test("invalid Friday placements block every main report without restricting ASD overview references", () => {
   const options = fixture();
@@ -115,7 +150,7 @@ test("overview Excel and CSV export ASD references only when opted in, in combin
     for (const packaging of ["combined", "weekly"]) {
       const files = buildExportFiles({ ...options, includeAsd: true, format, packaging });
       assert.equal(files.length, packaging === "weekly" ? 3 : 1);
-      if (packaging === "weekly") assert.equal(files[2].filename, "Week_3_Exam_Overview." + format);
+      if (packaging === "weekly") assert.equal(files[2].filename, "Midterm Exam Schedule Fall 26-27 ASD Included Detailed Overview Week 3." + format);
       const exported = files.flatMap((file) => {
         const table = format === "xlsx" ? rows(read(file), "Exam overview")
           : XLSX.utils.sheet_to_json(XLSX.read(file.data, { type: "string", raw: true }).Sheets.Sheet1, { header: 1 });
@@ -303,9 +338,9 @@ test("complete Excel packaging supports one workbook, weekly files and non-conti
   const options = fixture();
   const combined = buildExportFiles(options);
   assert.equal(combined.length, 1);
-  assert.equal(combined[0].filename, "Exam_Schedule.xlsx");
+  assert.equal(combined[0].filename, "Midterm Exam Schedule Fall 26-27 Complete Report.xlsx");
   const weekly = buildExportFiles({ ...options, packaging: "weekly" });
-  assert.deepEqual(weekly.map((file) => file.filename), ["Week_1_Exam_Schedule.xlsx", "Week_2_Exam_Schedule.xlsx"]);
+  assert.deepEqual(weekly.map((file) => file.filename), ["Midterm Exam Schedule Fall 26-27 Complete Report Week 1.xlsx", "Midterm Exam Schedule Fall 26-27 Complete Report Week 2.xlsx"]);
   for (const [index, file] of weekly.entries()) {
     assert.ok(read(file).SheetNames.every((name) => name.startsWith("Week " + (index + 1) + " ")));
   }
@@ -616,7 +651,7 @@ test("CSV exports include selected weeks, preserve Unicode and quotes, and neutr
   options.plan = assignResources(options.sessions, options.catalog);
   const files = buildExportFiles({ ...options, report: "students", format: "csv", packaging: "weekly", weeks: [2] });
   assert.equal(files.length, 1);
-  assert.equal(files[0].filename, "Week_2_Student_Room_Lists.csv");
+  assert.equal(files[0].filename, "Midterm Exam Schedule Fall 26-27 Student Room Lists Week 2.csv");
   assert.equal(files[0].data[0], "\uFEFF");
   assert.ok(files[0].data.includes("\"'=HYPERLINK(\"\"https://example.invalid\"\", \"\"click\"\")\""));
   assert.ok(files[0].data.includes("\"'+123\""));

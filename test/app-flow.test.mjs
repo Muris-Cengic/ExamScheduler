@@ -38,7 +38,9 @@ function harness(component = "App", props) {
   const hooks = [];
   const downloads = [];
   const downloadNames = [];
+  const printedTitles = [];
   let printCount = 0;
+  let printFailure;
   let index = 0;
   let dirty = false;
   let effects = [];
@@ -81,8 +83,8 @@ function harness(component = "App", props) {
         hooks[current] = { dependencies };
       }
     },
-    window: { addEventListener() {}, removeEventListener() {}, print() { printCount += 1; } },
-    document: { body: { appendChild() {}, removeChild() {} }, createElement: () => ({ click() { downloadNames.push(this.download); } }) },
+    window: { addEventListener() {}, removeEventListener() {}, print() { printCount += 1; printedTitles.push(context.document.title); if (printFailure) throw printFailure; } },
+    document: { title: "Midterm Exam Scheduling Helper", body: { appendChild() {}, removeChild() {} }, createElement: () => ({ click() { downloadNames.push(this.download); } }) },
     fetch: async () => ({ ok: true, arrayBuffer: async () => buffer("data/ReportReference/Report Template.xlsx") }),
   });
   runInContext(poolComponentCode, context);
@@ -92,6 +94,9 @@ function harness(component = "App", props) {
   return {
     downloads,
     downloadNames,
+    printedTitles,
+    documentTitle: () => context.document.title,
+    setPrintFailure: (error) => { printFailure = error; },
     prints: () => printCount,
     render() {
       let tree;
@@ -1101,14 +1106,14 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   tree = app.render();
   await button(tree, "Export Timetable").props.onClick();
   const zip = await JSZip.loadAsync(await app.downloads.at(-1).arrayBuffer());
-  assert.deepEqual(Object.keys(zip.files).sort(), ["Week_1_Exam_Schedule.xlsx", "Week_2_Exam_Schedule.xlsx"]);
-  assert.equal(app.downloadNames.at(-1), "Exam_Schedule_Weekly_Files.zip");
+  assert.deepEqual(Object.keys(zip.files).sort(), ["Midterm Exam Schedule Fall 26-27 Complete Report Week 1.xlsx", "Midterm Exam Schedule Fall 26-27 Complete Report Week 2.xlsx"]);
+  assert.equal(app.downloadNames.at(-1), "Midterm Exam Schedule Fall 26-27 Complete Report Weekly Files.zip");
   weekInput(1).props.onChange();
   tree = app.render();
   assert.match(text(preview()), /Live previewWeek 2/);
   assert.ok(!text(preview()).includes("MAIN-1000"));
   await button(tree, "Export Timetable").props.onClick();
-  assert.equal(app.downloadNames.at(-1), "Week_2_Exam_Schedule.xlsx");
+  assert.equal(app.downloadNames.at(-1), "Midterm Exam Schedule Fall 26-27 Complete Report Week 2.xlsx");
   const single = XLSX.read(await app.downloads.at(-1).arrayBuffer(), { type: "array" });
   assert.ok(single.SheetNames.every((name) => name.startsWith("Week 2 ")));
 
@@ -1141,6 +1146,8 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   assert.ok(!text(printView()).includes("PAD"));
   button(tree, "Print / Save PDF").props.onClick();
   assert.equal(app.prints(), 1);
+  assert.equal(app.printedTitles.at(-1), "Midterm Exam Schedule Fall 26-27 Overview Board");
+  assert.equal(app.documentTitle(), "Midterm Exam Scheduling Helper");
   button(tree, "Chronological list").props.onClick();
   tree = app.render();
   assert.match(text(find(panel(), (node) => node.props.className === "export-print-layout")), /Print layout: Chronological list/);
@@ -1157,7 +1164,7 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   await button(tree, "Download Excel").props.onClick();
   const chronologicalZip = await JSZip.loadAsync(await app.downloads.at(-1).arrayBuffer());
   for (const week of [1, 2]) {
-    const file = await chronologicalZip.file("Week_" + week + "_Exam_Overview.xlsx").async("uint8array");
+    const file = await chronologicalZip.file("Midterm Exam Schedule Fall 26-27 Chronological Week " + week + ".xlsx").async("uint8array");
     const sheet = XLSX.read(file, { type: "array", cellDates: true, cellNF: true }).Sheets["Exam overview"];
     assert.deepEqual(XLSX.utils.sheet_to_json(sheet, { header: 1 })[0], chronologicalColumns);
     assert.equal(sheet["!ref"], "A1:F2");
@@ -1171,7 +1178,7 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   radio("CSV (.csv)").props.onChange();
   tree = app.render();
   await button(tree, "Download CSV").props.onClick();
-  assert.equal(app.downloadNames.at(-1), "Week_2_Exam_Overview.csv");
+  assert.equal(app.downloadNames.at(-1), "Midterm Exam Schedule Fall 26-27 Chronological Week 2.csv");
   const overviewCsv = await app.downloads.at(-1).text();
   assert.ok(!overviewCsv.includes("Bob"));
   assert.ok(!overviewCsv.includes("PAD"));
@@ -1217,9 +1224,10 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   assert.match(text(asdPrintedTables[2]), /10:30-12:00/);
   await button(tree, "Download CSV").props.onClick();
   const asdCsvZip = await JSZip.loadAsync(await app.downloads.at(-1).arrayBuffer());
-  assert.deepEqual(Object.keys(asdCsvZip.files).sort(), ["Week_1_Exam_Overview.csv", "Week_2_Exam_Overview.csv", "Week_3_Exam_Overview.csv"]);
-  assert.match(await asdCsvZip.file("Week_1_Exam_Overview.csv").async("string"), /"ASD-1000".* \(ASD\)"/);
-  assert.match(await asdCsvZip.file("Week_3_Exam_Overview.csv").async("string"), /"10:30-12:00","ASD-2000"/);
+  assert.equal(app.downloadNames.at(-1), "Midterm Exam Schedule Fall 26-27 ASD Included Chronological Weekly Files.zip");
+  assert.deepEqual(Object.keys(asdCsvZip.files).sort(), ["Midterm Exam Schedule Fall 26-27 ASD Included Chronological Week 1.csv", "Midterm Exam Schedule Fall 26-27 ASD Included Chronological Week 3.csv", "Midterm Exam Schedule Fall 26-27 Chronological Week 2.csv"]);
+  assert.match(await asdCsvZip.file("Midterm Exam Schedule Fall 26-27 ASD Included Chronological Week 1.csv").async("string"), /"ASD-1000".* \(ASD\)"/);
+  assert.match(await asdCsvZip.file("Midterm Exam Schedule Fall 26-27 ASD Included Chronological Week 3.csv").async("string"), /"10:30-12:00","ASD-2000"/);
   weekInput(1).props.onChange();
   weekInput(2).props.onChange();
   tree = app.render();
@@ -1228,7 +1236,7 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   radio("Excel (.xlsx)").props.onChange();
   tree = app.render();
   await button(tree, "Download Excel").props.onClick();
-  assert.equal(app.downloadNames.at(-1), "Week_3_Exam_Overview.xlsx");
+  assert.equal(app.downloadNames.at(-1), "Midterm Exam Schedule Fall 26-27 ASD Included Chronological Week 3.xlsx");
   const asdWorkbook = XLSX.read(await app.downloads.at(-1).arrayBuffer(), { type: "array" });
   const asdExcelRow = XLSX.utils.sheet_to_json(asdWorkbook.Sheets["Exam overview"])[0];
   assert.equal(asdExcelRow.Course, "ASD-2000");
@@ -1365,7 +1373,7 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   tree = app.render();
   assert.equal(nodes(printView()).filter((node) => node.props.className === "export-print__crn").length, 2);
   await button(tree, "Download Course Files").props.onClick();
-  assert.equal(app.downloadNames.at(-1), "Course_Seating_Exam_Files.zip");
+  assert.equal(app.downloadNames.at(-1), "Midterm Exam Schedule Fall 26-27 Course Seating.zip");
   const seatingZip = await JSZip.loadAsync(await app.downloads.at(-1).arrayBuffer());
   assert.deepEqual(Object.keys(seatingZip.files).sort(), ["MAIN-1000 - First Exam.xlsx", "MAIN-2000 - Second Exam.xlsx"]);
   weekInput(1).props.onChange();
@@ -1387,6 +1395,51 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   assert.equal(asdToggle().props.checked, true, "The overview preference is retained without affecting another report");
   assert.equal(weekInput(3).props.checked, true);
   assert.match(text(preview()), /ASD-1000/);
+});
+
+test("PDF names follow the setup term, layout, selected weeks and actual ASD entries, restoring the page title", () => {
+  const makeCourse = (id) => ({ id, code: id, title: id + " title", crns: ["101"], labSessions: [],
+    students: [{ id: "S" + id, name: "Student", crn: "101" }] });
+  const sessions = resources.buildExamSessions({ 1: { Monday: { "12:00": ["A"] } }, 2: { Tuesday: { "12:00": ["B"] } } },
+    { A: makeCourse("A"), B: makeCourse("B") }, 60);
+  const catalog = {
+    rooms: [{ id: "R1", name: "Room 1", enabled: true, busy: [] }],
+    invigilators: Array.from({ length: 4 }, (_, i) => ({ id: "I" + i, name: "Staff " + i, enabled: true, busy: [] })),
+  };
+  const app = harness("ExportStudio", { sessions, catalog, plan: resources.assignResources(sessions, catalog),
+    startDate: "2026-07-27", examStartDate: "2026-08-01", ready: true, isExporting: false, onExport() {},
+    asdExams: exportReports.buildAsdOverviewExams({ assignments: { 1: { Wednesday: { "12:00": ["ASD"] } } }, courseLookup: { ASD: makeCourse("ASD") } }),
+  });
+  let tree = app.render();
+  button(tree, "Exam overview").props.onClick();
+  tree = app.render();
+  const print = (expected) => {
+    assert.equal(text(find(tree, (node) => node.props.className === "export-pdf-filename")), "PDF name: " + expected + ".pdf");
+    button(tree, "Print / Save PDF").props.onClick();
+    assert.equal(app.printedTitles.at(-1), expected);
+    assert.equal(app.documentTitle(), "Midterm Exam Scheduling Helper");
+  };
+  print("Midterm Exam Schedule Fall 26-27 Overview Board");
+  find(find(tree, (node) => node.props.className === "export-asd-option"), (node) => node.type === "input").props.onChange({ target: { checked: true } });
+  tree = app.render();
+  print("Midterm Exam Schedule Fall 26-27 ASD Included Overview Board");
+  button(tree, "Chronological list").props.onClick();
+  tree = app.render();
+  print("Midterm Exam Schedule Fall 26-27 ASD Included Chronological");
+  find(tree, (node) => node.props["aria-label"] === "Include Week 1").props.onChange();
+  tree = app.render();
+  print("Midterm Exam Schedule Fall 26-27 Chronological Week 2");
+  const error = new Error("Print unavailable");
+  app.setPrintFailure(error);
+  assert.throws(() => button(tree, "Print / Save PDF").props.onClick(), /Print unavailable/);
+  assert.equal(app.documentTitle(), "Midterm Exam Scheduling Helper", "A failed or canceled print must not leave the report title behind");
+  app.setPrintFailure();
+  button(tree, "Staff duties").props.onClick();
+  tree = app.render();
+  print("Midterm Exam Schedule Fall 26-27 Staff Duties Week 2");
+  button(tree, "Course seating").props.onClick();
+  tree = app.render();
+  print("Midterm Exam Schedule Fall 26-27 Course Seating Week 2");
 });
 
 test("course seating preview switches exams and CRN sheets, paginates IDs and prints all included rosters", async () => {

@@ -300,6 +300,22 @@ overview also offers weeks containing only ASD exams. ASD never appears in the
 Complete report, Staff duties, Student room lists or Course seating, including their print/PDF
 exports.
 
+Report filenames include the semester and academic year from **Exam Setup**,
+plus the report/layout name. Examples:
+
+- `Midterm Exam Schedule Fall 26-27 Chronological.xlsx`
+- `Midterm Exam Schedule Fall 26-27 Overview Board.pdf`
+- `Midterm Exam Schedule Fall 26-27 ASD Included Overview Board.pdf`
+- `Midterm Exam Schedule Fall 26-27 Staff Duties Week 2.xlsx`
+- `Midterm Exam Schedule Fall 26-27 Complete Report Weekly Files.zip`
+
+Single-week reports append **Week N**; weekly ZIPs contain the individually named
+files. **ASD Included** appears only on overview files containing ASD entries.
+Board-view Excel/CSV files use **Detailed Overview**, since their contents are
+tabular rather than a board. Individual course-seating workbooks keep their
+**Course code - Course title.xlsx** names; the ZIP uses the semester/year naming.
+Names use the date entered in Exam Setup, not its Monday-aligned timetable date.
+
 The three focused reports also support UTF-8 **CSV** as one file or weekly files.
 Staff CSV contains the duties only; choose Excel for its additional workload
 summary. Formula-like text is neutralised in CSV to avoid accidental spreadsheet
@@ -309,6 +325,10 @@ formula execution.
 report containing all included weeks. Choose the browser's PDF destination to
 save it. Preview week tabs and search affect only the on-screen preview, not
 downloads or print; the print layout includes every selected record.
+The export panel shows the suggested PDF filename. **Print / Save PDF** temporarily
+sets the document title to that name for the print dialog, then restores the app
+title. The browser's PDF destination controls the final filename; it can be edited
+in the save dialog. Version suffixes such as `v2` are not assigned automatically.
 **Course seating** instead uses portrait pages, starting each CRN sheet on a
 new page with exam information above its student/room table. Long CRN lists
 continue onto additional pages with repeated table headers; preview pagination,

@@ -2,16 +2,33 @@ import * as XLSX from "xlsx/xlsx.mjs";
 import StyledXLSX from "xlsx-js-style";
 import { clock, invigilatorWorkloads, isTeachingTimeDuty, validateResourcePlan } from "./resources.js";
 import { buildResourceWorkbookForWeek } from "./reports.js";
+import { inferAcademicTerm } from "./examSetup.js";
 
 export const REPORT_VIEWS = [
-  { id: "complete", label: "Complete report", audience: "For the exam team", description: "The existing report, with room assignments, invigilator pools and daily student sheets.", filename: "Exam_Schedule" },
-  { id: "overview", label: "Exam overview", audience: "For sharing the timetable", description: "A course timetable with compact rooms, required invigilators and lab-time exams. No student names.", filename: "Exam_Overview" },
-  { id: "staff", label: "Staff duties", audience: "For invigilators", description: "Named duties and a workload summary. Backups and replaced teaching hours stay separate.", filename: "Staff_Duties" },
-  { id: "students", label: "Student room lists", audience: "For room check-in", description: "Every student sitting, with the course, time and confirmed room. Contains personal data.", filename: "Student_Room_Lists" },
-  { id: "seating", label: "Course seating", audience: "For course sections", description: "One Excel file per exam, with a student-to-room sheet for each CRN.", filename: "Course_Seating" },
+  { id: "complete", label: "Complete report", audience: "For the exam team", description: "The existing report, with room assignments, invigilator pools and daily student sheets.", filename: "Complete Report" },
+  { id: "overview", label: "Exam overview", audience: "For sharing the timetable", description: "A course timetable with compact rooms, required invigilators and lab-time exams. No student names." },
+  { id: "staff", label: "Staff duties", audience: "For invigilators", description: "Named duties and a workload summary. Backups and replaced teaching hours stay separate.", filename: "Staff Duties" },
+  { id: "students", label: "Student room lists", audience: "For room check-in", description: "Every student sitting, with the course, time and confirmed room. Contains personal data.", filename: "Student Room Lists" },
+  { id: "seating", label: "Course seating", audience: "For course sections", description: "One Excel file per exam, with a student-to-room sheet for each CRN.", filename: "Course Seating" },
 ];
 export const REPORT_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+export function reportFileName({ report = "complete", startDate, format = "xlsx", overviewMode = "board", includeAsd = false, week }) {
+  const view = REPORT_VIEWS.find((item) => item.id === report);
+  const term = inferAcademicTerm(startDate);
+  if (!view || !term || !["xlsx", "csv", "pdf", "zip"].includes(format)
+    || (report === "overview" && !["board", "table"].includes(overviewMode))
+    || (week !== undefined && (!Number.isInteger(week) || week < 1))) throw new Error("Invalid report filename options.");
+  const year = term.academicYear.split("-").map((part) => part.slice(-2)).join("-");
+  const layout = report === "overview"
+    ? overviewMode === "table" ? "Chronological" : format === "pdf" ? "Overview Board" : "Detailed Overview"
+    : view.filename;
+  return ["Midterm Exam Schedule", term.semester, year,
+    report === "overview" && includeAsd ? "ASD Included" : "", layout,
+    week !== undefined ? "Week " + week : "", format === "zip" && report !== "seating" ? "Weekly Files" : "",
+  ].filter(Boolean).join(" ") + "." + format;
+}
 
 export function reportDate(startDate, week, day) {
   const date = new Date(startDate + "T00:00:00Z");
@@ -320,7 +337,7 @@ function csvValue(value) {
   return '"' + text.replace(/"/g, '""') + '"';
 }
 
-export function buildExportFiles({ report = "complete", format = "xlsx", packaging = report === "seating" ? "course" : "combined", overviewMode = "board", examIds, ...options }) {
+export function buildExportFiles({ report = "complete", format = "xlsx", packaging = report === "seating" ? "course" : "combined", overviewMode = "board", examStartDate, examIds, ...options }) {
   const view = REPORT_VIEWS.find((item) => item.id === report);
   if (!view || !["xlsx", "csv"].includes(format) || !(report === "seating" ? packaging === "course" : ["combined", "weekly"].includes(packaging))) throw new Error("Invalid export options.");
   if (report === "complete" && format !== "xlsx") throw new Error("The complete multi-sheet report is available as Excel.");
@@ -344,7 +361,8 @@ export function buildExportFiles({ report = "complete", format = "xlsx", packagi
   const groups = packaging === "weekly" ? model.selectedWeeks.map((week) => [week]) : [model.selectedWeeks];
   return groups.map((weeks) => {
     const scoped = buildExportModel({ ...options, weeks });
-    const filename = (packaging === "weekly" ? "Week_" + weeks[0] + "_" : "") + view.filename + "." + format;
+    const filename = reportFileName({ report, format, overviewMode, startDate: examStartDate ?? options.startDate,
+      includeAsd: scoped.overviewExams.some((exam) => exam.isAsd), week: weeks.length === 1 ? weeks[0] : undefined });
     if (format === "csv") {
       const table = reportTable(report, scoped, overviewMode);
       const rows = report === "overview" && overviewMode === "table"
@@ -354,7 +372,7 @@ export function buildExportFiles({ report = "complete", format = "xlsx", packagi
     const workbook = report === "complete"
       ? packaging === "weekly" ? buildResourceWorkbookForWeek({ ...options, week: weeks[0] }) : buildCombinedResourceWorkbook({ ...options, weeks })
       : focusedWorkbook(report, scoped, overviewMode);
-    workbook.Props = { Title: view.label, Subject: "Confirmed department exam schedule" };
+    workbook.Props = { Title: filename.slice(0, -5), Subject: "Confirmed department exam schedule" };
     const writer = report === "overview" && overviewMode === "table" ? StyledXLSX : XLSX;
     return { filename, mimeType: XLSX_MIME, data: writer.write(workbook, { bookType: "xlsx", type: "array", compression: true }) };
   });

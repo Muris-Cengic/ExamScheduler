@@ -13,7 +13,7 @@ import ResourcePool from "./ResourcePool.jsx";
 import { FRIDAY_EXAM_NOTICE, isFridayExamTimeAllowed } from "./examWindows.js";
 import { assignResources, buildExamSessions, parseResourceCatalog, readResourceCatalog, readResourcePlan, reconcileRoomDistribution, resourceFingerprint, scopeInvigilatorAvailability, validateResourcePlan } from "./resources.js";
 import { examInvigilatorsNeeded, examRoomSizes, readRoomDistributionChoices, roomCapacity } from "./examRooms.js";
-import { buildAsdOverviewExams, buildExportFiles, REPORT_VIEWS } from "./exportReports.js";
+import { buildAsdOverviewExams, buildExportFiles, reportFileName } from "./exportReports.js";
 import ExportStudio from "./ExportStudio.jsx";
 import { inferAcademicTerm } from "./examSetup.js";
 
@@ -2192,7 +2192,7 @@ function App() {
     try {
       const templateHeaders = (options.report || "complete") === "complete" ? await getTemplateHeaders() : undefined;
       const exportedFiles = buildExportFiles({
-        ...options, templateHeaders, startDate: exportStartDate,
+        ...options, templateHeaders, startDate: exportStartDate, examStartDate: startDate,
         sessions: examSessions, catalog: activeResourceCatalog, plan: resourcePlan,
         asdExams: asdOverviewExams,
       });
@@ -2216,8 +2216,8 @@ function App() {
         compressionOptions: { level: 9 },
       });
 
-      const view = REPORT_VIEWS.find((item) => item.id === (options.report || "complete"));
-      const zipFilename = `${view.filename}_${view.id === "seating" ? "Exam" : "Weekly"}_Files.zip`;
+      const zipFilename = reportFileName({ ...options, startDate, format: "zip",
+        includeAsd: options.includeAsd && asdOverviewExams.some((exam) => !options.weeks || options.weeks.includes(exam.week)) });
 
       downloadBlob(zipBlob, zipFilename);
     } catch (error) {
@@ -3132,6 +3132,7 @@ function App() {
 
       {courses.length && !stepNotice && wizardStep === "export" ? (
         <ExportStudio sessions={examSessions} catalog={activeResourceCatalog} plan={resourcePlan} startDate={exportStartDate}
+          examStartDate={startDate}
           asdExams={asdOverviewExams}
           ready={resourceValidation.complete} isExporting={isExporting} onExport={handleExportSchedule} />
       ) : null}

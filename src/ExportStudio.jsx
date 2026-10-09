@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { buildCourseSeating, buildExportModel, courseSeatingInfo, formatChronologicalDate, formatReportDate, reportDate, reportTable, REPORT_DAYS, REPORT_VIEWS, reportTimeRange } from "./exportReports.js";
+import { buildCourseSeating, buildExportModel, courseSeatingInfo, formatChronologicalDate, formatReportDate, reportDate, reportFileName, reportTable, REPORT_DAYS, REPORT_VIEWS, reportTimeRange } from "./exportReports.js";
 import "./ExportStudio.css";
 
 function ReportIcon({ kind }) {
@@ -161,7 +161,7 @@ function PrintReport({ report, overviewMode, model, startDate, sessions, catalog
   </div>;
 }
 
-export default function ExportStudio({ sessions, catalog, plan, startDate, asdExams = [], ready, isExporting, onExport }) {
+export default function ExportStudio({ sessions, catalog, plan, startDate, examStartDate = startDate, asdExams = [], ready, isExporting, onExport }) {
   const [report, setReport] = useState("complete");
   const [format, setFormat] = useState("xlsx");
   const [packaging, setPackaging] = useState("combined");
@@ -192,6 +192,17 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, asdEx
   const chooseReport = (id) => { setReport(id); if (id === "complete" || id === "seating") setFormat("xlsx"); setSearch(""); setLimit(50); };
   const exportOptions = { report, format, packaging: report === "seating" ? "course" : packaging, weeks: selectedWeeks, includeAsd: withAsd,
     ...(report === "overview" ? { overviewMode: mode } : {}) };
+  const pdfFilename = reportFileName({ report, startDate: examStartDate, format: "pdf", overviewMode: mode,
+    includeAsd: selected?.overviewExams.some((exam) => exam.isAsd), week: selectedWeeks.length === 1 ? selectedWeeks[0] : undefined });
+  const handlePrint = () => {
+    const previousTitle = document.title;
+    document.title = pdfFilename.slice(0, -4);
+    try {
+      window.print();
+    } finally {
+      document.title = previousTitle;
+    }
+  };
   return <section className="export-studio" aria-label="Export workspace">
     <header className="export-hero">
       <div><h2>Export Schedule</h2></div>
@@ -244,7 +255,8 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, asdEx
             : selectedWeeks.length ? packaging === "weekly" && selectedWeeks.length > 1 ? selectedWeeks.length + " weekly files / ZIP download" : "1 " + (format === "xlsx" ? "Excel workbook" : "CSV file") : "Select a week to export."}</p>
           <button type="button" className="export-download__primary" disabled={disabled}
             onClick={() => onExport(exportOptions)}>{isExporting ? "Exporting..." : report === "seating" ? "Download Course Files" : report === "complete" ? "Export Timetable" : format === "xlsx" ? "Download Excel" : "Download CSV"}</button>
-          <button type="button" disabled={disabled} onClick={() => window.print()}>Print / Save PDF</button>
+          <button type="button" disabled={disabled} onClick={handlePrint}>Print / Save PDF</button>
+          <small className="export-pdf-filename">PDF name: {pdfFilename}</small>
           {report === "seating" ? <small>Prints every CRN in the included weeks, starting each sheet on a new portrait page.</small> : null}
           {report === "overview" ? <small className="export-print-layout" role="status">Print layout: {mode === "board" ? "Week board" : "Chronological list"}. All included weeks are printed. {mode === "board" ? "Excel and CSV use the detailed table." : "Excel and CSV match the six-column chronological list."}</small> : null}
           <small>{report === "seating" ? "Contains student IDs. Share only with authorised recipients." : report === "complete" || report === "students" ? "Contains student names and IDs. Share only with authorised recipients." : "Only the selected report and included weeks are exported."}</small>
