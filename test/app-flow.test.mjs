@@ -13,6 +13,7 @@ import * as examRooms from "../src/examRooms.js";
 import * as examWindows from "../src/examWindows.js";
 import { buildResourceWorkbookForWeek } from "../src/reports.js";
 import * as exportReports from "../src/exportReports.js";
+import * as examSetup from "../src/examSetup.js";
 
 // Exercise the real App event handlers/render tree without a browser or new test dependencies.
 const appSource = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8")
@@ -46,7 +47,7 @@ function harness(component = "App", props) {
     static revokeObjectURL() {}
   }
   const context = createContext({
-    ...imports, ...department, ...resources, ...examRooms, ...examWindows, ...exportReports, buildResourceWorkbookForWeek, autoSchedule, XLSX, JSZip, Blob, URL: TestURL, console,
+    ...imports, ...department, ...resources, ...examRooms, ...examWindows, ...exportReports, ...examSetup, buildResourceWorkbookForWeek, autoSchedule, XLSX, JSZip, Blob, URL: TestURL, console,
     CourseSelection: function CourseSelection() {}, Fragment: "fragment",
     ResourceAssignment: function ResourceAssignment() {},
     h: (type, props, ...children) => ({ type, props: props || {}, children: typeof type === "function" && type.name !== "CourseSelection" ? [type(props)] : children.flat(Infinity) }),
@@ -258,10 +259,76 @@ test("the start screen shows only create and load choices before opening the wor
   assert.ok(!nodes(tree).some((node) => node.type?.name === "CourseSelection" || node.type?.name === "ResourceAssignment" || node.props.className === "timetable"));
   button(tree, "Create Schedule").props.onClick();
   tree = app.render();
+  assert.equal(step(tree, "setup").props["aria-current"], "step");
+  assert.equal(nodes(tree).filter((node) => node.props["data-step"]).length, 8);
+  assert.equal(text(find(tree, (node) => node.props.className === "app__position")), "Step 0 / 7");
+  assert.ok(!nodes(tree).some((node) => node.props["aria-label"] === "Step prerequisites"));
+  assert.equal(nodes(tree).filter((node) => node.type === "input" && node.props.type === "date").length, 1);
+  assert.ok(!nodes(tree).some((node) => node.type === "label" && text(node) === "Upload Enrollment File"));
+  button(tree, "Continue to Student Enrollment").props.onClick();
+  tree = app.render();
   assert.equal(step(tree, "load").props["aria-current"], "step");
-  assert.equal(nodes(tree).filter((node) => node.props["data-step"]).length, 7);
   find(tree, (node) => node.type === "label" && text(node) === "Upload Enrollment File");
+  assert.ok(!nodes(tree).some((node) => node.type === "input" && node.props.type === "date"));
   assert.ok(!nodes(tree).some((node) => node.props.className === "start-screen"));
+});
+
+test("Exam Setup derives metadata from the entered date and restores it after saving and loading", async () => {
+  const workbookEvent = (rows) => {
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(rows), "First");
+    return { target: { files: [{ name: "input.xlsx", arrayBuffer: async () => XLSX.write(book, { type: "array", bookType: "xlsx" }) }], value: "input.xlsx" } };
+  };
+  const app = harness();
+  let tree = app.render();
+  button(tree, "Create Schedule").props.onClick();
+  tree = app.render();
+  const dateInput = () => find(tree, (node) => node.props.id === "start-date-input");
+  const summary = () => text(find(tree, (node) => node.props.className === "exam-setup__summary"));
+  for (const [date, semester, academicYear] of [
+    ["2026-08-01", "Fall", "2026-2027"], ["2026-06-01", "Summer", "2025-2026"],
+    ["2027-01-12", "Spring", "2026-2027"],
+  ]) {
+    dateInput().props.onChange({ target: { value: date } });
+    tree = app.render();
+    assert.equal(dateInput().props.value, date, "The date is not silently shifted into the preceding month or year");
+    assert.equal(summary(), "Semester" + semester + "Academic year" + academicYear);
+    assert.equal(nodes(tree).filter((node) => node.type === "input" && !node.props.hidden).length, 1, "Inferred metadata is read-only");
+  }
+  assert.match(text(find(tree, (node) => node.props.id === "exam-week-start")), /Monday, 2027-01-11/);
+  button(tree, "Continue to Student Enrollment").props.onClick();
+  tree = app.render();
+  await find(find(tree, (node) => node.type === "label" && text(node) === "Upload Enrollment File"), (node) => node.type === "input").props.onChange(workbookEvent([
+    ["Student ID", "Student Name", "Course Code", "Course Title", "CRN"], ["S1", "Student One", "EXAM-1000", "Exam Course", "101"],
+  ]));
+  tree = app.render();
+  assert.equal(step(tree, "courses").props["aria-current"], "step");
+  assert.ok(!nodes(tree).some((node) => node.props.type === "date"));
+  await review(tree).props.onUpload(workbookEvent([
+    ["Campus", "Crn No", "Course Code", "Title", "Cr", "Maximum Load", "No Of Enrolled", "Session Id", "DAYS", "Time", "Primary Instructor", "Second Instructor", "Type", "Building", "Room"],
+    ["PAD", "101", "EXAM-1000", "Exam Course", 3, 25, 1, "01", "M", "0800 - 0950", "10: Alice", "20: Bob", "T", "Building", "A"],
+  ]));
+  tree = app.render();
+  step(tree, "setup").props.onClick();
+  tree = app.render();
+  assert.equal(dateInput().props.value, "2027-01-12");
+  assert.ok(!nodes(tree).some((node) => node.props.className === "overview" || node.type?.name === "CourseSelection"));
+  step(tree, "main").props.onClick();
+  tree = app.render();
+  button(tree, "Save Timetable").props.onClick();
+  const saved = JSON.parse(await app.downloads.at(-1).text());
+  assert.equal(saved.startDate, "2027-01-12");
+  assert.equal("semester" in saved, false, "Derived values must not duplicate the authoritative date");
+  assert.equal("academicYear" in saved, false);
+  const loaded = harness();
+  tree = loaded.render();
+  await find(tree, (node) => node.type === "input" && node.props.accept === "application/json").props.onChange(jsonEvent(saved));
+  tree = loaded.render();
+  assert.equal(step(tree, "main").props["aria-current"], "step");
+  step(tree, "setup").props.onClick();
+  tree = loaded.render();
+  assert.equal(dateInput().props.value, "2027-01-12");
+  assert.equal(summary(), "SemesterSpringAcademic year2026-2027");
 });
 
 test("canceled and invalid loads stay on the start screen and loading disables both choices", async () => {
@@ -301,7 +368,7 @@ test("canceled and invalid loads stay on the start screen and loading disables b
   assert.equal(event.target.value, "", "An invalid file can be selected again after correction");
   button(tree, "Create Schedule").props.onClick();
   tree = app.render();
-  assert.equal(step(tree, "load").props["aria-current"], "step");
+  assert.equal(step(tree, "setup").props["aria-current"], "step");
   assert.ok(!nodes(tree).some((node) => node.props.role === "alert"));
 });
 
@@ -313,7 +380,8 @@ test("every step is directly accessible, with actions separate and prerequisites
   const header = () => find(tree, (node) => node.props.className === "app__header");
   const navigation = () => find(header(), (node) => node.type === "nav" && node.props["aria-label"] === "Schedule steps");
   const actions = () => find(tree, (node) => node.props.className === "step-actions");
-  assert.equal(nodes(navigation()).filter((node) => node.type === "button").length, 7);
+  assert.equal(nodes(navigation()).filter((node) => node.type === "button").length, 8);
+  assert.equal(step(tree, "setup").props["aria-label"], "Step 0: Exam Setup");
   assert.equal(step(tree, "load").props["aria-label"], "Step 1: Student Enrollment");
   assert.equal(step(tree, "courses").props["aria-label"], "Step 2: CRN Info");
   assert.equal(step(tree, "asd").props["aria-label"], "Step 3: ASD Schedule (optional)");
@@ -326,7 +394,7 @@ test("every step is directly accessible, with actions separate and prerequisites
       return { scrollIntoView(options) { scrollRequests.push(options); } };
     },
   };
-  for (const id of ["export", "asd", "resources", "main", "courses", "pool", "load"]) {
+  for (const id of ["export", "asd", "resources", "main", "courses", "pool", "load", "setup"]) {
     step(tree, id).props.onClick();
     tree = app.render();
     assert.equal(step(tree, id).props["aria-current"], "step");
@@ -335,11 +403,13 @@ test("every step is directly accessible, with actions separate and prerequisites
     assert.ok(!nodes(actions()).some((node) => node.props["data-step"]));
     assert.equal(nodes(actions()).filter((node) => node.type === "button" && text(node) === "Load Timetable").length, id === "load" ? 1 : 0,
       "Load Timetable is available only in Student Enrollment");
-    if (id !== "load") assert.match(text(find(tree, (node) => node.props["aria-label"] === "Step prerequisites")), /Load enrolment in Student Enrollment/);
+    if (!["setup", "load"].includes(id)) assert.match(text(find(tree, (node) => node.props["aria-label"] === "Step prerequisites")), /Load enrolment in Student Enrollment/);
+    else assert.ok(!nodes(tree).some((node) => node.props["aria-label"] === "Step prerequisites"));
+    assert.equal(nodes(tree).filter((node) => node.type === "input" && node.props.type === "date").length, id === "setup" ? 1 : 0);
     if (id === "asd") assert.equal(button(tree, "Create ASD Timetable").props.disabled, true);
     if (id === "main") assert.equal(button(tree, "Auto-Schedule Remaining Exams").props.disabled, true);
   }
-  assert.equal(scrollRequests.length, 7, "Programmatic navigation keeps the active step visible on narrow screens");
+  assert.equal(scrollRequests.length, 8, "Programmatic navigation keeps the active step visible on narrow screens");
   assert.ok(scrollRequests.every((options) => options.block === "nearest" && options.inline === "nearest"));
   button(tree, "Settings").props.onClick();
   tree = app.render();
@@ -357,6 +427,8 @@ test("resource selection precedes generation and stays editable after the resour
   const app = harness();
   let tree = app.render();
   button(tree, "Create Schedule").props.onClick();
+  tree = app.render();
+  button(tree, "Continue to Student Enrollment").props.onClick();
   tree = app.render();
   const upload = find(find(tree, (node) => node.type === "label" && text(node) === "Upload Enrollment File"),
     (node) => node.type === "input");
@@ -540,6 +612,8 @@ test("wizard imports, exam toggles, draft, saved-state round trip and report exc
   const app = harness();
   let tree = app.render();
   button(tree, "Create Schedule").props.onClick();
+  tree = app.render();
+  button(tree, "Continue to Student Enrollment").props.onClick();
   tree = app.render();
   const enrolmentLabel = find(tree, (node) => node.type === "label" && text(node) === "Upload Enrollment File");
   await find(enrolmentLabel, (node) => node.type === "input").props.onChange(fileEvent(enrolmentPath));
@@ -747,6 +821,8 @@ test("CRN Info choices control invigilator availability across scheduling, revie
   const app = harness();
   let tree = app.render();
   button(tree, "Create Schedule").props.onClick();
+  tree = app.render();
+  button(tree, "Continue to Student Enrollment").props.onClick();
   tree = app.render();
   await find(find(tree, (node) => node.type === "label" && text(node) === "Upload Enrollment File"), (node) => node.type === "input").props.onChange(workbookEvent([
     ["Student ID", "Student Name", "Course Code", "Course Title", "CRN"], ["S1", "Student One", "EXAM-1000", "Selected Exam", "101"],

@@ -15,6 +15,7 @@ import { assignResources, buildExamSessions, parseResourceCatalog, readResourceC
 import { examInvigilatorsNeeded, examRoomSizes, readRoomDistributionChoices, roomCapacity } from "./examRooms.js";
 import { buildAsdOverviewExams, buildExportFiles, REPORT_VIEWS } from "./exportReports.js";
 import ExportStudio from "./ExportStudio.jsx";
+import { inferAcademicTerm } from "./examSetup.js";
 
 const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 
@@ -652,7 +653,7 @@ function App() {
   const [isWorkspaceOpen, setIsWorkspaceOpen] = useState(false);
   const [isLoadingTimetable, setIsLoadingTimetable] = useState(false);
   const [schedulerPhase, setSchedulerPhase] = useState("setup");
-  const [wizardStep, setWizardStep] = useState("load");
+  const [wizardStep, setWizardStep] = useState("setup");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settings, setSettings] = useState({
     slotIntervalMinutes: DEFAULT_SLOT_INTERVAL_MINUTES,
@@ -671,6 +672,7 @@ function App() {
   } = settings;
 
   const [startDate, setStartDate] = useState(() => getDefaultStartDateISO());
+  const academicTerm = inferAcademicTerm(startDate);
 
   const [weeks, setWeeks] = useState(() => [1]);
 
@@ -1008,9 +1010,7 @@ function App() {
 
   const handleStartDateChange = (event) => {
     const rawValue = event.target.value;
-    const parsed = parseISODateString(rawValue);
-    const aligned = parsed ? alignDateToMonday(parsed) : getDefaultStartDate();
-    setStartDate(formatDateToISO(aligned));
+    setStartDate(inferAcademicTerm(rawValue) ? rawValue : getDefaultStartDateISO());
   };
 
   const handleNumericSettingChange = (key, options = {}) => (event) => {
@@ -1474,7 +1474,7 @@ function App() {
   const handleCreateSchedule = () => {
     if (isLoadingTimetable) return;
     setUploadError("");
-    setWizardStep("load");
+    setWizardStep("setup");
     setSchedulerPhase("setup");
     setIsWorkspaceOpen(true);
   };
@@ -2405,6 +2405,7 @@ function App() {
   }, [courses, departmentScope, wizardStep, schedulerPhase]);
 
   const wizardSteps = [
+    { id: "setup", label: "Exam Setup", title: "Exam Setup" },
     { id: "load", label: "Student Enrollment", title: "Student Enrollment" },
     { id: "courses", label: "CRN Info", title: "CRN Info" },
     { id: "asd", label: "ASD Schedule", title: "ASD Schedule", optional: true },
@@ -2416,7 +2417,7 @@ function App() {
 
   const wizardStepIndex = wizardSteps.findIndex((step) => step.id === wizardStep);
   const currentStep = wizardSteps[wizardStepIndex];
-  const stepNotice = wizardStep !== "load" && !courses.length
+  const stepNotice = !["setup", "load"].includes(wizardStep) && !courses.length
     ? "Load enrolment in Student Enrollment to use this step."
     : ["pool", "main", "resources", "export"].includes(wizardStep) && !departmentSelection
       ? "Load your CRN list in CRN Info to use this step."
@@ -2434,7 +2435,7 @@ function App() {
               <path d="M14 3H5v18h14V8L14 3Z M14 3v5h5 M8 14h8 M12 10v8" />
             </svg>
             <strong>Create Schedule</strong>
-            <small id="create-schedule-note">Start with student enrollment.</small>
+            <small id="create-schedule-note">Start with exam setup.</small>
           </button>
           <button type="button" className="start-choice" aria-label="Load Schedule" aria-describedby="load-schedule-note"
             onClick={handleTriggerLoadTimetable} disabled={isLoadingTimetable}>
@@ -2457,15 +2458,15 @@ function App() {
       <header className="app__header">
         <div className="app__brand">
           <h1>Midterm Exam Scheduling Helper</h1>
-          <span className="app__position">Step {wizardStepIndex + 1} / {wizardSteps.length}</span>
+          <span className="app__position">Step {wizardStepIndex} / {wizardSteps.length - 1}</span>
         </div>
         <nav className="step-navigation" aria-label="Schedule steps" ref={stepNavigationRef}>
           <ol className="wizard-steps">
             {wizardSteps.map((step, index) => (
               <li key={step.id}>
-                <button type="button" data-step={step.id} aria-label={"Step " + (index + 1) + ": " + step.title + (step.optional ? " (optional)" : "")}
+                <button type="button" data-step={step.id} aria-label={"Step " + index + ": " + step.title + (step.optional ? " (optional)" : "")}
                   aria-current={step.id === wizardStep ? "step" : undefined} onClick={() => navigateToStep(step.id)}>
-                  <span className="wizard-steps__number" aria-hidden="true">{index + 1}</span>
+                  <span className="wizard-steps__number" aria-hidden="true">{index}</span>
                   <span>{step.label}</span>
                   {step.optional ? <small>optional</small> : null}
                 </button>
@@ -2479,11 +2480,8 @@ function App() {
       <input ref={loadAsdInputRef} type="file" accept=".json,.xlsx,.xls,.csv" onChange={handleLoadAsdTimetable} hidden />
 
       <section className="step-actions" aria-label={currentStep.title + " actions"}>
+        {wizardStep === "setup" ? <button type="button" className="primary-action" onClick={() => navigateToStep("load")}>Continue to Student Enrollment</button> : null}
         {wizardStep === "load" ? <>
-          <div className="start-date-control">
-            <label htmlFor="start-date-input">Exam start date</label>
-            <input id="start-date-input" type="date" value={startDate} onChange={handleStartDateChange} />
-          </div>
           <label className="file-input">
             <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFileUpload} />
             <span>Upload Enrollment File</span>
@@ -2492,10 +2490,6 @@ function App() {
         </> : null}
 
         {wizardStep === "courses" ? <>
-          <div className="start-date-control">
-            <label htmlFor="review-start-date">Exam start date</label>
-            <input id="review-start-date" type="date" value={startDate} onChange={handleStartDateChange} />
-          </div>
           <button type="button" onClick={addWeek} disabled={weeks.length >= MAX_WEEKS}>+ Add Exam Week ({weeks.length})</button>
         </> : null}
 
@@ -2535,6 +2529,22 @@ function App() {
       {importNotice ? (
         <div className="alert alert--info" role="status">{importNotice}</div>
       ) : null}
+
+      {wizardStep === "setup" ? <section className="exam-setup" aria-labelledby="exam-setup-title">
+        <h2 id="exam-setup-title">Exam Setup</h2>
+        <div className="exam-setup__fields">
+          <div className="exam-setup__date">
+            <label htmlFor="start-date-input">Exam start date</label>
+            <input id="start-date-input" type="date" value={startDate} onChange={handleStartDateChange} aria-describedby="exam-week-start" />
+            <small id="exam-week-start">Timetable week 1 begins Monday, {exportStartDate}.</small>
+          </div>
+          <dl className="exam-setup__summary" aria-live="polite">
+            <div><dt>Semester</dt><dd>{academicTerm?.semester || "Not set"}</dd></div>
+            <div><dt>Academic year</dt><dd>{academicTerm?.academicYear || "Not set"}</dd></div>
+          </dl>
+        </div>
+        <p className="exam-setup__note">Semester and academic year are inferred from the start date. August dates use Fall.</p>
+      </section> : null}
 
       {wizardStep === "courses" && courses.length > 0 ? (
         <CourseSelection courses={departmentScope.courses} selection={departmentSelection}
@@ -2681,7 +2691,7 @@ function App() {
         </div>
       ) : null}
 
-      {courses.length && wizardStep !== "export" ? (
+      {courses.length && !["setup", "export"].includes(wizardStep) ? (
         <section className="overview">
           <div>
             <strong>Courses:</strong> {wizardStep === "load" || schedulerPhase === "asd" ? courses.length : departmentScope.courses.length}

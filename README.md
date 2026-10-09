@@ -12,12 +12,12 @@ npm run dev
 ## Navigation
 
 The app opens with only **Create Schedule** and **Load Schedule**. Create opens
-Student Enrollment; Load restores a saved main timetable from a JSON file and
+**Step 0: Exam Setup**; Load restores a saved main timetable from a JSON file and
 opens Timetable. Canceling the file picker or loading an invalid file keeps the
 start screen visible. Step navigation, settings and scheduling controls appear
 only after creating or successfully loading a schedule.
 
-Use the compact step bar to jump directly to **Student Enrollment, CRN Info, ASD Schedule, Resource Pool,
+Use the compact step bar to jump directly to **Exam Setup, Student Enrollment, CRN Info, ASD Schedule, Resource Pool,
 Timetable, Assignments or Export**. Every step stays accessible; missing inputs
 are shown in that step, and scheduling/export actions enforce their prerequisites.
 Navigation preserves exam choices, placements and resource allocations, including
@@ -28,9 +28,27 @@ action strip. Detailed exam, placement and resource rules are collapsible; block
 issues and resource shortages stay visible. On narrow screens, the step bar scrolls
 horizontally and keeps the current step in view.
 
+## Exam setup
+
+In **Step 0: Exam Setup**, choose the exam start date, then continue to
+**Student Enrollment**. Semester and academic year update automatically:
+
+- **Fall**: August 1 through December 31.
+- **Spring**: January 1 through May 31.
+- **Summer**: June 1 through July 31. The supplied ranges overlap in August;
+  August dates are classified as Fall.
+- The academic year runs August through July: Fall 2026 is **2026-2027**;
+  Spring and Summer 2027 belong to the same academic year.
+
+The selected date is retained as entered. Timetable weeks still begin on Monday;
+the setup page shows the Monday used for week 1. Return to this step at any time
+to change the date. Saved timetables retain the date; semester and academic year
+are derived again when loaded, rather than stored separately. Existing steps
+keep their numbers, starting with **1: Student Enrollment**.
+
 ## Import enrolment
 
-In **Student Enrollment**, choose the exam start date and upload an Excel or CSV file.
+In **Student Enrollment**, upload an Excel or CSV file.
 Supported inputs:
 
 - A registration report with `STUDENT_ID : ..., Student Name : ...` identity rows,
@@ -59,12 +77,12 @@ Both headerless Banner data and named-column layouts are supported on the first 
   choices are editable. Turning an exam off removes
   its existing main placement, but does not alter the independent ASD timetable.
 - Missing CRN enrolments are shown; courses with no enrolled students cannot be scheduled.
-- Choose the exam start date and add exam weeks before scheduling. The CRN upload
+- Set the date in **Exam Setup** and add exam weeks in **CRN Info** before scheduling. The CRN upload
   extends timetable hours to at least 18:00 to include the evening exam window.
 
 ## Select resources
 
-The workflow is **Student Enrollment > CRN Info > ASD Schedule (Optional) > Resource Pool > Timetable
+The workflow is **Exam Setup > Student Enrollment > CRN Info > ASD Schedule (Optional) > Resource Pool > Timetable
 > Assignments > Export**. After creating/loading ASD,
 or skipping it, choose the active rooms and named invigilators before generating
 the main timetable. The pool comes from the CRN list's first sheet and shows each
@@ -315,7 +333,7 @@ Excel/CSV schedules need `Course`, `Department`, `Day` and `Time` columns.
 - Courses without loaded enrolment are skipped and listed in the import notice.
   Ambiguous matches or conflicting sessions produce an error.
 - Dates such as `Monday, 19 October` use the selected exam start date's year.
-  Set the correct year in Student Enrollment before importing. Explicit years and Excel dates are supported.
+  Set the correct year in Exam Setup before importing. Explicit years and Excel dates are supported.
 - Time ranges such as `12:00 - 1:00 PM` and `10:30 - 11:30 AM` are supported.
   The timetable expands its weeks/hours and uses 30-minute slots when needed.
 - Imported exam durations are retained for timetable display and cross-schedule student conflicts.
