@@ -1109,11 +1109,132 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   assert.ok(!JSON.stringify(completeAfterAsd.Sheets).includes("ASD-"));
   assert.equal(radio("Excel (.xlsx)").props.checked, true);
   assert.equal(radio("CSV (.csv)").props.disabled, true);
+  reportButton("Course seating").props.onClick();
+  tree = app.render();
+  assert.ok(!nodes(panel()).some((node) => node.props.className === "export-asd-option" || node.props.name === "export-format" || node.props.name === "export-packaging"));
+  assert.equal(text(find(preview(), (node) => node.type === "h4")), "MAIN-1000");
+  assert.match(text(preview()), /StudentIDRoom/);
+  assert.ok(!text(preview()).includes("Alice"));
+  assert.ok(!text(printView()).includes("ASD-"));
+  const seatingTable = () => find(preview(), (node) => node.type?.name === "PreviewTable" && node.props.label === "Course seating preview");
+  assert.equal(seatingTable().props.rows.length, 16);
+  find(preview(), (node) => node.type === "input" && node.props.type === "search").props.onChange({ target: { value: "NO-MATCH" } });
+  tree = app.render();
+  assert.equal(seatingTable().props.rows.length, 0);
+  assert.equal(nodes(printView()).filter((node) => node.type?.name === "PreviewTable")[0].props.rows.length, 16);
+  await button(tree, "Download This Exam").props.onClick();
+  assert.equal(app.downloadNames.at(-1), "MAIN-1000 - First Exam.xlsx");
+  const singleSeating = XLSX.read(await app.downloads.at(-1).arrayBuffer(), { type: "array" });
+  assert.deepEqual(singleSeating.SheetNames, ["CRN 101"]);
+  assert.equal(XLSX.utils.sheet_to_json(singleSeating.Sheets["CRN 101"], { header: 1 }).slice(8).length, 16, "Search must not filter a seating file");
+  weekInput(2).props.onChange();
+  tree = app.render();
+  assert.equal(nodes(printView()).filter((node) => node.props.className === "export-print__crn").length, 2);
+  await button(tree, "Download Course Files").props.onClick();
+  assert.equal(app.downloadNames.at(-1), "Course_Seating_Exam_Files.zip");
+  const seatingZip = await JSZip.loadAsync(await app.downloads.at(-1).arrayBuffer());
+  assert.deepEqual(Object.keys(seatingZip.files).sort(), ["MAIN-1000 - First Exam.xlsx", "MAIN-2000 - Second Exam.xlsx"]);
+  weekInput(1).props.onChange();
+  tree = app.render();
+  assert.equal(text(find(preview(), (node) => node.type === "h4")), "MAIN-2000");
+  await button(tree, "Download Course Files").props.onClick();
+  assert.equal(app.downloadNames.at(-1), "MAIN-2000 - Second Exam.xlsx", "One exam downloads directly without a ZIP");
+  button(tree, "Print / Save PDF").props.onClick();
+  assert.equal(app.prints(), 3);
+  weekInput(2).props.onChange();
+  tree = app.render();
+  assert.equal(button(tree, "Download Course Files").props.disabled, true);
+  assert.equal(button(tree, "Print / Save PDF").props.disabled, true);
+  assert.match(text(preview()), /Choose a week to preview/);
+  weekInput(1).props.onChange();
+  tree = app.render();
   reportButton("Exam overview").props.onClick();
   tree = app.render();
   assert.equal(asdToggle().props.checked, true, "The overview preference is retained without affecting another report");
   assert.equal(weekInput(3).props.checked, true);
   assert.match(text(preview()), /ASD-1000/);
+});
+
+test("course seating preview switches exams and CRN sheets, paginates IDs and prints all included rosters", async () => {
+  const makeCourse = (id, count, crns) => ({ id, code: id, title: id + " title", crns, labSessions: [],
+    students: Array.from({ length: count }, (_, index) => ({ id: id + "-" + String(index).padStart(4, "0"),
+      name: "Private student " + index, crn: crns[index < 55 ? 0 : 1] })) });
+  const courses = { A: makeCourse("A", 60, ["101", "102"]), B: makeCourse("B", 3, ["201"]), C: makeCourse("C", 2, ["301"]) };
+  const sessions = resources.buildExamSessions({ 1: { Monday: { "12:00": ["A", "B"] } }, 2: { Tuesday: { "12:00": ["C"] } } }, courses, 60);
+  const catalog = {
+    rooms: Array.from({ length: 4 }, (_, i) => ({ id: "R" + i, name: "PAD / P-B-4F / " + (13 + i), enabled: true, busy: [] })),
+    invigilators: Array.from({ length: 10 }, (_, i) => ({ id: "I" + i, name: "Staff " + i, enabled: true, busy: [] })),
+  };
+  const exports = [];
+  const props = { sessions, catalog, plan: resources.assignResources(sessions, catalog), startDate: "2026-10-19", ready: true, isExporting: false,
+    asdExams: exportReports.buildAsdOverviewExams({ assignments: { 3: { Monday: { "12:00": ["ASD"] } } }, courseLookup: { ASD: makeCourse("ASD", 1, ["999"]) } }),
+    onExport(options) { exports.push(JSON.parse(JSON.stringify(options))); } };
+  const app = harness("ExportStudio", props);
+  let tree = app.render();
+  button(tree, "Exam overview").props.onClick();
+  tree = app.render();
+  find(find(tree, (node) => node.props.className === "export-asd-option"), (node) => node.type === "input").props.onChange({ target: { checked: true } });
+  tree = app.render();
+  button(tree, "Student room lists").props.onClick();
+  tree = app.render();
+  find(tree, (node) => node.type === "input" && node.props.name === "export-format" && node.props.checked === false).props.onChange();
+  tree = app.render();
+  button(tree, "Course seating").props.onClick();
+  tree = app.render();
+  const preview = () => find(tree, (node) => node.props.className === "export-preview");
+  const printView = () => find(tree, (node) => node.props.className === "export-print");
+  const table = () => find(preview(), (node) => node.type?.name === "PreviewTable");
+  const infoLabels = (root) => nodes(find(root, (node) => node.props.className === "export-seating-info"))
+    .filter((node) => node.type === "dt").map(text);
+  const crnButton = (crn) => find(preview(), (node) => node.type === "button" && text(node).trim().startsWith("CRN " + crn + " "));
+  assert.equal(table().props.rows.length, 55);
+  assert.equal(table().props.limit, 50);
+  assert.deepEqual(Array.from(table().props.columns), ["StudentID", "Room"]);
+  assert.deepEqual(infoLabels(preview()), ["Course", "Course title", "Date", "Day", "Time"]);
+  assert.deepEqual(infoLabels(printView()), ["Course", "Course title", "Date", "Day", "Time"]);
+  assert.ok(!nodes(printView()).filter((node) => node.type === "h4").some((node) => text(node).includes("CRN")));
+  assert.ok(!text(preview()).includes("Private student"));
+  assert.ok(!text(preview()).includes("PAD"));
+  assert.ok(!nodes(tree).some((node) => node.props["aria-label"] === "Include Week 3"));
+  assert.equal(nodes(printView()).filter((node) => node.props.className === "export-print__crn").length, 4);
+  const printedTables = () => nodes(printView()).filter((node) => node.type?.name === "PreviewTable");
+  assert.equal(printedTables().reduce((sum, item) => sum + item.props.rows.length, 0), 65);
+  assert.ok(printedTables().every((item) => item.props.limit === undefined), "Printed CRN lists are never truncated to preview pages");
+  button(tree, "Show 50 more (5 remaining)").props.onClick();
+  tree = app.render();
+  assert.equal(table().props.limit, 100);
+  crnButton("102").props.onClick();
+  tree = app.render();
+  assert.equal(crnButton("102").props["aria-pressed"], true);
+  assert.equal(table().props.rows.length, 5);
+  assert.equal(table().props.limit, 50);
+  find(preview(), (node) => node.type === "input" && node.props.type === "search").props.onChange({ target: { value: "NO-MATCH" } });
+  tree = app.render();
+  assert.equal(table().props.rows.length, 0);
+  await button(tree, "Download This Exam").props.onClick();
+  assert.deepEqual(exports.at(-1), { report: "seating", format: "xlsx", packaging: "course", weeks: [1, 2], includeAsd: false, examIds: ["1/Monday/12:00/A"] });
+  assert.equal(printedTables()[0].props.rows.length, 55);
+  find(preview(), (node) => node.type === "select" && node.props["aria-label"] === "Seating exam").props.onChange({ target: { value: "1/Monday/12:00/B" } });
+  tree = app.render();
+  assert.equal(text(find(preview(), (node) => node.type === "h4")), "B");
+  assert.equal(crnButton("201").props["aria-pressed"], true);
+  assert.equal(table().props.rows.length, 3);
+  assert.equal(find(preview(), (node) => node.type === "input" && node.props.type === "search").props.value, "");
+  button(tree, "Week 2").props.onClick();
+  tree = app.render();
+  assert.equal(text(find(preview(), (node) => node.type === "h4")), "C");
+  assert.equal(crnButton("301").props["aria-pressed"], true);
+  assert.equal(printedTables().length, 4, "Preview selection cannot filter print");
+  props.isExporting = true;
+  tree = app.render();
+  assert.equal(button(tree, "Download This Exam").props.disabled, true);
+  assert.equal(button(tree, "Exporting...").props.disabled, true);
+  props.isExporting = false;
+  props.ready = false;
+  tree = app.render();
+  assert.equal(button(tree, "Download Course Files").props.disabled, true);
+  assert.match(text(preview()), /Confirm resources first/);
+  assert.ok(!nodes(tree).some((node) => node.props.className === "export-print"));
 });
 
 test("week-board printing keeps every exam in busy days and all included weeks, independently of the active preview", () => {

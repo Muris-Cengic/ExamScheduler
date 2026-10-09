@@ -208,7 +208,7 @@ is highlighted without changing existing backup report rules.
 
 ## Export workspace
 
-After resources are confirmed, the **Export** step offers four reports with live
+After resources are confirmed, the **Export** step offers five reports with live
 previews:
 
 - **Complete report**: the existing linked Excel report, including weekly
@@ -234,14 +234,29 @@ previews:
   the Resource Review Pool totals.
 - **Student room lists**: a searchable check-in register of student sittings,
   courses, times and confirmed rooms. Contains student personal data.
+- **Course seating**: one Excel workbook per exam, with one worksheet per CRN.
+  Each sheet starts with only the course code/title, date, day and exam time,
+  followed by exactly **StudentID** and **Room** columns. Students are sorted by
+  room, then by StudentID within each room. IDs remain text, including leading zeros;
+  room labels use the compact format shown in Exam overview. Seating comes
+  directly from confirmed room allocations, without redistributing students.
+  Select an exam and CRN to preview its sheet; **Download This Exam** exports all
+  CRNs for that exam. **Download Course Files** exports every exam in the included
+  weeks, as a ZIP when there is more than one workbook. Student names and ASD
+  courses are excluded. Students with no CRN are retained on an **Unspecified**
+  sheet. Workbooks are named **Course code - Course title.xlsx**; invalid filename
+  characters are replaced and duplicate names receive a numeric suffix.
+  Excel sheets use a blue title and table headers, shaded exam-detail labels and
+  alternating room-group shading with separators. Long text wraps without
+  widening the student table.
 
-Choose which populated exam weeks to include, then select **One workbook** or
-**Separate weekly files**. The combined complete report adds a navigable
+Choose which populated exam weeks to include. For reports other than Course
+seating, select **One workbook** or **Separate weekly files**. The combined complete report adds a navigable
 **Schedule Index** and preserves all week-qualified sheet names and formula links.
 Multiple weekly files download as one ZIP; a single selected week downloads
 directly. Empty weeks are excluded. With **Include ASD exams** enabled, the Exam
 overview also offers weeks containing only ASD exams. ASD never appears in the
-Complete report, Staff duties or Student room lists, including their print/PDF
+Complete report, Staff duties, Student room lists or Course seating, including their print/PDF
 exports.
 
 The three focused reports also support UTF-8 **CSV** as one file or weekly files.
@@ -253,6 +268,10 @@ formula execution.
 report containing all included weeks. Choose the browser's PDF destination to
 save it. Preview week tabs and search affect only the on-screen preview, not
 downloads or print; the print layout includes every selected record.
+**Course seating** instead uses portrait pages, starting each CRN sheet on a
+new page with exam information above its student/room table. Long CRN lists
+continue onto additional pages with repeated table headers; preview pagination,
+exam selection and search never truncate the print output.
 For **Exam overview**, choose **Week board** or **Chronological list** in the
 preview before printing. The PDF uses that layout for every included week.
 The board keeps five weekday columns, compact rooms, staffing requirements and

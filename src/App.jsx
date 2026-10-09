@@ -2212,7 +2212,7 @@ function App() {
       });
 
       const view = REPORT_VIEWS.find((item) => item.id === (options.report || "complete"));
-      const zipFilename = `${view.filename}_Weekly_Files.zip`;
+      const zipFilename = `${view.filename}_${view.id === "seating" ? "Exam" : "Weekly"}_Files.zip`;
 
       downloadBlob(zipBlob, zipFilename);
     } catch (error) {

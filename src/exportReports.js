@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx/xlsx.mjs";
+import StyledXLSX from "xlsx-js-style";
 import { clock, invigilatorWorkloads, isTeachingTimeDuty, validateResourcePlan } from "./resources.js";
 import { buildResourceWorkbookForWeek } from "./reports.js";
 
@@ -7,6 +8,7 @@ export const REPORT_VIEWS = [
   { id: "overview", label: "Exam overview", audience: "For sharing the timetable", description: "A course timetable with compact rooms, required invigilators and lab-time exams. No student names.", filename: "Exam_Overview" },
   { id: "staff", label: "Staff duties", audience: "For invigilators", description: "Named duties and a workload summary. Backups and replaced teaching hours stay separate.", filename: "Staff_Duties" },
   { id: "students", label: "Student room lists", audience: "For room check-in", description: "Every student sitting, with the course, time and confirmed room. Contains personal data.", filename: "Student_Room_Lists" },
+  { id: "seating", label: "Course seating", audience: "For course sections", description: "One Excel file per exam, with a student-to-room sheet for each CRN.", filename: "Course_Seating" },
 ];
 export const REPORT_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -88,7 +90,7 @@ export function buildExportModel({ sessions, catalog, plan, startDate, weeks, as
         duties.push({ ...timing, id: room.id + "/" + id, invigilatorId: id, name: staff.get(id).name, role: "Exam", code: room.code,
           roomName, teaching, extraLoad: teaching ? 0 : 1 });
       });
-      room.students.forEach((student) => students.push({ ...timing, id: student.id, name: student.name, crn: student.crn || "",
+      room.students.forEach((student) => students.push({ ...timing, examId: exam.id, id: student.id, name: student.name, crn: student.crn || "",
         code: room.code, title: room.title, roomName }));
     });
     courses.forEach((exam) => exams.push({ ...exam, crns: [...exam.crns].sort() }));
@@ -105,6 +107,102 @@ export function buildExportModel({ sessions, catalog, plan, startDate, weeks, as
   return { selectedWeeks, sessions: current, roomRows, exams, overviewExams, includeAsd, duties, students,
     workloads: invigilatorWorkloads(catalog, current, plan),
     summary: { exams: exams.length, roomSessions: roomRows.length, students: new Set(students.map((student) => student.id)).size, sittings: students.length } };
+}
+
+export function buildCourseSeating(model) {
+  return model.exams.map((exam) => {
+    const groups = new Map();
+    model.students.filter((student) => student.examId === exam.id).forEach((student) => {
+      const rows = groups.get(student.crn) || [];
+      rows.push([String(student.id), formatRoomDisplayName(student.roomName)]);
+      groups.set(student.crn, rows);
+    });
+    const crnSheets = [...groups].sort(([a], [b]) => a.localeCompare(b, "en", { numeric: true }))
+      .map(([crn, rows]) => ({ crn, rows: rows.sort((a, b) => a[1].localeCompare(b[1], "en", { numeric: true }) ||
+        a[0].localeCompare(b[0], "en", { numeric: true })) }));
+    return { ...exam, crnSheets };
+  });
+}
+
+export function courseSeatingInfo(exam) {
+  return [["Course", exam.code], ["Course title", exam.title],
+    ["Date", exam.date], ["Day", exam.day], ["Time", reportTimeRange(exam.start, exam.end)]];
+}
+
+function uniqueExportName(base, used, maxLength) {
+  let name = base.slice(0, maxLength);
+  for (let number = 2; used.has(name.toLowerCase()); number += 1) {
+    const suffix = "_" + number;
+    name = base.slice(0, maxLength - suffix.length) + suffix;
+  }
+  used.add(name.toLowerCase());
+  return name;
+}
+
+function styleCourseSeatingSheet(sheet, info, studentRows) {
+  const navy = "FF244761";
+  const paleBlue = "FFF0F5F9";
+  const white = "FFFFFFFF";
+  const headerRow = info.length + 2;
+  const fill = (rgb) => ({ patternType: "solid", fgColor: { rgb } });
+  const rule = (rgb, style = "thin") => ({ style, color: { rgb } });
+  const styleCell = (row, column, { font, alignment, ...style } = {}) => {
+    const address = XLSX.utils.encode_cell({ r: row, c: column });
+    sheet[address] ??= { t: "s", v: "" };
+    sheet[address].s = {
+      font: { name: "Arial", sz: 11, color: { rgb: "FF263747" }, ...font },
+      fill: fill(white), ...style,
+      alignment: { vertical: "center", horizontal: "left", wrapText: true, indent: 1, ...alignment },
+    };
+  };
+  const lineCount = (value, width) => String(value).split(/\r\n|\r|\n/)
+    .reduce((count, line) => count + Math.max(1, Math.ceil(line.length / width)), 0);
+  sheet["!cols"] = [{ wch: 24 }, { wch: 44 }];
+  sheet["!rows"] = [{ hpt: 32 }, ...info.map(([, value]) => ({ hpt: Math.max(24, lineCount(value, 38) * 18) })),
+    { hpt: 10 }, { hpt: 26 }];
+  [0, 1].forEach((column) => styleCell(0, column, {
+    font: { sz: 16, bold: true, color: { rgb: navy } },
+    border: { bottom: rule(navy) },
+  }));
+  info.forEach((_, index) => {
+    styleCell(index + 1, 0, { fill: fill(paleBlue), font: { bold: true, color: { rgb: navy } } });
+    styleCell(index + 1, 1, index === 0 ? { font: { bold: true, color: { rgb: navy } } } : {});
+  });
+  [0, 1].forEach((column) => styleCell(headerRow, column, {
+    fill: fill(navy), font: { bold: true, color: { rgb: white } },
+    alignment: { horizontal: "center", indent: 0 },
+    ...(column === 0 ? { border: { right: rule(white) } } : {}),
+  }));
+  let roomGroup = 0;
+  studentRows.forEach((values, index) => {
+    const nextRoom = index > 0 && values[1] !== studentRows[index - 1][1];
+    if (nextRoom) roomGroup += 1;
+    const row = headerRow + 1 + index;
+    sheet["!rows"][row] = { hpt: Math.max(22, Math.max(lineCount(values[0], 20), lineCount(values[1], 38)) * 18) };
+    values.forEach((_, column) => styleCell(row, column, {
+      numFmt: "@", fill: fill(roomGroup % 2 ? paleBlue : white),
+      border: { ...(nextRoom ? { top: rule("FF9CB2C3") } : {}),
+        ...(index === studentRows.length - 1 ? { bottom: rule("FF9CB2C3") } : {}) },
+    }));
+  });
+}
+
+function courseSeatingWorkbook(exam) {
+  const workbook = XLSX.utils.book_new();
+  const sheetNames = new Set();
+  exam.crnSheets.forEach((crnSheet) => {
+    const info = courseSeatingInfo(exam).map(([label, value]) => [label, label === "Date"
+      ? { t: "d", v: new Date(value + "T00:00:00Z"), z: "dd mmm yyyy" } : value]);
+    const headerRow = info.length + 2;
+    const sheet = XLSX.utils.aoa_to_sheet([["Student seating"], ...info, [], ["StudentID", "Room"], ...crnSheet.rows]);
+    sheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }];
+    styleCourseSeatingSheet(sheet, info, crnSheet.rows);
+    sheet["!autofilter"] = { ref: "A" + (headerRow + 1) + ":B" + (headerRow + 1 + crnSheet.rows.length) };
+    const base = ("CRN " + (crnSheet.crn || "Unspecified")).replace(/[\\/?*[\]:'\p{Cc}]/gu, "_");
+    XLSX.utils.book_append_sheet(workbook, sheet, uniqueExportName(base, sheetNames, 31));
+  });
+  workbook.Props = { Title: exam.code + " - " + exam.title, Subject: "Confirmed student room assignments by CRN" };
+  return workbook;
 }
 
 export function reportTable(report, model) {
@@ -178,12 +276,26 @@ function csvValue(value) {
   return '"' + text.replace(/"/g, '""') + '"';
 }
 
-export function buildExportFiles({ report = "complete", format = "xlsx", packaging = "combined", ...options }) {
+export function buildExportFiles({ report = "complete", format = "xlsx", packaging = report === "seating" ? "course" : "combined", examIds, ...options }) {
   const view = REPORT_VIEWS.find((item) => item.id === report);
-  if (!view || !["xlsx", "csv"].includes(format) || !["combined", "weekly"].includes(packaging)) throw new Error("Invalid export options.");
+  if (!view || !["xlsx", "csv"].includes(format) || !(report === "seating" ? packaging === "course" : ["combined", "weekly"].includes(packaging))) throw new Error("Invalid export options.");
   if (report === "complete" && format !== "xlsx") throw new Error("The complete multi-sheet report is available as Excel.");
+  if (report === "seating" && format !== "xlsx") throw new Error("Course seating uses Excel files with one sheet per CRN.");
+  if (examIds !== undefined && report !== "seating") throw new Error("Exam selection is only available for course seating.");
   options = { ...options, includeAsd: report === "overview" && Boolean(options.includeAsd) };
   const model = buildExportModel(options);
+  if (report === "seating") {
+    const exams = buildCourseSeating(model);
+    if (examIds !== undefined && (!Array.isArray(examIds) || !examIds.length || examIds.some((id) => !exams.some((exam) => exam.id === id)))) {
+      throw new Error("Choose an exam from the included weeks.");
+    }
+    const filenames = new Set();
+    return exams.filter((exam) => examIds === undefined || examIds.includes(exam.id)).map((exam) => {
+      const base = (exam.code + " - " + exam.title).replace(/[<>:"/\\|?*\p{Cc}]/gu, "_").trim().replace(/[. ]+$/g, "");
+      return { filename: uniqueExportName(base, filenames, 180) + ".xlsx", mimeType: XLSX_MIME,
+        data: StyledXLSX.write(courseSeatingWorkbook(exam), { bookType: "xlsx", type: "array", compression: true }) };
+    });
+  }
   const groups = packaging === "weekly" ? model.selectedWeeks.map((week) => [week]) : [model.selectedWeeks];
   return groups.map((weeks) => {
     const scoped = buildExportModel({ ...options, weeks });

@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as XLSX from "xlsx/xlsx.mjs";
-import { assignResources, buildExamSessions, emptyResourcePlan } from "../src/resources.js";
+import JSZip from "jszip";
+import { assignResources, buildExamSessions, emptyResourcePlan, resourceFingerprint } from "../src/resources.js";
 import { roomIdentity } from "../src/department.js";
-import { buildAsdOverviewExams, buildCombinedResourceWorkbook, buildExportFiles, buildExportModel, formatRoomDisplayName, reportDate, reportTable } from "../src/exportReports.js";
+import { buildAsdOverviewExams, buildCombinedResourceWorkbook, buildCourseSeating, buildExportFiles, buildExportModel, courseSeatingInfo, formatRoomDisplayName, reportDate, reportTable } from "../src/exportReports.js";
 
 const course = (id, count, options = {}) => ({
   id, code: id, title: id + " course", crns: ["101"], labSessions: [],
@@ -27,6 +28,12 @@ function fixture() {
 }
 const read = (file) => XLSX.read(file.data, { type: "array", cellDates: true });
 const rows = (workbook, name) => XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 });
+const seatingRows = (workbook, name) => {
+  const contents = rows(workbook, name);
+  const header = contents.findIndex((row) => row[0] === "StudentID" && row[1] === "Room");
+  assert.ok(header > 0, "Exam details must precede the two-column student table");
+  return contents.slice(header + 1);
+};
 
 test("invalid Friday placements block every main report without restricting ASD overview references", () => {
   const options = fixture();
@@ -34,7 +41,7 @@ test("invalid Friday placements block every main report without restricting ASD 
     const sessions = buildExamSessions({ 1: { Friday: { [time]: ["MAIN"] } } }, { MAIN: course("MAIN", 5) }, 60);
     const plan = assignResources(sessions, options.catalog);
     assert.ok(sessions[0].issues.includes("Friday exams must use 09:00-10:00 or 10:30-11:30."));
-    for (const report of ["complete", "overview", "staff", "students"]) {
+    for (const report of ["complete", "overview", "staff", "students", "seating"]) {
       assert.throws(() => buildExportFiles({ ...options, sessions, plan, report }), /Complete valid resource/);
     }
   }
@@ -241,6 +248,203 @@ test("focused workbooks contain the right audience's data and staff has a separa
   assert.ok(!roster[0].includes("Invigilator"));
 });
 
+test("course seating exports one workbook per exam with CRN sheets and the confirmed student rooms", () => {
+  const options = fixture();
+  options.catalog.rooms.forEach((room, index) => { room.name = "PAD / P-B-4F / " + (13 + index); });
+  options.sessions[1].rooms.flatMap((room) => room.students).forEach((student, index) => {
+    student.id = String(index).padStart(6, "0");
+    student.crn = index % 2 ? "00102" : "00101";
+  });
+  options.sessions[0].rooms[0].students[0].id = "000000";
+  options.plan = assignResources(options.sessions, options.catalog);
+  const before = JSON.stringify(options);
+  const model = buildExportModel(options);
+  const exams = buildCourseSeating(model);
+  assert.deepEqual(exams[1].crnSheets.map((sheet) => [sheet.crn, sheet.rows.length]), [["00101", 13], ["00102", 13]]);
+  assert.ok(exams[1].crnSheets.every((sheet) => new Set(sheet.rows.map((row) => row[1])).size === 2), "A CRN keeps its allocations across multiple physical rooms");
+  const files = buildExportFiles({ ...options, report: "seating" });
+  assert.deepEqual(files.map((file) => file.filename), ["A - A course.xlsx", "B - B course.xlsx"]);
+  for (const [index, file] of files.entries()) {
+    const workbook = read(file);
+    const exam = exams[index];
+    assert.equal(workbook.Props.Title, exam.code + " - " + exam.title);
+    assert.deepEqual(workbook.SheetNames, exam.crnSheets.map((sheet) => "CRN " + sheet.crn));
+    for (const crnSheet of exam.crnSheets) {
+      const name = "CRN " + crnSheet.crn;
+      const contents = rows(workbook, name);
+      assert.deepEqual(seatingRows(workbook, name), crnSheet.rows);
+      assert.deepEqual(contents.slice(1, 6).map((row) => row[0]), ["Course", "Course title", "Date", "Day", "Time"]);
+      for (const [label, value] of courseSeatingInfo(exam)) {
+        const cellValue = contents.find((row) => row[0] === label)[1];
+        assert.equal(label === "Date" ? cellValue.toISOString().slice(0, 10) : cellValue, value);
+      }
+      assert.equal(workbook.Sheets[name].B4.t, "d", "Exam dates stay typed dates");
+      assert.equal(workbook.Sheets[name]["!autofilter"].ref, "A8:B" + (8 + crnSheet.rows.length));
+      assert.ok(!contents.some((row) => ["CRN", "Rooms", "Students", "During lab time"].includes(row[0])));
+      assert.ok(!JSON.stringify(contents).includes("Student 0"), "Student names are excluded from seating sheets");
+      assert.ok(!JSON.stringify(contents).includes("Invigilator"));
+      assert.ok(!JSON.stringify(contents).includes("PAD"));
+    }
+  }
+  const expected = model.students.filter((student) => student.examId === exams[1].id)
+    .map((student) => [student.id, formatRoomDisplayName(student.roomName)]).sort();
+  assert.deepEqual(exams[1].crnSheets.flatMap((sheet) => sheet.rows).sort(), expected);
+  assert.equal(new Set(expected.map((row) => row[0])).size, 26);
+  assert.equal(JSON.stringify(options), before, "Export cannot reseat students or mutate reviewed resources");
+});
+
+test("course seating sorts by room naturally, then student ID, without changing assigned rooms", () => {
+  const options = fixture();
+  const session = options.sessions[1];
+  session.rooms.forEach((room, roomIndex) => {
+    options.catalog.rooms.find((item) => item.id === options.plan.allocations[room.id].roomId).name =
+      "PAD / P-B-4F / " + (roomIndex === 0 ? "10" : "2");
+    room.students.forEach((student, index) => { student.id = "S" + (roomIndex * 13 + 13 - index); });
+  });
+  options.plan.fingerprint = resourceFingerprint(options.sessions, options.catalog);
+  const before = JSON.stringify(options);
+  const expected = ["2", "10"].flatMap((room) => Array.from({ length: 13 }, (_, i) => ["S" + (i + (room === "2" ? 14 : 1)), "P-B-4F/" + room]));
+  const seating = buildCourseSeating(buildExportModel(options))[1].crnSheets[0];
+  assert.deepEqual(seating.rows, expected);
+  const workbook = read(buildExportFiles({ ...options, report: "seating", weeks: [2] })[0]);
+  assert.deepEqual(seatingRows(workbook, "CRN 101"), expected);
+  assert.equal(JSON.stringify(options), before, "Sorting changes display order only, not student room allocations");
+});
+
+test("course seating writes native heading styles and room-group shading to every CRN sheet", async () => {
+  const options = fixture();
+  options.sessions[1].rooms.flatMap((room) => room.students).forEach((student, index) => {
+    student.crn = index % 2 ? "00102" : "00101";
+  });
+  options.plan = assignResources(options.sessions, options.catalog);
+  const file = buildExportFiles({ ...options, report: "seating", weeks: [2] })[0];
+  const workbook = XLSX.read(file.data, { type: "array", cellStyles: true, cellDates: true });
+  const zip = await JSZip.loadAsync(file.data);
+  const styleXml = await zip.file("xl/styles.xml").async("string");
+  const borders = styleXml.match(/<borders\b[^>]*>([\s\S]*?)<\/borders>/)[1].match(/<border\b[^>]*>[\s\S]*?<\/border>/g);
+  for (const [index, name] of workbook.SheetNames.entries()) {
+    const xml = await zip.file("xl/worksheets/sheet" + (index + 1) + ".xml").async("string");
+    const styleAt = (address) => {
+      const cell = xml.match(new RegExp('<c\\b[^>]*\\br="' + address + '"[^>]*>'))[0];
+      const xf = workbook.Styles.CellXf[Number(cell.match(/\bs="(\d+)"/)[1])];
+      return { ...xf, font: workbook.Styles.Fonts[xf.fontId], fill: workbook.Styles.Fills[xf.fillId], border: borders[xf.borderId] };
+    };
+    const title = styleAt("A1");
+    assert.equal(title.font.sz, 16);
+    assert.equal(title.font.bold, 1);
+    assert.equal(title.font.color.rgb, "244761");
+    assert.match(title.border, /<bottom style="thin">/);
+    assert.equal(styleAt("A2").fill.fgColor.rgb, "F0F5F9");
+    assert.equal(styleAt("A2").font.bold, 1);
+    for (const address of ["A8", "B8"]) {
+      const header = styleAt(address);
+      assert.equal(header.fill.fgColor.rgb, "244761");
+      assert.equal(header.font.color.rgb, "FFFFFF");
+      assert.equal(header.font.bold, 1);
+      assert.equal(header.alignment.horizontal, "center");
+    }
+    const roster = seatingRows(workbook, name);
+    let group = 0;
+    roster.forEach((row, rowIndex) => {
+      const newRoom = rowIndex > 0 && row[1] !== roster[rowIndex - 1][1];
+      if (newRoom) group += 1;
+      for (const column of ["A", "B"]) {
+        const body = styleAt(column + (rowIndex + 9));
+        assert.equal(body.fill.fgColor.rgb, group % 2 ? "F0F5F9" : "FFFFFF");
+        assert.equal(body.numFmtId, 49, "Student IDs and room labels use Excel's text format");
+        assert.equal(body.font.name, "Arial");
+        assert.equal(body.alignment.horizontal, "left");
+        assert.equal(body.alignment.vertical, "center");
+        assert.equal(body.alignment.wrapText, true);
+        assert.equal(/<top style="thin">/.test(body.border), newRoom, "Separators mark room changes, not individual students");
+      }
+    });
+    assert.equal(group, 1, "Both CRNs span two rooms and restart their shading independently");
+    assert.match(styleAt("A" + (roster.length + 8)).border, /<bottom style="thin">/);
+    assert.equal(workbook.Sheets[name].B4.t, "d");
+    assert.equal(workbook.Sheets[name].B4.z, "dd mmm yyyy");
+    assert.deepEqual(workbook.Sheets[name]["!merges"], [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }]);
+  }
+});
+
+test("course seating wraps long titles and room names with fitted heights and bounded column widths", () => {
+  const options = fixture();
+  const title = "Very long course title with multiple words ".repeat(4) + "\nSecond line";
+  options.sessions[1].rooms.forEach((room) => { room.title = title; });
+  options.catalog.rooms.forEach((room, index) => { room.name = "Long building and floor description ".repeat(3) + "/" + index; });
+  options.plan = assignResources(options.sessions, options.catalog);
+  const file = buildExportFiles({ ...options, report: "seating", weeks: [2] })[0];
+  const workbook = XLSX.read(file.data, { type: "array", cellStyles: true });
+  const sheet = workbook.Sheets["CRN 101"];
+  assert.equal(sheet.B3.v, title);
+  assert.equal(sheet["!cols"][0].wch, 24);
+  assert.equal(sheet["!cols"][1].wch, 44);
+  assert.ok(sheet["!rows"][2].hpt >= 90, "Wrapped course titles get extra vertical space");
+  assert.ok(sheet["!rows"][8].hpt >= 54, "Long room names wrap instead of being clipped");
+  assert.equal(sheet["!rows"][7].hpt, 26, "Only rows needing wrapping grow");
+});
+
+test("course seating respects included weeks and individual exam selection and never exports ASD", () => {
+  const options = { ...fixture(), asdExams: asdFixture(), includeAsd: true, report: "seating" };
+  const model = buildExportModel(options);
+  const single = buildExportFiles({ ...options, examIds: [model.exams[1].id] });
+  assert.equal(single.length, 1);
+  assert.equal(single[0].filename, "B - B course.xlsx");
+  assert.deepEqual(seatingRows(read(single[0]), "CRN 101").length, 26);
+  const weekly = buildExportFiles({ ...options, weeks: [1] });
+  assert.equal(weekly.length, 1);
+  assert.ok(!JSON.stringify(read(weekly[0]).Sheets).includes("ASD-"));
+  assert.throws(() => buildExportFiles({ ...options, weeks: [3] }), /Only weeks with scheduled/);
+  for (const examIds of [[], ["missing"], [model.exams[1].id], "invalid"]) {
+    assert.throws(() => buildExportFiles({ ...options, weeks: [1], examIds }), /Choose an exam/);
+  }
+  assert.throws(() => buildExportFiles({ ...options, format: "csv" }), /one sheet per CRN/);
+  assert.throws(() => buildExportFiles({ ...options, packaging: "weekly" }), /Invalid export/);
+});
+
+test("course seating preserves text IDs and missing CRNs, with safe unique worksheet names", () => {
+  const options = fixture();
+  const crns = ["", "A/B", "A\\B", "X".repeat(40) + "1", "X".repeat(40) + "2", "Q'"];
+  const ids = ["000123", "=1+1", "+00123", "@SUM(1)", "-0012", "S\u0161-123"];
+  options.sessions[1].rooms.flatMap((room) => room.students).forEach((student, index) => {
+    student.crn = crns[index % crns.length];
+    student.id = ids[index % ids.length] + "-" + index;
+  });
+  options.plan = assignResources(options.sessions, options.catalog);
+  const file = buildExportFiles({ ...options, report: "seating", weeks: [2] })[0];
+  const workbook = read(file);
+  assert.equal(workbook.SheetNames.length, crns.length);
+  assert.ok(workbook.SheetNames.includes("CRN Unspecified"));
+  assert.ok(workbook.SheetNames.every((name) => name.length <= 31 && !/[\\/?*[\]:]/.test(name) && !name.endsWith("'")));
+  assert.equal(new Set(workbook.SheetNames.map((name) => name.toLowerCase())).size, crns.length);
+  let count = 0;
+  for (const name of workbook.SheetNames) {
+    const sheet = workbook.Sheets[name];
+    const roster = seatingRows(workbook, name);
+    count += roster.length;
+    roster.forEach((row, index) => {
+      const cell = sheet["A" + (9 + index)];
+      assert.equal(cell.t, "s");
+      assert.equal(cell.f, undefined, "Formula-like IDs must not become executable Excel formulas");
+      assert.equal(cell.v, row[0]);
+    });
+  }
+  assert.equal(count, 26, "Students with unknown CRNs are not dropped");
+});
+
+test("course seating filenames use course code and title, with safe unique names for ZIP and Windows paths", () => {
+  const options = fixture();
+  const codes = ["A/B", "A\\B", "a_b"];
+  const courses = Object.fromEntries(codes.map((code, index) => ["EXAM" + index, course("EXAM" + index, 1, { code, title: "Shared? Exam" })]));
+  const sessions = buildExamSessions({ 1: { Monday: { "12:00": Object.keys(courses) } } }, courses, 60);
+  const files = buildExportFiles({ ...options, sessions, plan: assignResources(sessions, options.catalog), report: "seating" });
+  assert.equal(files.length, 3);
+  assert.deepEqual(files.map((file) => file.filename), ["A_B - Shared_ Exam.xlsx", "A_B - Shared_ Exam_2.xlsx", "a_b - Shared_ Exam_3.xlsx"]);
+  assert.equal(new Set(files.map((file) => file.filename.toLowerCase())).size, 3);
+  assert.ok(files.every((file) => !/[<>:"/\\|?*]/.test(file.filename)));
+  assert.deepEqual(files.map((file) => seatingRows(read(file), "CRN 101")[0][0]), ["EXAM0-S0", "EXAM1-S0", "EXAM2-S0"]);
+});
+
 test("overview room labels remove standalone PAD tokens and compact separators without changing room identities", () => {
   for (const [input, expected] of [
     ["PAD / P-B-4F / 13", "P-B-4F/13"],
@@ -333,7 +537,7 @@ test("CSV exports include selected weeks, preserve Unicode and quotes, and neutr
 
 test("all export paths reject incomplete resources and invalid or empty selections", () => {
   const options = fixture();
-  for (const report of ["complete", "overview", "staff", "students"]) {
+  for (const report of ["complete", "overview", "staff", "students", "seating"]) {
     assert.throws(() => buildExportFiles({ ...options, report, plan: emptyResourcePlan(options.sessions, options.catalog) }), /Complete valid resource/);
   }
   assert.throws(() => buildExportFiles({ ...options, weeks: [] }), /Select at least one/);

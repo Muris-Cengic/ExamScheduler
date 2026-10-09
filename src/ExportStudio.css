@@ -8,7 +8,7 @@
   min-width: 0;
   color: var(--export-ink);
 }
-.export-studio button, .export-studio input { font: inherit; }
+.export-studio button, .export-studio input, .export-studio select { font: inherit; }
 .export-studio button {
   border: 1px solid var(--export-line);
   border-radius: 8px;
@@ -19,7 +19,7 @@
 }
 .export-studio button:disabled { opacity: 0.5; cursor: not-allowed; }
 .export-studio button:not(:disabled):hover { border-color: #93b4e6; background: #f2f6ff; }
-.export-studio button:focus-visible, .export-studio input:focus-visible, .export-table-wrap:focus-visible {
+.export-studio button:focus-visible, .export-studio input:focus-visible, .export-studio select:focus-visible, .export-table-wrap:focus-visible {
   outline: 3px solid #93c5fd;
   outline-offset: 3px;
 }
@@ -144,6 +144,25 @@
 .export-workloads { margin: 20px 26px; border: 1px solid var(--export-line); border-radius: 8px; overflow: hidden; }
 .export-workloads summary { cursor: pointer; padding: 12px 14px; font-size: 12px; font-weight: 700; background: #f3f7fc; }
 .export-workloads p { font-size: 10px; padding: 0 14px; color: var(--export-muted); }
+.export-seating-package { margin-top: 24px; padding: 16px; border: 1px solid var(--export-line); border-radius: 8px; background: #f7f9fc; }
+.export-seating-package p, .export-seating-package small { font-size: 12px; color: var(--export-muted); line-height: 1.6; }
+.export-seating-package p { margin: 0 0 8px; }
+.export-seating-package small { font-size: 11px; }
+.export-seating-controls { padding: 20px 26px; display: flex; align-items: end; flex-wrap: wrap; gap: 12px; border-bottom: 1px solid var(--export-line); }
+.export-seating-controls label { display: grid; gap: 8px; flex: 1; min-width: min(100%, 220px); font-size: 12px; font-weight: 600; }
+.export-seating-controls select { padding: 10px; width: 100%; min-width: 0; border: 1px solid var(--export-line); border-radius: 6px; color: var(--export-ink); background: #fff; }
+.export-seating-controls > button { font-size: 12px; }
+.export-seating-crns { display: flex; flex-wrap: wrap; gap: 8px; flex-basis: 100%; }
+.export-seating-crns button { display: grid; gap: 4px; text-align: left; font-size: 12px; }
+.export-seating-crns small { font-size: 10px; color: var(--export-muted); }
+.export-seating-crns button[aria-pressed="true"] { border-color: #9eb8e4; color: var(--export-blue); background: #eff5ff; }
+.export-seating-sheet > header { padding: 20px 26px 12px; }
+.export-seating-sheet h4 { font-family: Georgia, "Times New Roman", serif; font-weight: 400; font-size: 24px; margin: 8px 0 0; overflow-wrap: anywhere; }
+.export-seating-info { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 20px; margin: 0; padding: 0 26px 24px; font-size: 12px; }
+.export-seating-info > div { min-width: 0; }
+.export-seating-info > div:nth-child(2) { grid-column: 1 / -1; }
+.export-seating-info dt { color: var(--export-muted); font-size: 10px; margin-bottom: 4px; }
+.export-seating-info dd { margin: 0; overflow-wrap: anywhere; }
 .export-show-more { margin: 16px 26px; font-size: 11px !important; }
 .export-empty { padding: 40px 26px; text-align: center; color: var(--export-muted); font-size: 13px; }
 .export-print { display: none; }
@@ -164,6 +183,9 @@
   .export-report-choices svg { width: 18px; height: 18px; }
   .export-report-choices p { font-size: 11px; }
   .export-paper-heading, .export-sheet-map { padding: 20px 16px; }
+  .export-seating-controls { padding: 16px; align-items: stretch; }
+  .export-seating-sheet > header { padding: 16px 16px 12px; }
+  .export-seating-info { padding: 0 16px 20px; }
   .export-search, .export-workloads { margin: 16px; }
   .export-overview-note { margin: 16px 16px 0; }
   .export-board { grid-template-columns: minmax(0, 1fr); padding: 16px; }
@@ -174,6 +196,7 @@
 @media (max-width: 420px) { .export-report-choices { grid-template-columns: minmax(0, 1fr); } }
 @media print {
   @page exam-report { size: A4 landscape; margin: 12mm; }
+  @page exam-seating { size: A4 portrait; margin: 12mm; }
   body:has(.export-studio) { background: #fff; }
   .app:has(> .export-studio) { max-width: none; width: 100%; margin: 0; padding: 0; }
   .app:has(> .export-studio) > :not(.export-studio) { display: none !important; }
@@ -181,6 +204,13 @@
   .export-print { display: block; color: #111; page: exam-report; }
   .export-print__week { break-before: page; }
   .export-print__week:first-child { break-before: auto; }
+  .export-print[data-report="seating"] { page: exam-seating; }
+  .export-print__crn { break-before: page; }
+  .export-print__crn:first-child { break-before: auto; }
+  .export-print .export-seating-sheet > header { padding: 0 0 4mm; break-inside: avoid; }
+  .export-print .export-seating-sheet h4 { font-size: 18pt; margin: 2mm 0 0; }
+  .export-print .export-seating-info { padding: 0 0 4mm; gap: 2mm 5mm; font-size: 10pt; break-inside: avoid; }
+  .export-print .export-seating-info dt { font-size: 8pt; margin-bottom: 1mm; }
   .export-print__week > header { border-bottom: 1px solid #333; margin-bottom: 6mm; padding-bottom: 3mm; }
   .export-print h1 { font-family: Georgia, "Times New Roman", serif; font-size: 24pt; font-weight: 400; margin: 2mm 0; }
   .export-print h2 { font-size: 12pt; margin: 5mm 0 2mm; break-after: avoid; }
