@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import * as XLSX from "xlsx/xlsx.mjs";
-import { assignmentIds, defaultHasExam, parseDepartmentWorkbook, readDepartmentSelection, retainAssignments, roomIdentity, scopeDepartmentCourses } from "../src/department.js";
+import { assignmentIds, defaultHasExam, labExamEndMinutes, parseDepartmentWorkbook, readDepartmentSelection, retainAssignments, roomIdentity, scopeDepartmentCourses } from "../src/department.js";
 import { buildExamSessions, parseResourceCatalog, standbyAvailability, validateResourcePlan } from "../src/resources.js";
 import { autoSchedule } from "../src/autoSchedule.js";
 import { parseAsdWorkbook, parseEnrolmentWorkbook, planAsdImport } from "../src/imports.js";
@@ -301,7 +301,7 @@ test("single-CRN labs also prefer earlier feasible starts without leaving their 
   const existing = course("EXISTING", [student("OTHER")]);
   const result = draft([c], {
     assignments: { 1: { Thursday: { "15:00": ["EXISTING"] } } },
-    courseLookup: { LAB: c, EXISTING: existing }, staffCount: 3,
+    courseLookup: { LAB: c, EXISTING: existing }, staffCount: 4,
   });
   assert.equal(result.placed[0].slotId, "15:00");
   assert.equal(result.placed[0].end, 960);
@@ -345,14 +345,17 @@ test("labs reserved before a newly scheduled noon exam are shifted within their 
   assert.deepEqual(rerun.assignments, result.assignments, "Only exams newly placed in this run may be moved");
 });
 
-test("a partial break is preferred when a full hour cannot fit, without extending the lab", () => {
-  for (const [endMinutes, expected] of [[890, "13:30"], [840, "13:00"]]) {
+test("lab break placement uses the final :50 allowance without extending other lab endings", () => {
+  for (const [endMinutes, expected] of [[890, "14:00"], [880, "13:30"], [840, "13:00"]]) {
     const lab = course("LAB", [student("S1")], ["101"], [{ days: ["Monday"], startMinutes: 780, endMinutes }]);
     const result = draft([lab], { assignments: { 1: { Monday: { "12:00": ["EXISTING"] } } },
       courseLookup: { LAB: lab, EXISTING: course("EXISTING") } });
     assert.equal(result.placed[0].slotId, expected);
-    assert.ok(result.placed[0].end <= endMinutes);
+    assert.ok(result.placed[0].end <= labExamEndMinutes(lab.labSessions[0]));
     assert.deepEqual(result.unplaced, []);
+    const sessions = buildExamSessions(result.assignments, { LAB: lab, EXISTING: course("EXISTING") }, 60);
+    assert.equal(validateResourcePlan(sessions, resourceFixture([lab, course("EXISTING")]), result.resourcePlan).complete, true);
+    assert.equal(lab.labSessions[0].endMinutes, endMinutes, "Keep the original lab identity unchanged");
   }
 });
 
@@ -487,8 +490,12 @@ test("ASD overlap blocks labs; an adjacent exam at ASD's actual end is allowed",
   const single = course("SINGLE", [student("S1")], ["101"], [{ days: ["Monday"], startMinutes: 600, endMinutes: 710 }]);
   const asd = course("ASD");
   const options = { asdAssignments: { 1: { Monday: { "10:00": ["ASD"] } } }, courseLookup: { SINGLE: single, ASD: asd } };
-  assert.equal(draft([single], options).placed.length, 0);
-  const adjacent = draft([single], { ...options, asdExamDurations: { ASD: 30 } });
+  assert.equal(draft([single], { ...options, asdExamDurations: { ASD: 90 } }).placed.length, 0);
+  const finalHour = draft([single], options);
+  assert.equal(finalHour.placed[0].slotId, "11:00", "The :50 allowance opens a non-overlapping exam after ASD ends");
+  assert.equal(finalHour.placed[0].end, 720);
+  const shorter = { ...single, labSessions: single.labSessions.map((lab) => ({ ...lab, endMinutes: 690 })) };
+  const adjacent = draft([shorter], { ...options, courseLookup: { SINGLE: shorter, ASD: asd }, asdExamDurations: { ASD: 30 } });
   assert.equal(adjacent.placed[0].slotId, "10:30");
   assert.equal(adjacent.placed[0].end, 690);
 });
@@ -712,7 +719,7 @@ test("supplied department list scopes enrolment and produces a valid automatic d
     const c = courseLookup[placed.courseId];
     if (c.crns.length === 1 && c.labSessions.length) {
       assert.ok(c.labSessions.some((lab) => lab.days.includes(placed.day) && placed.start >= lab.startMinutes &&
-        placed.end <= (lab.startMinutes < 540 && lab.endMinutes === 590 ? 600 : lab.endMinutes)));
+        placed.end <= labExamEndMinutes(lab)));
       if (c.labSessions.every((lab) => lab.startMinutes < 540)) {
         assert.equal(placed.slotId, "09:00");
         assert.equal(placed.end, 600);

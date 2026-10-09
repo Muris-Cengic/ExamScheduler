@@ -194,6 +194,49 @@ test("09:00-10:00 exams retain the 09:50 lab's room and instructor without extra
   assert.match(sessionsFor(c, "09:00", 90)[0].issues[0], /move this single-CRN/, "The allowance cannot extend an exam beyond 10:00");
 });
 
+test("single-CRN exams can move to the final hour of an afternoon lab without losing fixed resources or teaching-time credit", () => {
+  for (const endMinutes of [890, 900]) {
+    const lab = { days: ["Monday"], crn: "101", startMinutes: 780, endMinutes,
+      room: "Lab", building: "Building", campus: "Campus", labInstructorId: "I0" };
+    const c = course("LAB", 16, { labSessions: [lab] });
+    const labRoom = roomIdentity(lab.campus, lab.building, lab.room);
+    const resources = catalog(1, 4);
+    resources.rooms[0].id = labRoom;
+    resources.rooms[0].busy = [classTime("LAB", 780, endMinutes, { isLab: true })];
+    resources.invigilators[0].busy = [classTime("LAB", 780, endMinutes, { isLab: true })];
+    for (const time of ["13:00", "14:00"]) {
+      const sessions = sessionsFor(c, time);
+      assert.deepEqual(sessions[0].issues, [], "Both hours of the same lab are valid exam placements");
+      assert.deepEqual(sessions[0].replacedLabs, [{ code: "LAB", crn: "101", start: 780, end: endMinutes }]);
+      const plan = assignResources(sessions, resources);
+      const allocation = plan.allocations[sessions[0].rooms[0].id];
+      assert.equal(allocation.roomId, labRoom);
+      assert.equal(allocation.invigilatorIds[0], "I0");
+      assert.equal(allocation.invigilatorIds.length, 2);
+      assert.equal(validateResourcePlan(sessions, resources, plan).complete, true);
+      const load = invigilatorWorkloads(resources, sessions, plan).find((person) => person.id === "I0");
+      assert.equal(load.teaching, 1);
+      assert.equal(load.exam, 0);
+    }
+    for (const time of ["12:30", "14:30", "15:00"]) {
+      assert.match(sessionsFor(c, time)[0].issues[0], /move this single-CRN/);
+    }
+    assert.match(sessionsFor({ ...c, labSessions: [{ ...lab, endMinutes: 880 }] }, "14:00")[0].issues[0], /move this single-CRN/,
+      "A 14:40 finish cannot be rounded to 15:00");
+    const wrongDay = buildExamSessions({ 1: { Tuesday: { "14:00": [c.id] } } }, { [c.id]: c }, 60);
+    assert.match(wrongDay[0].issues[0], /move this single-CRN/);
+
+    const moved = sessionsFor(c, "14:00");
+    resources.invigilators[0].busy.push(classTime("OTHER", 890, 900));
+    assert.match(resourceBusyReason(resources.invigilators[0], moved[0], moved), /Class OTHER.*14:50-15:00/);
+    assert.equal(validateResourcePlan(moved, resources, assignResources(moved, resources)).complete, false);
+    resources.invigilators[0].busy.pop();
+    resources.rooms[0].busy.push(classTime("OTHER", 890, 900));
+    assert.match(resourceBusyReason(resources.rooms[0], moved[0], moved), /Class OTHER.*14:50-15:00/);
+    assert.equal(validateResourcePlan(moved, resources, assignResources(moved, resources)).complete, false);
+  }
+});
+
 test("replacing a lab never cancels an unrelated class or the same course's lecture", () => {
   const c = course("LAB", 10, { labSessions: [{ days: ["Monday"], crn: "101", startMinutes: 480, endMinutes: 590, room: "Lab", building: "Building", campus: "Campus", labInstructorId: "I0" }] });
   const sessions = sessionsFor(c, "08:00");

@@ -18,8 +18,8 @@ export function roomIdentity(campus, building, room) {
 }
 
 export function labExamEndMinutes(lab) {
-  // The morning lab's 09:50 finish includes the exam allowance through 10:00.
-  return lab.startMinutes < 540 && lab.endMinutes === 590 ? 600 : lab.endMinutes;
+  // Listed :50 lab endings include the final ten minutes of that exam hour.
+  return lab.endMinutes % 60 === 50 ? lab.endMinutes + 10 : lab.endMinutes;
 }
 
 const BANNER_COLUMNS = [

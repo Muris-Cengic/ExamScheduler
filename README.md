@@ -91,11 +91,12 @@ After selecting resources, use **Auto-Schedule Remaining Exams**:
 - One listed CRN: a slot fully inside its lab meeting on that weekday. Without a
   listed lab, the common windows are used instead.
   Labs starting before 09:00 use the second-hour window, 09:00-10:00, rather than
-  08:00-09:00. A listed 09:50 morning lab ending is treated as 10:00 for the exam
-  and the lab instructor's teaching-time allowance. The full configured exam must
-  fit; shorter labs are not extended and exam duration is not shortened.
-  Other lab times are unchanged, and unrelated classes and bookings still block
-  rooms and instructors throughout the full exam.
+  08:00-09:00. Listed lab endings at **:50** are treated as the next full hour for
+  exams and the lab instructor's teaching-time allowance (09:50 becomes 10:00;
+  14:50 becomes 15:00). A 13:00-14:50 lab can therefore hold a 14:00-15:00 exam,
+  including after a manual move. Other lab endings are unchanged and exam duration
+  is not shortened. Unrelated classes and bookings still block rooms and
+  instructors throughout the full exam, including the final ten minutes.
 - The draft uses only the configured exam weeks, hours and exam duration. It avoids
   overlapping students across main/ASD schedules, more than two exams per student
   per day, and room/staff shortages. Every proposed placement is trial-assigned

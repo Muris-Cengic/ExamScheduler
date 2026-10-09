@@ -738,6 +738,70 @@ test("wizard imports, exam toggles, draft, saved-state round trip and report exc
   assert.equal(exportedCourses.size, 2);
 });
 
+test("manually moving a single-CRN exam to the final lab hour stays valid through resource review and save/load", async () => {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+    ["Student ID", "Student Name", "Course Code", "Course Title", "CRN"],
+    ...Array.from({ length: 16 }, (_, index) => ["S" + index, "Student " + index, "LAB-1000", "Afternoon Lab", "101"]),
+  ]), "Enrolment");
+  const enrolment = imports.parseEnrolmentWorkbook(workbook);
+  const exam = enrolment.courses[0];
+  const labRoomId = department.roomIdentity("Campus", "Building", "Lab");
+  const labMeeting = { crn: "101", days: ["Monday"], isLab: true, startMinutes: 780, endMinutes: 890,
+    room: "Lab", building: "Building", campus: "Campus", instructor: "Lab Teacher",
+    labInstructorId: "I0", instructors: [{ id: "I0", name: "Lab Teacher" }], teachingInstructorIds: ["I0"] };
+  const labBusy = { code: exam.code, crn: "101", isLab: true, days: ["Monday"], start: 780, end: 890 };
+  const snapshot = { type: "main", version: 5, startDate: "2026-10-19", weeks: [1], selectedWeek: 1,
+    settings: { slotIntervalMinutes: 30, startHour: 8, endHour: 18, studentsPerRoom: 25, examDurationMinutes: 60 },
+    assignments: { 1: { Monday: { "13:00": [exam.id] } } }, asdAssignments: {}, asdExamDurations: {}, hasAsdStep: false,
+    courses: enrolment.courses, studentDirectory: enrolment.studentDirectory,
+    departmentSelection: { sheetName: "First", courses: [{ code: exam.code, title: exam.title, crns: ["101"], meetings: [labMeeting] }] },
+    examChoices: { [exam.id]: true }, roomDistributionChoices: {}, resourcePlan: null,
+    resourceCatalog: {
+      rooms: [{ id: labRoomId, name: "Campus / Building / Lab", enabled: true, busy: [labBusy] }],
+      invigilators: Array.from({ length: 4 }, (_, index) => ({ id: "I" + index, name: index === 0 ? "Lab Teacher" : "Staff " + index,
+        enabled: true, busy: index === 0 ? [labBusy] : [] })),
+    },
+  };
+  const app = harness();
+  let tree = app.render();
+  await find(tree, (node) => node.type === "input" && node.props.accept === "application/json").props.onChange(jsonEvent(snapshot));
+  tree = app.render();
+  step(tree, "main").props.onClick();
+  tree = app.render();
+  const target = find(tree, (node) => node.type === "td" && node.props["data-day"] === "Monday" && node.props["data-slot-index"] === 12);
+  target.props.onDrop({ preventDefault() {}, dataTransfer: { getData: () => exam.id } });
+  tree = app.render();
+  step(tree, "resources").props.onClick();
+  tree = app.render();
+  let panel = find(tree, (node) => node.type?.name === "ResourceAssignment").props;
+  assert.equal(panel.sessions.length, 1);
+  assert.equal(panel.sessions[0].start, 840);
+  assert.equal(panel.sessions[0].end, 900);
+  assert.deepEqual(Array.from(panel.sessions[0].issues), []);
+  assert.ok(!panel.validation.issues.some((issue) => issue.title === "Exam scheduling issue"));
+  button(tree, "Auto-Assign Resources").props.onClick();
+  tree = app.render();
+  panel = find(tree, (node) => node.type?.name === "ResourceAssignment").props;
+  assert.equal(panel.validation.complete, true);
+  const allocation = panel.plan.allocations[panel.sessions[0].rooms[0].id];
+  assert.equal(allocation.roomId, labRoomId);
+  assert.equal(allocation.invigilatorIds[0], "I0");
+  assert.equal(resources.invigilatorWorkloads(panel.catalog, panel.sessions, panel.plan).find((person) => person.id === "I0").exam, 0);
+  button(tree, "Save Timetable").props.onClick();
+  const saved = JSON.parse(await app.downloads.at(-1).text());
+  assert.deepEqual(saved.assignments[1].Monday["13:00"], []);
+  assert.deepEqual(saved.assignments[1].Monday["14:00"], [exam.id]);
+  assert.equal(saved.departmentSelection.courses[0].meetings[0].endMinutes, 890, "The original lab data is not rewritten");
+  const loaded = harness();
+  tree = loaded.render();
+  await find(tree, (node) => node.type === "input" && node.props.accept === "application/json").props.onChange(jsonEvent(saved));
+  tree = loaded.render();
+  step(tree, "resources").props.onClick();
+  tree = loaded.render();
+  assert.equal(exportReady(tree), true);
+});
+
 test("room consolidation choices require a click, preserve other exams, survive save/load and appear in export", async () => {
   const rows = [["Student ID", "Student Name", "Course Code", "Course Title", "CRN"],
     ...Array.from({ length: 52 }, (_, index) => [`S${index}`, `Student ${index}`, "EXAM-1000", "Consolidation Exam", "101"]),

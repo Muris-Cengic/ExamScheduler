@@ -42,10 +42,10 @@ const withExam = (map, candidate, id) => ({ ...map, [candidate.week]: { ...map[c
 
 function candidatesFor(course, weeks, timeSlots, duration, interval) {
   const lab = usesLabWindow(course);
-  // Early labs use the second morning hour, including the approved 09:50-to-10:00 allowance.
+  // Use the same :50 lab-end allowance as manual placement and resource validation.
   const windows = lab ? course.labSessions.map((window) => window.startMinutes < MORNING_LAB_START
     ? { ...window, startMinutes: MORNING_LAB_START, endMinutes: Math.min(labExamEndMinutes(window), MORNING_LAB_END) }
-    : window) : COMMON_WINDOWS;
+    : { ...window, endMinutes: labExamEndMinutes(window) }) : COMMON_WINDOWS;
   const candidates = [];
   weeks.forEach((week) => windows.forEach((window) => window.days.forEach((day) => {
     timeSlots.forEach((slot) => {
