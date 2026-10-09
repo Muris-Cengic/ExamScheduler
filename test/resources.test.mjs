@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as XLSX from "xlsx/xlsx.mjs";
 import { parseDepartmentWorkbook, roomIdentity } from "../src/department.js";
-import { assignResources, backupTarget, buildExamSessions, emptyResourcePlan, invigilatorWorkloads, isTeachingTimeDuty, parseResourceCatalog, readResourceCatalog, readResourcePlan, reconcileRoomDistribution, resourceBusyReason, resourceChoiceReason, resourceChoiceSummary, resourceFingerprint, validateResourcePlan } from "../src/resources.js";
+import { assignResources, backupTarget, buildExamSessions, emptyResourcePlan, invigilatorWorkloads, isTeachingTimeDuty, parseResourceCatalog, readResourceCatalog, readResourcePlan, reconcileRoomDistribution, resourceBusyReason, resourceChoiceReason, resourceChoiceSummary, resourceFingerprint, scopeInvigilatorAvailability, validateResourcePlan } from "../src/resources.js";
 import { buildResourceWorkbookForWeek } from "../src/reports.js";
 
 const course = (id, count, options = {}) => ({
@@ -80,6 +80,47 @@ test("resource pools and teaching availability use only the first CRN sheet", ()
   const exam = sessionsFor(course("EXAM", 16), "17:00");
   const plan = assignResources(exam, resources);
   assert.deepEqual(new Set(plan.allocations[exam[0].rooms[0].id].invigilatorIds), new Set([lecturer.id, labTeacher.id]), "Either course instructor can invigilate outside their classes");
+});
+
+test("unchecked CRN Info courses filter only invigilator commitments and can be restored without losing pool choices", () => {
+  const courses = [course("KEEP-ID", 0, { code: "KEEP-1000" }), course("EXCLUDE-ID", 0, { code: "EXCLUDE-1000" }),
+    course("TRAIN-ID", 0, { code: "TRAIN-1000", title: "On Job Training" }), course("GP-ID", 0, { code: "GP-1000", title: "Capstone Project" })];
+  const resources = catalog(1, 2);
+  resources.invigilators[0].busy = [classTime("KEEP-1000", 480, 540), classTime("EXCLUDE-1000", 540, 600),
+    classTime(" train 1000 ", 0, 1440, { unknownTime: true }), classTime("GP-1000", 600, 660), classTime("OUTSIDE-1000", 660, 720)];
+  resources.invigilators[1].enabled = false;
+  resources.invigilators[1].busy = [classTime("TRAIN-1000", 480, 890)];
+  resources.rooms[0].busy = [...resources.invigilators[0].busy];
+  const before = JSON.stringify(resources);
+  const active = scopeInvigilatorAvailability(resources, courses, { "EXCLUDE-ID": false, "GP-ID": true });
+  assert.deepEqual(active.invigilators[0].busy.map((entry) => entry.code), ["KEEP-1000", "GP-1000", "OUTSIDE-1000"],
+    "Use checkbox course IDs, including default exclusions and explicit opt-ins; checked courses still block without enrolment");
+  assert.equal(active.invigilators.length, resources.invigilators.length);
+  assert.equal(active.invigilators[1].enabled, false);
+  assert.deepEqual(active.invigilators[1].busy, []);
+  assert.equal(active.rooms, resources.rooms, "Unchecked courses do not free their teaching rooms");
+  assert.equal(JSON.stringify(resources), before, "Retain original commitments for saving and rechecking");
+  const rechecked = scopeInvigilatorAvailability(resources, courses, Object.fromEntries(courses.map((course) => [course.id, true])));
+  assert.equal(rechecked, resources);
+  assert.equal(scopeInvigilatorAvailability(resources, [], {}), resources, "Commitments outside CRN Info are not implicitly ignored");
+});
+
+test("unchecked course hours do not block exam or backup assignment or inflate the eight-hour day", () => {
+  const sessions = sessionsFor(course("EXAM", 10), "17:00");
+  const resources = catalog(1, 3);
+  resources.invigilators[0].busy = [classTime("TRAIN-1000", 480, 890), classTime("UNKNOWN-1000", 0, 1440, { unknownTime: true })];
+  resources.invigilators[1].busy = [classTime("OTHER", 600, 660)];
+  resources.invigilators[2].busy = [classTime("OTHER", 660, 720)];
+  const active = scopeInvigilatorAvailability(resources,
+    [course("TRAIN-1000", 0, { title: "OCT" }), course("UNKNOWN-1000", 0)], { "UNKNOWN-1000": false });
+  assert.match(resourceBusyReason(resources.invigilators[0], sessions[0], sessions), /time unspecified/);
+  assert.equal(resourceBusyReason(active.invigilators[0], sessions[0], sessions), "");
+  const plan = assignResources(sessions, active);
+  assert.deepEqual(plan.allocations[sessions[0].rooms[0].id].invigilatorIds, ["I0"], "Ignoring unchecked classes removes their daily span penalty too");
+  assert.deepEqual(plan.backups[sessions[0].id], ["I1"]);
+  assert.equal(validateResourcePlan(sessions, active, plan).complete, true);
+  assert.match(resourceChoiceReason(active.invigilators[0], "invigilator", sessions[0], sessions, plan, sessions[0].id + "/backup/0"), /Already assigned/,
+    "Ignoring course commitments cannot permit simultaneous exam and backup duties");
 });
 
 test("rooms are distinguished by campus/building and unspecified class times block the named days", () => {

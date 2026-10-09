@@ -13,8 +13,8 @@ export default function ResourcePool({ catalog, sessions = [], plan, onPoolChang
   return <details className="resource-pool" open={selectionOnly}>
     <summary>{selectionOnly ? "Choose Resource Pool" : "Review Resource Pool"}</summary>
     <p>{selectionOnly
-      ? "Listed classes block resources. Lab exams replace their own lab only. Target: two available standby invigilators per slot, including assigned backups."
-      : "Exam load is balanced overall and by time slot; backup load is balanced separately. Duties within replaced lab hours add no extra load."}</p>
+      ? "Unchecked CRN Info courses do not block invigilators; room commitments still apply. Lab exams replace their own lab only. Target: two available standby invigilators per slot, including assigned backups."
+      : "Unchecked CRN Info courses do not block invigilators. Exam load is balanced overall and by time slot; backup load is balanced separately. Duties within replaced lab hours add no extra load."}</p>
     <div className="resource-pool__tables">
       <div className="resource-table-wrap"><table><thead><tr><th>Include</th><th>Invigilator</th>
         {!selectionOnly ? <><th>Invigilation Load</th><th>Backup Load</th><th>During Teaching Hours</th></> : null}

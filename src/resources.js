@@ -1,4 +1,4 @@
-import { labExamEndMinutes, roomIdentity } from "./department.js";
+import { defaultHasExam, labExamEndMinutes, roomIdentity } from "./department.js";
 import { examRoomLayout, roomConsolidationOptions } from "./examRooms.js";
 import { FRIDAY_EXAM_NOTICE, isFridayExamTimeAllowed } from "./examWindows.js";
 
@@ -41,6 +41,16 @@ export function parseResourceCatalog(selection) {
   });
   const sort = (values) => [...values].sort((a, b) => a.name.localeCompare(b.name));
   return { rooms: sort(rooms.values()), invigilators: sort(invigilators.values()) };
+}
+
+export function scopeInvigilatorAvailability(catalog, courses, examChoices) {
+  const excluded = new Set(courses.filter((course) => !(examChoices[course.id] ?? defaultHasExam(course)))
+    .map((course) => normalise(course.code)));
+  if (!excluded.size) return catalog;
+  // Keep the original catalog for saving and restoring commitments when a course is rechecked.
+  return { ...catalog, invigilators: catalog.invigilators.map((person) => ({ ...person,
+    busy: person.busy.filter((entry) => !excluded.has(normalise(entry.code))),
+  })) };
 }
 
 export function readResourceCatalog(value) {

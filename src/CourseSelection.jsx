@@ -30,6 +30,7 @@ export default function CourseSelection({ courses, selection, onUpload, examChoi
           </div>
           <details className="schedule-rules"><summary>Exam rules</summary>
             <p>Multiple CRNs: noon before 17:00-18:00; Friday only 09:00-10:00 or 10:30-11:30. Single CRN: its lab meeting, or common windows if no lab is listed. Project, internship and OCT courses default to no exam.</p>
+            <p>Unchecked courses do not block invigilators or extend their daily span. Room class commitments still apply.</p>
           </details>
           {missingCrns.length > 0 ? <p className="alert alert--info">{missingCrns.length} listed CRNs have no loaded enrolment: {missingCrns.join(", ")}. Empty courses cannot be scheduled.</p> : null}
           <div className="course-review__table-wrap">

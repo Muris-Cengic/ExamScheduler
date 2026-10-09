@@ -738,6 +738,83 @@ test("wizard imports, exam toggles, draft, saved-state round trip and report exc
   assert.equal(exportedCourses.size, 2);
 });
 
+test("CRN Info choices control invigilator availability across scheduling, review, export and save/load", async () => {
+  const workbookEvent = (rows) => {
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(rows), "First");
+    return { target: { files: [{ name: "input.xlsx", arrayBuffer: async () => XLSX.write(book, { type: "array", bookType: "xlsx" }) }], value: "input.xlsx" } };
+  };
+  const app = harness();
+  let tree = app.render();
+  button(tree, "Create Schedule").props.onClick();
+  tree = app.render();
+  await find(find(tree, (node) => node.type === "label" && text(node) === "Upload Enrollment File"), (node) => node.type === "input").props.onChange(workbookEvent([
+    ["Student ID", "Student Name", "Course Code", "Course Title", "CRN"], ["S1", "Student One", "EXAM-1000", "Selected Exam", "101"],
+  ]));
+  tree = app.render();
+  await review(tree).props.onUpload(workbookEvent([
+    ["Campus", "Crn No", "Course Code", "Title", "Cr", "Maximum Load", "No Of Enrolled", "Session Id", "DAYS", "Time", "Primary Instructor", "Second Instructor", "Type", "Building", "Room"],
+    ["PAD", "101", "EXAM-1000", "Selected Exam", 3, 25, 1, "01", "M", "0800 - 0950", "10: Alice", "", "T", "Building", "A"],
+    ["PAD", "201", "NOEXAM-1000", "Other Course", 3, 25, 1, "01", "M", "1200 - 1250", "10: Alice", "", "T", "Building", "B"],
+    ["PAD", "301", "CAP-1000", "Capstone Project", 3, 25, 1, "01", "M", "1200 - 1250", "20: Bob", "", "GP", "Building", "C"],
+    ["PAD", "401", "OCT-1000", "OCT", 3, 25, 1, "01", "M", "0800 - 0950", "30: Carol", "", "F", "Building", "D"],
+  ]));
+  tree = app.render();
+  const other = review(tree).props.courses.find((course) => course.code === "NOEXAM-1000");
+  const pool = () => find(tree, (node) => node.type?.name === "ResourcePool").props;
+  const panel = () => find(tree, (node) => node.type?.name === "ResourceAssignment").props;
+  step(tree, "pool").props.onClick();
+  tree = app.render();
+  assert.deepEqual(Array.from(pool().catalog.invigilators.find((person) => person.name === "Alice").busy, (entry) => entry.code), ["EXAM-1000", "NOEXAM-1000"]);
+  assert.equal(pool().catalog.invigilators.find((person) => person.name === "Bob").busy.length, 0, "Default no-exam courses never block staff");
+  pool().onPoolChange("invigilators", "staff:30", { enabled: false });
+  tree = app.render();
+  step(tree, "courses").props.onClick();
+  tree = app.render();
+  review(tree).props.onExamChange(other.id, false);
+  tree = app.render();
+  step(tree, "pool").props.onClick();
+  tree = app.render();
+  assert.deepEqual(Array.from(pool().catalog.invigilators.find((person) => person.name === "Alice").busy, (entry) => entry.code), ["EXAM-1000"]);
+  assert.equal(pool().catalog.invigilators.find((person) => person.name === "Carol").enabled, false, "Changing exam choices preserves pool exclusions");
+  assert.ok(pool().catalog.rooms.some((room) => room.busy.some((entry) => entry.code === "NOEXAM-1000")), "Teaching rooms remain blocked");
+  step(tree, "main").props.onClick();
+  tree = app.render();
+  button(tree, "Auto-Schedule Remaining Exams").props.onClick();
+  tree = app.render();
+  step(tree, "resources").props.onClick();
+  tree = app.render();
+  assert.equal(panel().sessions[0].slotId, "12:00");
+  assert.equal(panel().validation.complete, true);
+  assert.deepEqual(Array.from(panel().plan.allocations[panel().sessions[0].rooms[0].id].invigilatorIds), ["staff:10"]);
+  assert.deepEqual(Array.from(panel().plan.backups[panel().sessions[0].id]), ["staff:20"]);
+  button(tree, "Save Timetable").props.onClick();
+  const saved = JSON.parse(await app.downloads.at(-1).text());
+  assert.ok(saved.resourceCatalog.invigilators.find((person) => person.name === "Alice").busy.some((entry) => entry.code === "NOEXAM-1000"));
+  assert.equal(saved.examChoices[other.id], false);
+  step(tree, "export").props.onClick();
+  tree = app.render();
+  assert.equal(find(tree, (node) => node.type?.name === "ExportStudio").props.ready, true);
+  await button(tree, "Export Timetable").props.onClick();
+  assert.equal(XLSX.read(await app.downloads.at(-1).arrayBuffer(), { type: "array" }).Sheets["Week 1 Invigilators"].G2.v, "Alice");
+  const loaded = harness();
+  tree = loaded.render();
+  await find(tree, (node) => node.type === "input" && node.props.accept === "application/json").props.onChange(jsonEvent(saved));
+  tree = loaded.render();
+  step(tree, "resources").props.onClick();
+  tree = loaded.render();
+  assert.equal(panel().validation.complete, true, "The filtered catalog and assignment fingerprint survive save/load");
+  step(tree, "courses").props.onClick();
+  tree = loaded.render();
+  review(tree).props.onExamChange(other.id, true);
+  tree = loaded.render();
+  step(tree, "resources").props.onClick();
+  tree = loaded.render();
+  assert.equal(panel().validation.complete, false);
+  assert.ok(panel().validation.issues.some((issue) => /Alice.*NOEXAM-1000/.test(issue.message)), "Rechecking restores commitments, even when that course has no enrolment");
+  assert.ok(panel().validation.issues.some((issue) => issue.title === "Resources need reassignment"));
+});
+
 test("manually moving a single-CRN exam to the final lab hour stays valid through resource review and save/load", async () => {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([

@@ -11,7 +11,7 @@ import { autoSchedule } from "./autoSchedule.js";
 import ResourceAssignment from "./ResourceAssignment.jsx";
 import ResourcePool from "./ResourcePool.jsx";
 import { FRIDAY_EXAM_NOTICE, isFridayExamTimeAllowed } from "./examWindows.js";
-import { assignResources, buildExamSessions, parseResourceCatalog, readResourceCatalog, readResourcePlan, reconcileRoomDistribution, resourceFingerprint, validateResourcePlan } from "./resources.js";
+import { assignResources, buildExamSessions, parseResourceCatalog, readResourceCatalog, readResourcePlan, reconcileRoomDistribution, resourceFingerprint, scopeInvigilatorAvailability, validateResourcePlan } from "./resources.js";
 import { examInvigilatorsNeeded, examRoomSizes, readRoomDistributionChoices, roomCapacity } from "./examRooms.js";
 import { buildAsdOverviewExams, buildExportFiles, REPORT_VIEWS } from "./exportReports.js";
 import ExportStudio from "./ExportStudio.jsx";
@@ -762,6 +762,11 @@ function App() {
     [departmentScope, examChoices],
   );
 
+  const activeResourceCatalog = useMemo(
+    () => scopeInvigilatorAvailability(resourceCatalog, departmentScope.courses, examChoices),
+    [resourceCatalog, departmentScope, examChoices],
+  );
+
   const courseLookup = useMemo(() => {
     const lookup = {};
 
@@ -798,8 +803,8 @@ function App() {
     [hasAsdStep, asdAssignments, courseLookup, asdExamDurations, examDurationMinutesValue],
   );
   const resourceValidation = useMemo(
-    () => validateResourcePlan(examSessions, resourceCatalog, resourcePlan),
-    [examSessions, resourceCatalog, resourcePlan],
+    () => validateResourcePlan(examSessions, activeResourceCatalog, resourcePlan),
+    [examSessions, activeResourceCatalog, resourcePlan],
   );
 
   const lockedAssignments = useMemo(() => {
@@ -1172,7 +1177,7 @@ function App() {
       asdAssignments: hasAsdStep ? asdAssignments : {}, asdExamDurations,
       weeks, timeSlots, settings: { ...settings, examDurationMinutes: examDurationMinutesValue },
       roomDistributionChoices,
-      catalog: resourceCatalog,
+      catalog: activeResourceCatalog,
     });
     setAssignments(result.assignments);
     setResourcePlan(result.resourcePlan);
@@ -2188,7 +2193,7 @@ function App() {
       const templateHeaders = (options.report || "complete") === "complete" ? await getTemplateHeaders() : undefined;
       const exportedFiles = buildExportFiles({
         ...options, templateHeaders, startDate: exportStartDate,
-        sessions: examSessions, catalog: resourceCatalog, plan: resourcePlan,
+        sessions: examSessions, catalog: activeResourceCatalog, plan: resourcePlan,
         asdExams: asdOverviewExams,
       });
 
@@ -2309,7 +2314,7 @@ function App() {
   }, [wizardStep, isWorkspaceOpen]);
 
   const handleAssignResources = () => {
-    setResourcePlan(assignResources(examSessions, resourceCatalog));
+    setResourcePlan(assignResources(examSessions, activeResourceCatalog));
     setExportError("");
   };
 
@@ -2319,7 +2324,7 @@ function App() {
     const nextChoices = { ...roomDistributionChoices, [courseId]: choice };
     const nextSessions = buildExamSessions(assignments, courseLookup, examDurationMinutesValue, studentsPerRoomCapacity, nextChoices);
     setRoomDistributionChoices(nextChoices);
-    setResourcePlan(reconcileRoomDistribution(examSessions, nextSessions, resourceCatalog, resourcePlan, courseId));
+    setResourcePlan(reconcileRoomDistribution(examSessions, nextSessions, activeResourceCatalog, resourcePlan, courseId));
     setExportError("");
   };
 
@@ -2329,11 +2334,11 @@ function App() {
   };
 
   const handleResourceAllocationChange = (roomId, allocation) => {
-    setResourcePlan((previous) => ({ ...previous, fingerprint: resourceFingerprint(examSessions, resourceCatalog), allocations: { ...previous?.allocations, [roomId]: allocation }, backups: previous?.backups || {} }));
+    setResourcePlan((previous) => ({ ...previous, fingerprint: resourceFingerprint(examSessions, activeResourceCatalog), allocations: { ...previous?.allocations, [roomId]: allocation }, backups: previous?.backups || {} }));
   };
 
   const handleResourceBackupChange = (sessionId, ids) => {
-    setResourcePlan((previous) => ({ ...previous, fingerprint: resourceFingerprint(examSessions, resourceCatalog), allocations: previous?.allocations || {}, backups: { ...previous?.backups, [sessionId]: ids } }));
+    setResourcePlan((previous) => ({ ...previous, fingerprint: resourceFingerprint(examSessions, activeResourceCatalog), allocations: previous?.allocations || {}, backups: { ...previous?.backups, [sessionId]: ids } }));
   };
 
   const handleTimetableScroll = (event) => {
@@ -2557,13 +2562,13 @@ function App() {
           <span>{totalInvigilatorCapacity} invigilators selected</span>
           <strong>Target: two available standby invigilators per slot</strong>
         </div>
-        <ResourcePool catalog={resourceCatalog} onPoolChange={handleResourcePoolChange} selectionOnly />
+        <ResourcePool catalog={activeResourceCatalog} onPoolChange={handleResourcePoolChange} selectionOnly />
         {!resourceCatalog.rooms.some((room) => room.enabled) || totalInvigilatorCapacity < 2
           ? <p>Auto-scheduling requires at least one selected room and two invigilators.</p> : null}
       </section> : null}
 
       {wizardStep === "resources" && !stepNotice ? (
-        <ResourceAssignment sessions={examSessions} catalog={resourceCatalog} plan={resourcePlan} validation={resourceValidation}
+        <ResourceAssignment sessions={examSessions} catalog={activeResourceCatalog} plan={resourcePlan} validation={resourceValidation}
           onAssign={handleAssignResources} onPoolChange={handleResourcePoolChange}
           onAllocationChange={handleResourceAllocationChange} onBackupChange={handleResourceBackupChange}
           onDistributionChange={handleRoomDistributionChange} />
@@ -3116,7 +3121,7 @@ function App() {
       ) : null}
 
       {courses.length && !stepNotice && wizardStep === "export" ? (
-        <ExportStudio sessions={examSessions} catalog={resourceCatalog} plan={resourcePlan} startDate={exportStartDate}
+        <ExportStudio sessions={examSessions} catalog={activeResourceCatalog} plan={resourcePlan} startDate={exportStartDate}
           asdExams={asdOverviewExams}
           ready={resourceValidation.complete} isExporting={isExporting} onExport={handleExportSchedule} />
       ) : null}

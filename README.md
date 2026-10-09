@@ -152,6 +152,12 @@ is highlighted without changing existing backup report rules.
   lab-instructor restriction. The current selection remains available in its own
   selector unless another conflict blocks it; nobody is silently reassigned.
 - Availability is checked against regular classes on the **first sheet only**.
+  Courses unchecked in **CRN Info** do not block invigilators or extend their
+  eight-hour daily presence span, including courses unchecked by default.
+  Their instructors stay in the resource pool. Room commitments are unchanged.
+  Rechecking a course restores its invigilator commitments; changed availability
+  can require resource reassignment. JSON saves retain the original commitments
+  alongside the exam choices, so this also works after reloading.
   Commitments from other sheets do not block resources. Meetings repeat weekly.
   Outside listed classes, availability is assumed within timetable hours; the file
   does not contain working-hour/leave data. Classes with days but an unspecified
