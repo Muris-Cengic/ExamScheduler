@@ -14,6 +14,7 @@ import * as examWindows from "../src/examWindows.js";
 import { buildResourceWorkbookForWeek } from "../src/reports.js";
 import * as exportReports from "../src/exportReports.js";
 import * as examSetup from "../src/examSetup.js";
+import * as importExamples from "../src/importExamples.js";
 
 // Exercise the real App event handlers/render tree without a browser or new test dependencies.
 const appSource = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8")
@@ -21,6 +22,10 @@ const appSource = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8
   .replace(/import\.meta\.url/g, JSON.stringify(new URL("../src/App.jsx", import.meta.url).href))
   .replace("export default App;", "globalThis.App = App;");
 const { code } = await transformWithEsbuild(appSource, "App.jsx", { loader: "jsx", jsxFactory: "h", jsxFragment: "Fragment" });
+const importPromptSource = readFileSync(new URL("../src/ImportPrompt.jsx", import.meta.url), "utf8")
+  .replace(/^import .*;\r?$/gm, "")
+  .replace("export default function ImportPrompt", "function ImportPrompt") + "\nglobalThis.ImportPrompt = ImportPrompt;";
+const { code: importPromptCode } = await transformWithEsbuild(importPromptSource, "ImportPrompt.jsx", { loader: "jsx", jsxFactory: "h", jsxFragment: "Fragment" });
 const resourceSource = readFileSync(new URL("../src/ResourceAssignment.jsx", import.meta.url), "utf8")
   .replace(/^import .*;\r?$/gm, "")
   .replace("export default function ResourceAssignment", "function ResourceAssignment") + "\nglobalThis.ResourceAssignment = ResourceAssignment;";
@@ -49,10 +54,10 @@ function harness(component = "App", props) {
     static revokeObjectURL() {}
   }
   const context = createContext({
-    ...imports, ...department, ...resources, ...examRooms, ...examWindows, ...exportReports, ...examSetup, buildResourceWorkbookForWeek, autoSchedule, XLSX, JSZip, Blob, URL: TestURL, console,
+    ...imports, ...department, ...resources, ...examRooms, ...examWindows, ...exportReports, ...examSetup, ...importExamples, buildResourceWorkbookForWeek, autoSchedule, XLSX, JSZip, Blob, URL: TestURL, console,
     CourseSelection: function CourseSelection() {}, Fragment: "fragment",
     ResourceAssignment: function ResourceAssignment() {},
-    h: (type, props, ...children) => ({ type, props: props || {}, children: typeof type === "function" && type.name !== "CourseSelection" ? [type(props)] : children.flat(Infinity) }),
+    h: (type, props, ...children) => ({ type, props: props || {}, children: typeof type === "function" && type.name !== "CourseSelection" ? [type({ ...props, children: children.flat(Infinity) })] : children.flat(Infinity) }),
     useState(initial) {
       const current = index++;
       hooks[current] ??= { value: typeof initial === "function" ? initial() : initial };
@@ -87,6 +92,7 @@ function harness(component = "App", props) {
     document: { title: "Midterm Exam Scheduling Helper", body: { appendChild() {}, removeChild() {} }, createElement: () => ({ click() { downloadNames.push(this.download); } }) },
     fetch: async () => ({ ok: true, arrayBuffer: async () => buffer("data/ReportReference/Report Template.xlsx") }),
   });
+  runInContext(importPromptCode, context);
   runInContext(poolComponentCode, context);
   runInContext(resourceComponentCode, context);
   runInContext(exportComponentCode, context);
@@ -244,7 +250,7 @@ const find = (tree, predicate) => {
 const button = (tree, label) => find(tree, (node) => node.type === "button" && (text(node) === label || node.props["aria-label"] === label));
 const step = (tree, id) => find(tree, (node) => node.type === "button" && node.props["data-step"] === id);
 const exportReady = (tree) => find(tree, (node) => node.type?.name === "ResourceAssignment").props.validation.complete;
-const review = (tree) => find(tree, (node) => node.type?.name === "CourseSelection");
+const review = (tree) => find(tree, (node) => node.type?.name === "CourseSelection" || (node.type?.name === "ImportPrompt" && node.props.kind === "crn"));
 const root = "data/input/26-27 S1/";
 const enrolmentPath = root + "Students Registration 26-27 S1.xlsx";
 const crnPath = root + "CRN List 26-27 S1.xlsx";
@@ -406,8 +412,8 @@ test("every step is directly accessible, with actions separate and prerequisites
     assert.equal(nodes(navigation()).filter((node) => node.props["aria-current"] === "step").length, 1);
     assert.ok(nodes(navigation()).filter((node) => node.type === "button").every((node) => node.props.type === "button" && !node.props.disabled));
     assert.ok(!nodes(actions()).some((node) => node.props["data-step"]));
-    assert.equal(nodes(actions()).filter((node) => node.type === "button" && text(node) === "Load Timetable").length, id === "load" ? 1 : 0,
-      "Load Timetable is available only in Student Enrollment");
+    assert.ok(!nodes(tree).some((node) => node.type === "button" && text(node) === "Load Timetable"),
+      "Saved timetables are loaded from the start screen only");
     if (!["setup", "load"].includes(id)) assert.match(text(find(tree, (node) => node.props["aria-label"] === "Step prerequisites")), /Load enrolment in Student Enrollment/);
     else assert.ok(!nodes(tree).some((node) => node.props["aria-label"] === "Step prerequisites"));
     assert.equal(nodes(tree).filter((node) => node.type === "input" && node.props.type === "date").length, id === "setup" ? 1 : 0);

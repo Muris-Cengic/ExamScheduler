@@ -16,6 +16,7 @@ import { examInvigilatorsNeeded, examRoomSizes, readRoomDistributionChoices, roo
 import { buildAsdOverviewExams, buildExportFiles, reportFileName } from "./exportReports.js";
 import ExportStudio from "./ExportStudio.jsx";
 import { inferAcademicTerm } from "./examSetup.js";
+import ImportPrompt from "./ImportPrompt.jsx";
 
 const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 
@@ -2417,6 +2418,9 @@ function App() {
 
   const wizardStepIndex = wizardSteps.findIndex((step) => step.id === wizardStep);
   const currentStep = wizardSteps[wizardStepIndex];
+  const emptyImport = wizardStep === "load" && !courses.length ? "enrolment"
+    : wizardStep === "courses" && !departmentSelection ? "crn"
+      : wizardStep === "asd" && !hasAsdStep ? "asd" : null;
   const stepNotice = !["setup", "load"].includes(wizardStep) && !courses.length
     ? "Load enrolment in Student Enrollment to use this step."
     : ["pool", "main", "resources", "export"].includes(wizardStep) && !departmentSelection
@@ -2481,19 +2485,18 @@ function App() {
 
       <section className="step-actions" aria-label={currentStep.title + " actions"}>
         {wizardStep === "setup" ? <button type="button" className="primary-action" onClick={() => navigateToStep("load")}>Continue to Student Enrollment</button> : null}
-        {wizardStep === "load" ? <>
+        {wizardStep === "load" && courses.length > 0 ? <>
           <label className="file-input">
             <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFileUpload} />
-            <span>Upload Enrollment File</span>
+            <span>Replace Enrollment File</span>
           </label>
-          <button type="button" onClick={handleTriggerLoadTimetable} disabled={isExporting || isLoadingTimetable}>Load Timetable</button>
         </> : null}
 
-        {wizardStep === "courses" ? <>
+        {wizardStep === "courses" && departmentSelection ? <>
           <button type="button" onClick={addWeek} disabled={weeks.length >= MAX_WEEKS}>+ Add Exam Week ({weeks.length})</button>
         </> : null}
 
-        {wizardStep === "asd" ? <>
+        {wizardStep === "asd" && !emptyImport ? <>
           <button type="button" onClick={startAsdStep} disabled={!courses.length || isExporting}>Create ASD Timetable</button>
           <button type="button" onClick={handleTriggerLoadAsdTimetable} disabled={!courses.length || isExporting}>Load ASD Excel / JSON</button>
           {schedulerPhase === "asd" ? <>
@@ -2515,7 +2518,7 @@ function App() {
         <button type="button" className="step-actions__settings" onClick={() => setIsSettingsOpen(true)} disabled={isExporting}>Settings</button>
       </section>
 
-      {stepNotice ? <section className="step-empty" aria-label="Step prerequisites">
+      {stepNotice && !emptyImport ? <section className="step-empty" aria-label="Step prerequisites">
         <h2>{currentStep.title}</h2><p>{stepNotice}</p>
       </section> : null}
       {uploadError ? (
@@ -2546,7 +2549,17 @@ function App() {
         <p className="exam-setup__note">Semester and academic year are inferred from the start date. August dates use Fall.</p>
       </section> : null}
 
-      {wizardStep === "courses" && courses.length > 0 ? (
+      {emptyImport ? <ImportPrompt kind={emptyImport} startDate={exportStartDate}
+        onUpload={emptyImport === "enrolment" ? handleFileUpload : emptyImport === "crn" ? handleCrnUpload : undefined}
+        onLoad={handleTriggerLoadAsdTimetable} disabled={isExporting || (emptyImport !== "enrolment" && !courses.length)}
+        notice={stepNotice} onPrerequisite={() => navigateToStep("load")}>
+        {emptyImport === "asd" ? <>
+          <button type="button" onClick={startAsdStep} disabled={!courses.length || isExporting}>Create ASD Timetable</button>
+          <button type="button" onClick={skipAsdStep} disabled={!courses.length || isExporting}>Skip ASD Step</button>
+        </> : null}
+      </ImportPrompt> : null}
+
+      {wizardStep === "courses" && courses.length > 0 && departmentSelection ? (
         <CourseSelection courses={departmentScope.courses} selection={departmentSelection}
           onUpload={handleCrnUpload}
           examChoices={examChoices} onExamChange={handleExamChange} missingCrns={departmentScope.missingCrns} />
@@ -2691,7 +2704,7 @@ function App() {
         </div>
       ) : null}
 
-      {courses.length && !["setup", "export"].includes(wizardStep) ? (
+      {courses.length && !emptyImport && !["setup", "export"].includes(wizardStep) ? (
         <section className="overview">
           <div>
             <strong>Courses:</strong> {wizardStep === "load" || schedulerPhase === "asd" ? courses.length : departmentScope.courses.length}
@@ -2701,19 +2714,6 @@ function App() {
             <strong>Students:</strong> {totalUniqueStudentsAcrossCourses}
           </div>
           {departmentSelection && schedulerPhase !== "asd" ? <div><strong>Selected exams:</strong> {selectedExamCourses.length}</div> : null}
-        </section>
-      ) : !courses.length && wizardStep === "load" ? (
-        <section className="placeholder">
-          Enrolment: Excel or CSV. Saved timetables: JSON.
-        </section>
-      ) : null}
-
-      {courses.length && wizardStep === "asd" && schedulerPhase === "setup" ? (
-        <section className="overview overview--setup">
-          <div>
-            ASD is optional and participates in student conflict checks only.
-            Excel dates without a year use the exam start year.
-          </div>
         </section>
       ) : null}
 

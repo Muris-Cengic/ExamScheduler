@@ -28,6 +28,16 @@ action strip. Detailed exam, placement and resource rules are collapsible; block
 issues and resource shortages stay visible. On narrow screens, the step bar scrolls
 horizontally and keeps the current step in view.
 
+Empty **Student Enrollment**, **CRN Info** and **ASD Schedule** pages show a
+centered import prompt with the accepted file formats, a small spreadsheet
+example and the upload action. CRN Info uses only the first sheet; its example
+includes lab times, instructors and room columns. The ASD example uses the
+selected timetable date, and the optional step can still be created manually
+or skipped. CRN/ASD upload actions stay disabled until enrollment is loaded.
+After import, the example is replaced by the usual review or timetable view.
+Saved main timetables are loaded using **Load Schedule** on the start screen;
+there is no **Load Timetable** action in Student Enrollment.
+
 ## Exam setup
 
 In **Step 0: Exam Setup**, choose the exam start date, then continue to

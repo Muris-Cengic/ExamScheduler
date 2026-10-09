@@ -16,10 +16,9 @@ export default function CourseSelection({ courses, selection, onUpload, examChoi
         </div>
         <label className="file-input">
           <input type="file" accept=".xlsx,.xls,.csv" onChange={onUpload} />
-          <span>{selection ? "Replace CRN List" : "Upload CRN List"}</span>
+            <span>Replace CRN List</span>
         </label>
       </div>
-      {selection ? (
         <>
           <div className="course-review__controls">
             <p><strong>Source:</strong> {selection.sheetName}</p>
@@ -52,7 +51,6 @@ export default function CourseSelection({ courses, selection, onUpload, examChoi
             {!visible.length ? <p>No courses match your search.</p> : null}
           </div>
         </>
-      ) : <p className="course-review__empty">Upload the CRN list to choose courses with an exam.</p>}
     </section>
   );
 }
