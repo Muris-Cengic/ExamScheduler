@@ -112,6 +112,15 @@ After selecting resources, use **Auto-Schedule Remaining Exams**:
   not just course size. This reduces evening staffing where constraints allow.
   Fixed lab exams are reserved first and remain within their listed lab windows,
   including an evening lab when that is the course's only permitted time.
+- After placement, the draft prefers a **one-hour break between exams for shared
+  students**, including ASD exams. Newly placed lab exams are adjusted first:
+  after a 12:00-13:00 exam, a lab exam can move from 13:00-14:00 to 14:00-15:00
+  when its listed lab hours and resources allow. Flexible exams keep their
+  daytime/evening priority; equally spaced options use the earliest date/time.
+  Partial breaks are preferred if a full hour cannot fit, but back-to-back exams
+  remain allowed. Adjustments preserve all student and resource rules and do not
+  reduce the existing standby capacity below the two-person target (or worsen an
+  existing shortfall). Existing main and ASD placements are never moved.
 - Within each pass, the earliest valid slot retaining two standby people is
   preferred. If none exists, a slot with valid required backup coverage is used
   and a standby-shortfall warning is shown; a valid daytime placement is not

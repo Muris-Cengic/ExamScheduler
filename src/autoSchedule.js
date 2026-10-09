@@ -7,6 +7,7 @@ const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const MORNING_LAB_START = 540;
 const MORNING_LAB_END = 600;
 const EVENING_START = 1020;
+const PREFERRED_STUDENT_BREAK = 60;
 const COMMON_WINDOWS = [
   { days: DAYS.slice(0, -1), startMinutes: 720, endMinutes: 780 },
   { days: DAYS.slice(0, -1), startMinutes: EVENING_START, endMinutes: 1080 },
@@ -16,6 +17,28 @@ const minutes = (id) => Number(id.split(":")[0]) * 60 + Number(id.split(":")[1])
 const overlaps = (a, b) => a.start < b.end && b.start < a.end;
 const shareStudents = (a, b) => [...a.students].some((id) => b.students.has(id));
 const usesLabWindow = (course) => course.crns.length === 1 && course.labSessions?.length > 0;
+
+function studentIssue(exam, sameDay) {
+  if (sameDay.some((entry) => overlaps(exam, entry) && shareStudents(exam, entry))) {
+    return "student overlap with a main or ASD exam";
+  }
+  if ([...exam.students].some((id) => sameDay.filter((entry) => entry.students.has(id)).length >= 2)) {
+    return "more than two exams per student in a day";
+  }
+  return "";
+}
+
+function breakPenalty(exam, entries) {
+  return entries.reduce((total, entry) => {
+    if (entry.week !== exam.week || entry.day !== exam.day) return total;
+    const missingBreak = Math.max(0, PREFERRED_STUDENT_BREAK - Math.max(exam.start - entry.end, entry.start - exam.end));
+    return total + missingBreak * [...exam.students].filter((id) => entry.students.has(id)).length;
+  }, 0);
+}
+
+const withExam = (map, candidate, id) => ({ ...map, [candidate.week]: { ...map[candidate.week],
+  [candidate.day]: { ...map[candidate.week]?.[candidate.day],
+    [candidate.slotId]: [...(map[candidate.week]?.[candidate.day]?.[candidate.slotId] || []), id] } } });
 
 function candidatesFor(course, weeks, timeSlots, duration, interval) {
   const lab = usesLabWindow(course);
@@ -42,7 +65,7 @@ export function autoSchedule({ courses, courseLookup, assignments, asdAssignment
   const interval = settings.slotIntervalMinutes;
   const duration = Math.ceil(settings.examDurationMinutes / interval) * interval;
   const capacity = roomCapacity(settings.studentsPerRoom);
-  const next = Object.fromEntries(Object.entries(assignments).map(([week, days]) => [week,
+  let next = Object.fromEntries(Object.entries(assignments).map(([week, days]) => [week,
     Object.fromEntries(Object.entries(days).map(([day, slots]) => [day,
       Object.fromEntries(Object.entries(slots).map(([slot, ids]) => [slot, [...ids]])),
     ])),
@@ -79,17 +102,12 @@ export function autoSchedule({ courses, courseLookup, assignments, asdAssignment
       if (!item.students.size) break;
       const exam = { ...candidate, students: item.students };
       const sameDay = entries.filter((entry) => entry.week === exam.week && entry.day === exam.day);
-      if (sameDay.some((entry) => overlaps(exam, entry) && shareStudents(exam, entry))) {
-        reasons.add("student overlap with a main or ASD exam");
+      const issue = studentIssue(exam, sameDay);
+      if (issue) {
+        reasons.add(issue);
         continue;
       }
-      if ([...exam.students].some((id) => sameDay.filter((entry) => entry.students.has(id)).length >= 2)) {
-        reasons.add("more than two exams per student in a day");
-        continue;
-      }
-      const proposed = { ...next, [candidate.week]: { ...next[candidate.week],
-        [candidate.day]: { ...next[candidate.week]?.[candidate.day],
-          [candidate.slotId]: [...(next[candidate.week]?.[candidate.day]?.[candidate.slotId] || []), item.course.id] } } };
+      const proposed = withExam(next, candidate, item.course.id);
       const sessions = buildExamSessions(proposed, courseLookup, duration, capacity, roomDistributionChoices);
       const plan = assignResources(sessions, catalog);
       const validation = validateResourcePlan(sessions, catalog, plan);
@@ -140,8 +158,51 @@ export function autoSchedule({ courses, courseLookup, assignments, asdAssignment
       unplaced.push({ courseId: item.course.id, reason });
     }
   });
-  const sessions = buildExamSessions(next, courseLookup, duration, capacity, roomDistributionChoices);
+  let sessions = buildExamSessions(next, courseLookup, duration, capacity, roomDistributionChoices);
   resourcePlan ??= assignResources(sessions, catalog);
+  // Once noon exams are known, improve student breaks by moving only this run's placements, labs first.
+  const spacingOrder = [...pending.filter((item) => item.lab), ...flexible];
+  let improved;
+  do {
+    improved = false;
+    for (const item of spacingOrder) {
+      const placement = placed.find((exam) => exam.courseId === item.course.id);
+      if (!placement) continue;
+      const entry = entries.find((exam) => !exam.locked && exam.id === item.course.id);
+      const others = entries.filter((exam) => exam !== entry);
+      const currentPenalty = breakPenalty(entry, others);
+      if (!currentPenalty) continue;
+      const candidates = item.candidates
+        .filter((candidate) => item.lab || (candidate.start < EVENING_START) === (entry.start < EVENING_START))
+        .map((candidate) => ({ ...candidate, students: item.students }))
+        .filter((candidate) => !studentIssue(candidate, others.filter((exam) => exam.week === candidate.week && exam.day === candidate.day)))
+        .map((candidate) => ({ candidate, penalty: breakPenalty(candidate, others) }))
+        .filter((choice) => choice.penalty < currentPenalty)
+        .sort((a, b) => a.penalty - b.penalty || chronological(a.candidate, b.candidate));
+      if (!candidates.length) continue;
+      const standbyTargets = new Map(sessions.map((session) => [session.id,
+        Math.min(PREFERRED_STANDBY_COUNT, standbyAvailability(session, sessions, catalog, resourcePlan).count)]));
+      const previousSessionId = `${entry.week}/${entry.day}/${entry.slotId}`;
+      for (const { candidate } of candidates) {
+        const withoutExam = { ...next, [entry.week]: { ...next[entry.week], [entry.day]: { ...next[entry.week][entry.day],
+          [entry.slotId]: next[entry.week][entry.day][entry.slotId].filter((id) => id !== item.course.id) } } };
+        const proposed = withExam(withoutExam, candidate, item.course.id);
+        const trialSessions = buildExamSessions(proposed, courseLookup, duration, capacity, roomDistributionChoices);
+        const plan = assignResources(trialSessions, catalog);
+        if (!validateResourcePlan(trialSessions, catalog, plan).complete) continue;
+        if (trialSessions.some((session) => standbyAvailability(session, trialSessions, catalog, plan).count <
+          (standbyTargets.get(session.id) ?? standbyTargets.get(previousSessionId)))) continue;
+        next = proposed;
+        resourcePlan = plan;
+        sessions = trialSessions;
+        const { students: _students, ...slot } = candidate;
+        Object.assign(entry, slot);
+        Object.assign(placement, slot);
+        improved = true;
+        break;
+      }
+    }
+  } while (improved); // Each accepted move strictly reduces the total student break shortfall.
   const warnings = sessions.flatMap((session) => {
     const standby = standbyAvailability(session, sessions, catalog, resourcePlan);
     return standby.count < PREFERRED_STANDBY_COUNT ? [{ sessionId: session.id,
