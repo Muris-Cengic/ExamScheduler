@@ -23,8 +23,10 @@ are shown in that step, and scheduling/export actions enforce their prerequisite
 Navigation preserves exam choices, placements and resource allocations, including
 outdated allocations that still need review.
 
-Step actions are separate from navigation. **Settings** opens an overlay from the
-action strip. Detailed exam, placement and resource rules are collapsible; blocking
+Step actions are separate from navigation. **Exam Setup** displays settings directly
+in its centered card, with the date and Continue action. On other steps, **Settings**
+opens an overlay from the action strip. Both views edit the same settings.
+Detailed exam, placement and resource rules are collapsible; blocking
 issues and resource shortages stay visible. On narrow screens, the step bar scrolls
 horizontally and keeps the current step in view.
 

@@ -2306,6 +2306,7 @@ function App() {
 
   const navigateToStep = (step) => {
     setWizardStep(step);
+    setIsSettingsOpen(false);
     setSchedulerPhase(step === "asd" ? hasAsdStep ? "asd" : "setup" : "main");
     setHoverTarget(null);
   };
@@ -2428,6 +2429,81 @@ function App() {
       : "";
   const canSchedule = Boolean(departmentSelection && availableCourses.length && resourceCatalog.rooms.some((room) => room.enabled) && totalInvigilatorCapacity >= 2);
 
+  const settingsFields = (
+    <div className="settings-panel__grid">
+      <label>
+        <span>Slot interval</span>
+        <select
+          value={slotIntervalMinutes}
+          onChange={handleNumericSettingChange(
+            "slotIntervalMinutes",
+            { min: 30, max: 60 },
+          )}
+        >
+          <option value={30}>30 minutes</option>
+          <option value={60}>1 hour</option>
+        </select>
+      </label>
+
+      <label>
+        <span>Exam duration</span>
+        <select
+          value={examDurationMinutes}
+          onChange={handleNumericSettingChange(
+            "examDurationMinutes",
+            { min: 60, max: 120 },
+          )}
+        >
+          <option value={60}>1 hour</option>
+          <option value={120}>2 hours</option>
+        </select>
+      </label>
+
+      <label>
+        <span>Start hour</span>
+        <input
+          type="number"
+          min="0"
+          max="22"
+          value={startHour}
+          onChange={handleNumericSettingChange(
+            "startHour",
+            { min: 0, max: 22 },
+          )}
+        />
+      </label>
+
+      <label>
+        <span>End hour</span>
+        <input
+          type="number"
+          min="1"
+          max="23"
+          value={endHour}
+          onChange={handleNumericSettingChange(
+            "endHour",
+            { min: 1, max: 23 },
+          )}
+        />
+      </label>
+
+      <label>
+        <span>Students per room</span>
+        <input
+          type="number"
+          min="1"
+          max="25"
+          value={studentsPerRoom}
+          onChange={handleNumericSettingChange(
+            "studentsPerRoom",
+            { min: 1, max: 25 },
+          )}
+        />
+      </label>
+
+    </div>
+  );
+
   if (!isWorkspaceOpen) {
     return <div className="app app--start">
       <main className="start-screen" aria-labelledby="start-title">
@@ -2483,8 +2559,7 @@ function App() {
       <input ref={loadInputRef} type="file" accept="application/json" onChange={handleLoadTimetable} disabled={isLoadingTimetable} hidden />
       <input ref={loadAsdInputRef} type="file" accept=".json,.xlsx,.xls,.csv" onChange={handleLoadAsdTimetable} hidden />
 
-      <section className="step-actions" aria-label={currentStep.title + " actions"}>
-        {wizardStep === "setup" ? <button type="button" className="primary-action" onClick={() => navigateToStep("load")}>Continue to Student Enrollment</button> : null}
+      {wizardStep !== "setup" ? <section className="step-actions" aria-label={currentStep.title + " actions"}>
         {wizardStep === "load" && courses.length > 0 ? <>
           <label className="file-input">
             <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFileUpload} />
@@ -2516,7 +2591,7 @@ function App() {
           <button type="button" onClick={handleSaveTimetable} disabled={!courses.length || isExporting}>Save Timetable</button>
         ) : null}
         <button type="button" className="step-actions__settings" onClick={() => setIsSettingsOpen(true)} disabled={isExporting}>Settings</button>
-      </section>
+      </section> : null}
 
       {stepNotice && !emptyImport ? <section className="step-empty" aria-label="Step prerequisites">
         <h2>{currentStep.title}</h2><p>{stepNotice}</p>
@@ -2533,7 +2608,7 @@ function App() {
         <div className="alert alert--info" role="status">{importNotice}</div>
       ) : null}
 
-      {wizardStep === "setup" ? <section className="exam-setup" aria-labelledby="exam-setup-title">
+      {wizardStep === "setup" ? <div className="exam-setup-page"><section className="exam-setup" aria-labelledby="exam-setup-title">
         <h2 id="exam-setup-title">Exam Setup</h2>
         <div className="exam-setup__fields">
           <div className="exam-setup__date">
@@ -2547,7 +2622,14 @@ function App() {
           </dl>
         </div>
         <p className="exam-setup__note">Semester and academic year are inferred from the start date. August dates use Fall.</p>
-      </section> : null}
+        <section className="exam-setup__settings" aria-labelledby="exam-setup-settings-title">
+          <h3 id="exam-setup-settings-title">Settings</h3>
+          {settingsFields}
+        </section>
+        <div className="exam-setup__actions">
+          <button type="button" className="primary-action" onClick={() => navigateToStep("load")}>Continue to Student Enrollment</button>
+        </div>
+      </section></div> : null}
 
       {emptyImport ? <ImportPrompt kind={emptyImport} startDate={exportStartDate}
         onUpload={emptyImport === "enrolment" ? handleFileUpload : emptyImport === "crn" ? handleCrnUpload : undefined}
@@ -2617,79 +2699,7 @@ function App() {
               </button>
             </div>
 
-            <div className="settings-panel__grid">
-              <label>
-                <span>Slot interval</span>
-                <select
-                  value={slotIntervalMinutes}
-                  onChange={handleNumericSettingChange(
-                    "slotIntervalMinutes",
-                    { min: 30, max: 60 },
-                  )}
-                >
-                  <option value={30}>30 minutes</option>
-                  <option value={60}>1 hour</option>
-                </select>
-              </label>
-
-              <label>
-                <span>Exam duration</span>
-                <select
-                  value={examDurationMinutes}
-                  onChange={handleNumericSettingChange(
-                    "examDurationMinutes",
-                    { min: 60, max: 120 },
-                  )}
-                >
-                  <option value={60}>1 hour</option>
-                  <option value={120}>2 hours</option>
-                </select>
-              </label>
-
-              <label>
-                <span>Start hour</span>
-                <input
-                  type="number"
-                  min="0"
-                  max="22"
-                  value={startHour}
-                  onChange={handleNumericSettingChange(
-                    "startHour",
-                    { min: 0, max: 22 },
-                  )}
-                />
-              </label>
-
-              <label>
-                <span>End hour</span>
-                <input
-                  type="number"
-                  min="1"
-                  max="23"
-                  value={endHour}
-                  onChange={handleNumericSettingChange(
-                    "endHour",
-                    { min: 1, max: 23 },
-                  )}
-                />
-              </label>
-
-              <label>
-                <span>Students per room</span>
-                <input
-                  type="number"
-                  min="1"
-                  max="25"
-                  value={studentsPerRoom}
-                  onChange={handleNumericSettingChange(
-                    "studentsPerRoom",
-                    { min: 1, max: 25 },
-                  )}
-                />
-              </label>
-
-              <p>Manage invigilators in Resource Pool.</p>
-            </div>
+            {settingsFields}
 
             <div className="settings-overlay__actions">
               <button

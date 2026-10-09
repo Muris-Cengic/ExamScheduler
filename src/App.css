@@ -274,7 +274,8 @@
 }
 
 .step-actions .file-input { padding: 0.45rem 0.75rem; font-size: 0.85rem; }
-.exam-setup { max-width: 900px; padding: clamp(1rem, 3vw, 2rem); border: 1px solid var(--shell-border); border-radius: 0.75rem; background: linear-gradient(150deg, #fff, #f4f8ff); }
+.exam-setup-page { display: grid; place-items: center; min-height: 70svh; padding: 1rem 0; }
+.exam-setup { width: min(100%, 900px); min-width: 0; box-sizing: border-box; padding: clamp(1rem, 3vw, 2rem); border: 1px solid var(--shell-border); border-radius: 0.75rem; background: linear-gradient(150deg, #fff, #f4f8ff); }
 .exam-setup h2 { margin: 0 0 1.5rem; font-size: 1.3rem; }
 .exam-setup__fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 2rem; align-items: start; }
 .exam-setup__date { display: grid; gap: 0.6rem; min-width: 0; }
@@ -285,8 +286,17 @@
 .exam-setup__summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem; margin: 0; }
 .exam-setup__summary dd { margin: 0.75rem 0 0; font-size: clamp(1.3rem, 2vw, 1.75rem); font-weight: 600; overflow-wrap: anywhere; }
 .exam-setup__note { margin: 1.5rem 0 0; }
+.exam-setup__settings { margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--shell-border); }
+.exam-setup__settings h3 { margin: 0 0 1rem; font-size: 1rem; }
+.exam-setup__settings .settings-panel__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.exam-setup__actions { display: flex; justify-content: center; margin-top: 1.75rem; }
+.exam-setup__actions button { min-height: 44px; padding: 0.65rem 1rem; border: 1px solid transparent; border-radius: 0.5rem; background: linear-gradient(135deg, #2563eb, #1d4ed8); color: #fff; font: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+.exam-setup__actions button:hover { background: linear-gradient(135deg, #1d4ed8, #1e40af); }
+.exam-setup__actions button:focus-visible { outline: 2px solid var(--shell-accent); outline-offset: 3px; }
 @media (max-width: 600px) {
   .exam-setup__fields { grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
+  .exam-setup__settings .settings-panel__grid { grid-template-columns: minmax(0, 1fr); }
+  .exam-setup__actions button { width: 100%; }
 }
 
 .file-input {
@@ -1007,6 +1017,7 @@ code {
 
 .settings-panel__grid label {
   display: grid;
+  min-width: 0;
   gap: 0.35rem;
   font-size: 0.85rem;
   color: #475569;
@@ -1019,6 +1030,7 @@ code {
 
 .settings-panel__grid input,
 .settings-panel__grid select {
+  min-width: 0;
   padding: 0.5rem 0.65rem;
   border: 1px solid #d7dde6;
   border-radius: 0.45rem;

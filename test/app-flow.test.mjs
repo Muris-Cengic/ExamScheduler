@@ -304,7 +304,7 @@ test("Exam Setup derives metadata from the entered date and restores it after sa
     tree = app.render();
     assert.equal(dateInput().props.value, date, "The date is not silently shifted into the preceding month or year");
     assert.equal(summary(), "Semester" + semester + "Academic year" + academicYear);
-    assert.equal(nodes(tree).filter((node) => node.type === "input" && !node.props.hidden).length, 1, "Inferred metadata is read-only");
+    assert.equal(nodes(find(tree, (node) => node.props.className === "exam-setup__fields")).filter((node) => node.type === "input").length, 1, "Inferred metadata is read-only");
   }
   assert.match(text(find(tree, (node) => node.props.id === "exam-week-start")), /Monday, 2027-01-11/);
   button(tree, "Continue to Student Enrollment").props.onClick();
@@ -411,7 +411,8 @@ test("every step is directly accessible, with actions separate and prerequisites
     assert.equal(step(tree, id).props["aria-current"], "step");
     assert.equal(nodes(navigation()).filter((node) => node.props["aria-current"] === "step").length, 1);
     assert.ok(nodes(navigation()).filter((node) => node.type === "button").every((node) => node.props.type === "button" && !node.props.disabled));
-    assert.ok(!nodes(actions()).some((node) => node.props["data-step"]));
+    if (id !== "setup") assert.ok(!nodes(actions()).some((node) => node.props["data-step"]));
+    else assert.ok(!nodes(tree).some((node) => node.props.className === "step-actions"));
     assert.ok(!nodes(tree).some((node) => node.type === "button" && text(node) === "Load Timetable"),
       "Saved timetables are loaded from the start screen only");
     if (!["setup", "load"].includes(id)) assert.match(text(find(tree, (node) => node.props["aria-label"] === "Step prerequisites")), /Load enrolment in Student Enrollment/);
@@ -422,10 +423,42 @@ test("every step is directly accessible, with actions separate and prerequisites
   }
   assert.equal(scrollRequests.length, 8, "Programmatic navigation keeps the active step visible on narrow screens");
   assert.ok(scrollRequests.every((options) => options.block === "nearest" && options.inline === "nearest"));
+  step(tree, "load").props.onClick();
+  tree = app.render();
   button(tree, "Settings").props.onClick();
   tree = app.render();
   assert.ok(nodes(tree).some((node) => node.props.role === "dialog"));
   assert.ok(!nodes(header()).some((node) => node.props.role === "dialog"));
+});
+
+test("Exam Setup displays shared settings inline and centers its content without a duplicate overlay", () => {
+  const app = harness();
+  let tree = app.render();
+  button(tree, "Create Schedule").props.onClick();
+  tree = app.render();
+  const page = () => find(tree, (node) => node.props.className === "exam-setup-page");
+  const field = (scope, label) => find(find(scope, (node) => node.type === "label" && text(node).startsWith(label)),
+    (node) => node.type === "input" || node.type === "select");
+  const settings = () => find(page(), (node) => node.props.className === "exam-setup__settings");
+  assert.equal(nodes(settings()).filter((node) => node.type === "label").length, 5);
+  assert.ok(!nodes(tree).some((node) => node.props.role === "dialog" || (node.type === "button" && text(node) === "Settings")));
+  field(settings(), "Exam duration").props.onChange({ target: { value: "120" } });
+  tree = app.render();
+  assert.equal(field(settings(), "Exam duration").props.value, 120);
+  button(page(), "Continue to Student Enrollment").props.onClick();
+  tree = app.render();
+  assert.ok(!nodes(tree).some((node) => node.props.className === "exam-setup-page"));
+  button(tree, "Settings").props.onClick();
+  tree = app.render();
+  const dialog = find(tree, (node) => node.props.role === "dialog");
+  assert.equal(field(dialog, "Exam duration").props.value, 120);
+  field(dialog, "Students per room").props.onChange({ target: { value: "20" } });
+  tree = app.render();
+  step(tree, "setup").props.onClick();
+  tree = app.render();
+  assert.ok(!nodes(tree).some((node) => node.props.role === "dialog"));
+  assert.equal(field(settings(), "Students per room").props.value, 20);
+  assert.equal(nodes(tree).filter((node) => node.props.className === "settings-panel__grid").length, 1);
 });
 
 test("resource selection precedes generation and stays editable after the resource-aware draft", async () => {
