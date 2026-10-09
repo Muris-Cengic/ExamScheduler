@@ -518,6 +518,22 @@ test("staffing reserves two invigilators above 15 students plus slot backups; AS
   assert.equal(enough.placed.length, 1);
 });
 
+test("resource-aware auto-scheduling applies the eight-hour staff-day preference to exam and backup assignments", () => {
+  const c = course("MAIN", [student("S1")], ["101", "102"]);
+  const catalog = resourceFixture([c], 4, 1);
+  catalog.invigilators.forEach((person, index) => {
+    person.busy = [{ code: "TEACHING", crn: "900", days: ["Monday"], start: 480 + index * 60, end: 540 + index * 60, isLab: false }];
+  });
+  const result = draft([c], { catalog, timeSlots: slots(17, 18) });
+  assert.deepEqual(result.unplaced, []);
+  assert.equal(result.placed[0].day, "Monday");
+  assert.equal(result.placed[0].slotId, "17:00");
+  const sessions = buildExamSessions(result.assignments, { MAIN: c }, 60);
+  assert.deepEqual(result.resourcePlan.allocations[sessions[0].rooms[0].id].invigilatorIds, ["I2"]);
+  assert.deepEqual(result.resourcePlan.backups[sessions[0].id], ["I3"]);
+  assert.equal(validateResourcePlan(sessions, catalog, result.resourcePlan).complete, true);
+});
+
 test("auto-scheduling staffing uses the last-room saving while keeping slot backups separate", () => {
   const large = course("LARGE", Array.from({ length: 55 }, (_, i) => student(`S${i}`)));
   const short = draft([large], { staffCount: 5 });

@@ -195,6 +195,16 @@ is highlighted without changing existing backup report rules.
   take precedence. Resource pools and reports show teaching-hour duties separately.
   There is at least one backup per time slot, with a maximum of 40% of the slot's
   room count (rounded down, with a minimum of one).
+- Automatic room-invigilator and backup assignments prefer a daily presence span
+  of **at most eight hours**, from the first class/duty to the last, including gaps.
+  The span includes remaining classes on that weekday and assigned exam/backup
+  duties in the same week/day, even duties that add no extra invigilation load.
+  A replaced lab's canceled class hours do not extend the day; its actual exam
+  duties still count. Within the eight-hour target, normal overall/time-slot load
+  balancing applies, with exam and backup loads kept separate. If everyone
+  available would exceed eight hours, the shortest excess is preferred. This is
+  a preference, not an availability restriction or export blocker; required lab
+  instructors and manual assignments remain allowed.
 - Missing resources and conflicts are shown explicitly; **export stays blocked**
   until assignments are valid. Issues show the week/day/exam time, exam room and
   student count, the named resource and conflicting class/CRN or exam, and a

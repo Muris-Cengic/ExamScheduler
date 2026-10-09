@@ -8,6 +8,7 @@ const overlaps = (a, b) => a.start < b.end && b.start < a.end;
 const sameDay = (a, b) => a.week === b.week && a.day === b.day;
 export const backupTarget = (roomCount) => Math.max(1, Math.floor(roomCount * 0.4));
 export const PREFERRED_STANDBY_COUNT = 2;
+const PREFERRED_INVIGILATOR_DAY_MINUTES = 8 * 60;
 export const clock = (value) => `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
 export const resourceSessionLabel = (session) => `Week ${session.week} / ${session.day} / ${clock(session.start)}-${clock(session.end)}`;
 export const resourceAssignmentAnchor = (id) => `resource-assignment-${encodeURIComponent(id)}`;
@@ -335,20 +336,36 @@ export function invigilatorWorkloads(catalog, sessions, plan) {
   });
 }
 
+function invigilatorDayOverrun(person, session, sessions, bookings) {
+  const commitments = [session,
+    ...person.busy.filter((entry) => entry.days.includes(session.day) && !entry.unknownTime && !isReplacedLab(entry, session, sessions)),
+    ...bookings.filter((booking) => booking.resourceId === person.id),
+  ];
+  const start = Math.min(...commitments.map((entry) => entry.start));
+  const end = Math.max(...commitments.map((entry) => entry.end));
+  return Math.max(0, end - start - PREFERRED_INVIGILATOR_DAY_MINUTES);
+}
+
 export function assignResources(sessions, catalog) {
   const plan = emptyResourcePlan(sessions, catalog);
   const staff = catalog.invigilators.filter((person) => person.enabled);
   const workloads = new Map(staff.map((person) => [person.id, { exam: 0, backup: 0, examSlots: {}, backupSlots: {} }]));
   const roomUse = new Map();
-  const selectStaff = (session, owner, role) => staff.filter((person) => !resourceChoiceReason(person, "invigilator", session, sessions, plan, owner)).sort((a, b) => {
-    const loadA = workloads.get(a.id);
-    const loadB = workloads.get(b.id);
-    const extraA = isTeachingTimeDuty(a, session, sessions) ? 0 : 1;
-    const extraB = isTeachingTimeDuty(b, session, sessions) ? 0 : 1;
-    return (loadA[role] + extraA) - (loadB[role] + extraB) ||
-      ((loadA[`${role}Slots`][session.slotId] || 0) + extraA) - ((loadB[`${role}Slots`][session.slotId] || 0) + extraB) ||
-      extraA - extraB || a.name.localeCompare(b.name);
-  })[0];
+  const selectStaff = (session, owner, role) => {
+    const candidates = staff.filter((person) => !resourceChoiceReason(person, "invigilator", session, sessions, plan, owner));
+    const bookings = planBookings(sessions, plan).filter((booking) => booking.kind === "invigilator" && sameDay(booking, session));
+    const overruns = new Map(candidates.map((person) => [person.id, invigilatorDayOverrun(person, session, sessions, bookings)]));
+    return candidates.sort((a, b) => {
+      const loadA = workloads.get(a.id);
+      const loadB = workloads.get(b.id);
+      const extraA = isTeachingTimeDuty(a, session, sessions) ? 0 : 1;
+      const extraB = isTeachingTimeDuty(b, session, sessions) ? 0 : 1;
+      // Prefer an eight-hour presence window; if unavoidable, minimize the excess before balancing loads.
+      return overruns.get(a.id) - overruns.get(b.id) || (loadA[role] + extraA) - (loadB[role] + extraB) ||
+        ((loadA[`${role}Slots`][session.slotId] || 0) + extraA) - ((loadB[`${role}Slots`][session.slotId] || 0) + extraB) ||
+        extraA - extraB || a.name.localeCompare(b.name);
+    })[0];
+  };
   const record = (person, role, session) => {
     if (isTeachingTimeDuty(person, session, sessions)) return;
     const load = workloads.get(person.id);

@@ -36,6 +36,7 @@ export default function ResourceAssignment({ sessions, catalog, plan, validation
       <details className="schedule-rules"><summary>Room and availability rules</summary>
         <p>Students are balanced, keeping the last room at 15 when that saves an invigilator. Up to 27 per room requires approval for that exam.</p>
         <p>The first CRN sheet supplies resources and class commitments. Classes block the full exam duration. Single-CRN lab exams keep their lab room and instructor; a listed 09:50 morning lab end is treated as 10:00. Other classes stay blocked. Availability outside listed classes is assumed.</p>
+        <p>Auto-assignment prefers at most eight hours from the first class or duty to the last, including gaps and backups. Longer days are allowed when needed; fixed lab instructors remain required.</p>
       </details>
       <div className="resource-panel__summary" role="status">
         <span>{catalog.rooms.filter((room) => room.enabled).length} rooms</span>

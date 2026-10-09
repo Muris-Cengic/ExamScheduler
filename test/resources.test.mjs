@@ -389,6 +389,85 @@ test("exam and backup workloads are balanced independently over the whole timeta
   for (const slot of ["09:00", "10:30", "12:00"]) assert.ok(Math.max(...loads.map((load) => load.backupBySlot[slot] || 0)) - Math.min(...loads.map((load) => load.backupBySlot[slot] || 0)) <= 1);
 });
 
+test("staff selection prefers an eight-hour first-to-last day, including gaps before or after teaching", () => {
+  for (const [time, teachingStarts] of [["17:00", [480, 540, 600, 660]], ["08:00", [1020, 960, 900, 840]]]) {
+    const sessions = sessionsFor(course("EXAM", 10), time);
+    const resources = catalog(1, 4);
+    resources.invigilators.forEach((person, index) => {
+      person.busy = [classTime("CLASS", teachingStarts[index], teachingStarts[index] + 60)];
+    });
+    const plan = assignResources(sessions, resources);
+    assert.deepEqual(plan.allocations[sessions[0].rooms[0].id].invigilatorIds, ["I2"], "Exactly eight hours is allowed; shorter days retain normal load balancing");
+    assert.deepEqual(plan.backups[sessions[0].id], ["I3"], "The same day-span preference applies to backups");
+    assert.equal(validateResourcePlan(sessions, resources, plan).complete, true);
+  }
+});
+
+test("room and backup duties are considered together when avoiding split ten-hour days", () => {
+  const sessions = buildExamSessions({ 1: { Monday: { "08:00": ["EXAM"], "17:00": ["EXAM"] } } }, { EXAM: course("EXAM", 10) }, 60);
+  const resources = catalog(1, 4);
+  const plan = assignResources(sessions, resources);
+  assert.equal(validateResourcePlan(sessions, resources, plan).complete, true);
+  const morning = [...plan.allocations[sessions[0].rooms[0].id].invigilatorIds, ...plan.backups[sessions[0].id]];
+  const evening = [...plan.allocations[sessions[1].rooms[0].id].invigilatorIds, ...plan.backups[sessions[1].id]];
+  assert.equal(new Set([...morning, ...evening]).size, 4, "A morning backup must not be reused in the evening, even for a different duty role");
+});
+
+test("zero-load fixed lab duties still contribute to the instructor's daily presence", () => {
+  const lab = { days: ["Monday"], crn: "101", startMinutes: 480, endMinutes: 590,
+    room: "Lab", building: "Building", campus: "Campus", labInstructorId: "I0" };
+  const courses = { LAB: course("LAB", 10, { labSessions: [lab] }), EXTRA: course("EXTRA", 10) };
+  const resources = catalog(1, 4);
+  resources.rooms[0].id = roomIdentity(lab.campus, lab.building, lab.room);
+  resources.rooms[0].busy = [classTime("LAB", 480, 590, { isLab: true })];
+  resources.invigilators[0].busy = [classTime("LAB", 480, 590, { isLab: true })];
+  for (const [time, expected] of [["17:00", "I1"], ["16:00", "I0"]]) {
+    const sessions = buildExamSessions({ 1: { Monday: { "09:00": ["LAB"], [time]: ["EXTRA"] } } }, courses, 60);
+    const plan = assignResources(sessions, resources);
+    assert.equal(plan.allocations[sessions[0].rooms[0].id].invigilatorIds[0], "I0", "Keep the fixed lab instructor");
+    assert.equal(plan.allocations[sessions[1].rooms[0].id].invigilatorIds[0], expected,
+      "Count the actual 09:00 lab exam, not the canceled 08:00 class, when checking eight hours");
+    assert.equal(validateResourcePlan(sessions, resources, plan).complete, true);
+  }
+});
+
+test("daily presence is isolated by week and weekday, while teaching repeats each week", () => {
+  const lab = { days: ["Monday"], crn: "101", startMinutes: 480, endMinutes: 590,
+    room: "Lab", building: "Building", campus: "Campus", labInstructorId: "I0" };
+  const courses = { LAB: course("LAB", 10, { labSessions: [lab] }), EXTRA: course("EXTRA", 10) };
+  const resources = catalog(1, 4);
+  resources.rooms[0].id = roomIdentity(lab.campus, lab.building, lab.room);
+  resources.invigilators[0].busy = [classTime("LAB", 480, 590, { isLab: true })];
+  for (const [week, day, expected] of [[1, "Tuesday", "I0"], [2, "Tuesday", "I0"], [2, "Monday", "I1"]]) {
+    const assignments = { 1: { Monday: { "09:00": ["LAB"] } } };
+    assignments[week] = { ...assignments[week], [day]: { ...assignments[week]?.[day], "17:00": ["EXTRA"] } };
+    const sessions = buildExamSessions(assignments, courses, 60);
+    const plan = assignResources(sessions, resources);
+    const extra = sessions.find((session) => session.week === week && session.day === day && session.slotId === "17:00");
+    assert.equal(plan.allocations[extra.rooms[0].id].invigilatorIds[0], expected);
+    assert.equal(validateResourcePlan(sessions, resources, plan).complete, true);
+  }
+});
+
+test("when eight hours is unavoidable staff selection minimizes excess without blocking valid coverage", () => {
+  const sessions = sessionsFor(course("EXAM", 10), "17:00");
+  const resources = catalog(1, 4);
+  resources.invigilators.forEach((person, index) => {
+    person.busy = [index === 3 ? classTime("UNAVAILABLE", 1020, 1080) : classTime("EARLY", 420 + index * 60, 480 + index * 60)];
+  });
+  const plan = assignResources(sessions, resources);
+  assert.deepEqual(plan.allocations[sessions[0].rooms[0].id].invigilatorIds, ["I2"], "Choose a nine-hour day before a ten- or eleven-hour day");
+  assert.deepEqual(plan.backups[sessions[0].id], ["I1"]);
+  assert.equal(validateResourcePlan(sessions, resources, plan).complete, true, "Eight hours is a preference, not an export-blocking limit");
+  const lab = { days: ["Monday"], crn: "101", startMinutes: 1020, endMinutes: 1080,
+    room: "Lab", building: "Building", campus: "Campus", labInstructorId: "I0" };
+  const fixed = sessionsFor(course("LAB", 10, { labSessions: [lab] }), "17:00");
+  resources.rooms[0].id = roomIdentity(lab.campus, lab.building, lab.room);
+  const fixedPlan = assignResources(fixed, resources);
+  assert.deepEqual(fixedPlan.allocations[fixed[0].rooms[0].id].invigilatorIds, ["I0"], "The preference cannot replace a required lab instructor");
+  assert.equal(validateResourcePlan(fixed, resources, fixedPlan).complete, true);
+});
+
 test("replaced lab duties do not disadvantage the instructor when balancing extra invigilations", () => {
   const labRoom = roomIdentity("Campus", "Building", "Lab");
   const lab = { days: ["Monday"], crn: "101", startMinutes: 480, endMinutes: 590, room: "Lab", building: "Building", campus: "Campus", labInstructorId: "I0" };
