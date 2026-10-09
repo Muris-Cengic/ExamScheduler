@@ -136,6 +136,98 @@ test("overview Excel and CSV export ASD references only when opted in, in combin
   assert.equal(rows(week3, "Exam overview").length, 2);
 });
 
+test("chronological exports contain only six columns, one numbered row per exam, and real formatted dates", () => {
+  const options = { ...fixture(), asdExams: asdFixture(), report: "overview", overviewMode: "table" };
+  const columns = ["#", "Date", "Day", "Time", "Course", "Course title"];
+  for (const format of ["xlsx", "csv"]) {
+    for (const packaging of ["combined", "weekly"]) {
+      const files = buildExportFiles({ ...options, includeAsd: true, format, packaging });
+      assert.equal(files.length, packaging === "weekly" ? 3 : 1);
+      const tables = files.map((file) => {
+        const workbook = format === "xlsx" ? XLSX.read(file.data, { type: "array", cellDates: true, cellNF: true })
+          : XLSX.read(file.data.replace(/^\uFEFF/, ""), { type: "string", raw: true });
+        const table = rows(workbook, workbook.SheetNames[0]);
+        assert.deepEqual(table[0], columns);
+        assert.ok(table.every((row) => row.length === 6));
+        assert.deepEqual(table.slice(1).map((row) => Number(row[0])), table.slice(1).map((_, index) => index + 1));
+        if (format === "xlsx") {
+          const sheet = workbook.Sheets["Exam overview"];
+          assert.equal(sheet.A2.t, "n");
+          assert.equal(sheet.B2.t, "d");
+          assert.equal(sheet.B2.z, "dd/mm/yyyy");
+          assert.match(sheet.B2.w, /^\d{2}\/\d{2}\/2026$/);
+        } else assert.match(table[1][1], /^\d{2}\/\d{2}\/2026$/);
+        return table.slice(1);
+      });
+      const exams = tables.flat();
+      assert.deepEqual(exams.map((row) => row[4]), ["ASD-2", "A", "ASD-1", "B", "ASD-1"]);
+      assert.deepEqual(exams.map((row) => row[3]), ["08:00-09:15", "09:00-10:00", "09:00-10:30", "12:00-13:00", "10:30-12:00"]);
+      assert.equal(exams.filter((row) => row[4] === "B").length, 1, "Multiple rooms must not duplicate the course row");
+      assert.equal(exams.filter((row) => row[5].endsWith(" (ASD)")).length, 3);
+    }
+  }
+  const scoped = read(buildExportFiles({ ...options, weeks: [2] })[0]).Sheets["Exam overview"];
+  assert.equal(scoped.A2.v, 1);
+  assert.equal(scoped.E2.v, "B");
+  assert.equal(scoped.B2.w, "27/10/2026");
+  const excluded = rows(read(buildExportFiles(options)[0]), "Exam overview");
+  assert.deepEqual(excluded.slice(1).map((row) => row[4]), ["A", "B"]);
+  assert.throws(() => buildExportFiles({ ...options, overviewMode: "unknown" }), /supported exam overview layout/);
+});
+
+test("chronological Excel styling matches the compact reference and separates dates, not exams", async () => {
+  const file = buildExportFiles({ ...fixture(), report: "overview", overviewMode: "table", asdExams: asdFixture(), includeAsd: true })[0];
+  const workbook = XLSX.read(file.data, { type: "array", cellStyles: true });
+  const zip = await JSZip.loadAsync(file.data);
+  const styleXml = await zip.file("xl/styles.xml").async("string");
+  const borders = styleXml.match(/<borders\b[^>]*>([\s\S]*?)<\/borders>/)[1].match(/<border\b[^>]*>[\s\S]*?<\/border>/g);
+  const xml = await zip.file("xl/worksheets/sheet1.xml").async("string");
+  const styleAt = (address) => {
+    const cell = xml.match(new RegExp('<c\\b[^>]*\\br="' + address + '"[^>]*>'))[0];
+    const xf = workbook.Styles.CellXf[Number(cell.match(/\bs="(\d+)"/)[1])];
+    return { ...xf, font: workbook.Styles.Fonts[xf.fontId], fill: workbook.Styles.Fills[xf.fillId], border: borders[xf.borderId] };
+  };
+  for (const column of ["A", "B", "C", "D", "E", "F"]) {
+    assert.equal(styleAt(column + "1").fill.fgColor.rgb, "A9C9E8");
+    assert.equal(styleAt(column + "1").font.color.rgb, "111111");
+    assert.match(styleAt(column + "1").border, /<bottom style="medium">/);
+    assert.equal(styleAt(column + "3").fill.fgColor.rgb, "F2F2F2");
+    assert.equal(styleAt(column + "3").font.name, "Calibri");
+    assert.ok(!/<top style=/.test(styleAt(column + "3").border), "No rule between exams on the same date");
+    assert.ok(!/<top style=/.test(styleAt(column + "4").border));
+    assert.match(styleAt(column + "5").border, /<top style="double">/);
+    assert.match(styleAt(column + "6").border, /<top style="double">/);
+    assert.match(styleAt(column + "6").border, /<bottom style="thin">/);
+  }
+  assert.equal(styleAt("A2").font.color.rgb, "777F89");
+  assert.equal(styleAt("A2").font.italic, 1);
+  assert.match(styleAt("A3").border, /<left style="thin">/);
+  assert.match(styleAt("F3").border, /<right style="thin">/);
+  assert.equal(styleAt("F3").alignment.wrapText, true);
+  assert.equal(styleAt("A3").alignment.horizontal, "right");
+  const sheet = workbook.Sheets["Exam overview"];
+  assert.equal(sheet["!autofilter"], undefined, "No filter arrows clutter the reference header");
+  assert.equal(sheet["!ref"], "A1:F6");
+  assert.equal(sheet["!cols"][5].wch, 52);
+  assert.equal(sheet["!rows"][2].hpt, 18);
+});
+
+test("chronological exports wrap long titles and keep formula-like text safe", () => {
+  const options = fixture();
+  const title = '=HYPERLINK("https://example.invalid") ' + "Long course title ".repeat(10) + "\nSecond line";
+  options.sessions[1].rooms.forEach((room) => { room.title = title; });
+  options.plan = assignResources(options.sessions, options.catalog);
+  const before = JSON.stringify(options);
+  const args = { ...options, report: "overview", overviewMode: "table", weeks: [2] };
+  const sheet = XLSX.read(buildExportFiles(args)[0].data, { type: "array", cellStyles: true }).Sheets["Exam overview"];
+  assert.equal(sheet.F2.v, title);
+  assert.equal(sheet.F2.t, "s");
+  assert.equal(sheet.F2.f, undefined);
+  assert.ok(sheet["!rows"][1].hpt >= 90);
+  assert.match(buildExportFiles({ ...args, format: "csv" })[0].data, /"'=HYPERLINK/);
+  assert.equal(JSON.stringify(options), before);
+});
+
 test("ASD inclusion cannot affect complete, staff or student reports, or their weekly exports", () => {
   const options = { ...fixture(), asdExams: asdFixture(), includeAsd: true };
   for (const report of ["complete", "staff", "students"]) {

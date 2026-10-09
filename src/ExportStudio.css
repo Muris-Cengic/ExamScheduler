@@ -112,6 +112,15 @@
 .export-table td { padding: 13px 16px; border-bottom: 1px solid #e9edf3; min-width: 80px; max-width: 240px; overflow-wrap: anywhere; vertical-align: top; }
 .export-table tbody tr:nth-child(even) { background: #fbfcfe; }
 .export-table tbody tr.export-row--asd { background: #f2f3f5; color: #59616c; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+.export-table--chronological { border: 1px solid #111; background: #f2f2f2; }
+.export-table--chronological th { background: #a9c9e8; color: #111; font-size: 12px; font-weight: 400; letter-spacing: 0; padding: 5px 8px; border-bottom: 3px solid #111; }
+.export-table--chronological td { padding: 3px 8px; border-bottom: 0; min-width: 0; max-width: none; overflow-wrap: normal; }
+.export-table--chronological th:first-child, .export-table--chronological td:first-child { text-align: right; width: 32px; }
+.export-table--chronological td:not(:last-child) { white-space: nowrap; }
+.export-table--chronological td:last-child { min-width: 260px; overflow-wrap: anywhere; }
+.export-table--chronological tbody tr:nth-child(even) { background: transparent; }
+.export-table--chronological tr.export-row--new-day td { border-top: 3px double #111; }
+.export-table--chronological tbody tr.export-row--asd { background: #f7f7f7; color: #777f89; font-style: italic; }
 .export-course { display: grid; gap: 3px; min-width: 130px; }
 .export-course strong { color: var(--export-ink); font-size: 12px; }
 .export-course small { color: var(--export-muted); font-size: 10px; }
@@ -223,6 +232,10 @@
   .export-print .export-table td { min-width: 0; max-width: none; padding: 2mm; }
   .export-print .export-table tr { break-inside: avoid; }
   .export-print .export-table thead { display: table-header-group; }
+  .export-print .export-table--chronological { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .export-print .export-table--chronological th { background: #a9c9e8; padding: 1mm 2mm; }
+  .export-print .export-table--chronological td { padding: 1mm 2mm; }
+  .export-print .export-table--chronological td:last-child { min-width: 0; }
   .export-print .export-course small { font-size: 8pt; }
   .export-print .export-board-print { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 8pt; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
   .export-print .export-board-print thead { display: table-header-group; }

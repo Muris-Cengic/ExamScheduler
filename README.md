@@ -233,16 +233,22 @@ previews:
   workbook-sheet map and searchable room ledger.
 - **Exam overview**: a shareable course timetable with assigned rooms and student
   counts, but no student names or IDs. Preview it as a five-day board or a
-  chronological list. Both views, Excel, CSV and print include the primary
+  compact chronological list. The board and its detailed Excel/CSV export include the primary
   invigilators needed across the exam's rooms (including the lab instructor,
   excluding slot backups) and whether the exam replaces its lab session. Room
   names are compact, for example `PAD / P-B-4F / 13` becomes `P-B-4F/13`.
   Resource identities and the complete report's linked room references are
   unchanged. Enable **Include ASD exams** to add the ASD reference schedule to this
   report only (off by default). ASD cards and rows are muted in both views and
-  print/PDF; Excel and CSV identify them as **ASD (reference)** in the **Schedule**
-  column. ASD resource/student fields are blank in files and marked not applicable
-  in the preview. Department resource and student totals stay unchanged.
+  print/PDF; detailed Excel and CSV identify them as **ASD (reference)** in the **Schedule**
+  column. ASD resource/student fields are blank in those files. The chronological
+  list uses exactly **#**, **Date**, **Day**, **Time**, **Course**, and **Course title**,
+  with no room, student, staffing or lab-time details. Its Excel export has a light-blue
+  header, pale-gray rows, and double separators between dates. Dates use `DD/MM/YYYY`
+  and times use `09:00-10:00`. Rows are numbered continuously in a combined file,
+  restarting for separate weekly files. Optional ASD entries are labeled **(ASD)**
+  in the course title and muted in Excel, preview and print. Department resource
+  and student totals stay unchanged.
 - **Staff duties**: each exam duty and slot-level backup, plus a separate workload
   summary in Excel and print. Teaching-time duties add zero extra load; backup
   duties remain separate. Use the **Overall** preview tab for totals and duties
@@ -290,11 +296,12 @@ new page with exam information above its student/room table. Long CRN lists
 continue onto additional pages with repeated table headers; preview pagination,
 exam selection and search never truncate the print output.
 For **Exam overview**, choose **Week board** or **Chronological list** in the
-preview before printing. The PDF uses that layout for every included week.
+preview before exporting. The PDF uses that layout for every included week.
 The board keeps five weekday columns, compact rooms, staffing requirements and
 lab-time badges. Each week starts on a new page; busy weeks continue onto further
-pages with repeated day headers rather than clipping exam cards. Excel and CSV
-downloads remain tabular regardless of the preview layout.
+pages with repeated day headers rather than clipping exam cards. With **Week board**
+selected, Excel and CSV use the detailed table; **Chronological list** exports the
+compact six-column table matching its preview.
 All export formats require complete, valid resource assignments. Share reports
 containing student names and IDs only with authorised recipients.
 

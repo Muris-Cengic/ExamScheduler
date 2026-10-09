@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { buildCourseSeating, buildExportModel, courseSeatingInfo, formatReportDate, reportDate, REPORT_DAYS, REPORT_VIEWS, reportTimeRange } from "./exportReports.js";
+import { buildCourseSeating, buildExportModel, courseSeatingInfo, formatChronologicalDate, formatReportDate, reportDate, reportTable, REPORT_DAYS, REPORT_VIEWS, reportTimeRange } from "./exportReports.js";
 import "./ExportStudio.css";
 
 function ReportIcon({ kind }) {
@@ -15,9 +15,9 @@ function ReportIcon({ kind }) {
   </svg>;
 }
 
-function PreviewTable({ columns, rows, rowClassNames = [], limit = Infinity, label }) {
+function PreviewTable({ columns, rows, rowClassNames = [], limit = Infinity, label, className = "" }) {
   return <div className="export-table-wrap" tabIndex="0" aria-label={label}>
-    <table className="export-table">
+    <table className={"export-table" + (className ? " " + className : "")}>
       <caption className="sr-only">{label}</caption>
       <thead><tr>{columns.map((column) => <th key={column} scope="col">{column}</th>)}</tr></thead>
       <tbody>{rows.slice(0, limit).map((row, index) => <tr key={index} className={rowClassNames[index]}>{row.map((cell, column) => <td key={column}>{cell}</td>)}</tr>)}</tbody>
@@ -39,14 +39,13 @@ const studentRows = (model) => model.students.map((student) => [student.id, stud
   student.day + " / " + reportTimeRange(student.start, student.end), student.roomName]);
 const loadRows = (model, includeIdle = false) => model.workloads.filter((person) => includeIdle || person.exam + person.backup + person.teaching > 0)
   .map((person) => [person.name, person.exam, person.backup, person.teaching, person.exam + person.backup]);
-const overviewColumns = ["Course", "Title", "Day", "Time", "Students", "Rooms", "Primary invigilators needed", "During lab time", "Schedule"];
-const overviewRows = (model) => model.overviewExams.map((exam) => [
-  exam.code, exam.title, exam.day, reportTimeRange(exam.start, exam.end),
-  exam.isAsd ? "N/A" : exam.studentCount, exam.isAsd ? "Not managed here" : exam.roomNames.join("; "),
-  exam.isAsd ? "N/A" : exam.primaryInvigilatorsNeeded, exam.isAsd ? "N/A" : exam.duringLab ? "Yes" : "No",
-  exam.isAsd ? "ASD (reference)" : "Department",
-]);
-const overviewRowClasses = (model) => model.overviewExams.map((exam) => exam.isAsd ? "export-row--asd" : "");
+const overviewColumns = ["#", "Date", "Day", "Time", "Course", "Course title"];
+const overviewRows = (model) => reportTable("overview", model, "table").rows
+  .map((row) => row.map((value, column) => column === 1 ? formatChronologicalDate(value) : value));
+const overviewRowClasses = (model) => model.overviewExams.map((exam, index) => [
+  exam.isAsd ? "export-row--asd" : "",
+  index > 0 && exam.date !== model.overviewExams[index - 1].date ? "export-row--new-day" : "",
+].filter(Boolean).join(" "));
 const overviewNote = "Primary invigilators are exam-room duties, including the lab instructor; slot backups are excluded. Lab time means this exam replaces its listed lab session.";
 const asdReferenceNote = "ASD exams are reference only; their students, rooms and invigilators are not managed or counted here.";
 
@@ -149,9 +148,9 @@ function PrintReport({ report, overviewMode, model, startDate, sessions, catalog
       return <section className="export-print__week" key={week}>
         <header><span>Department exams / confirmed resources</span><h1>{REPORT_VIEWS.find((view) => view.id === report).label}</h1>
           <p>{"Week " + week + " / " + formatReportDate(reportDate(startDate, week, "Monday"), true) + " - " + formatReportDate(reportDate(startDate, week, "Friday"), true)}</p></header>
-        {report === "overview" ? <><p className="export-overview-note">{overviewNote}</p>
+        {report === "overview" ? <>{overviewMode === "board" ? <p className="export-overview-note">{overviewNote}</p> : null}
           {overviewMode === "board" ? <PrintWeekBoard model={current} startDate={startDate} week={week} />
-            : <PreviewTable label="Exam overview" columns={overviewColumns} rows={overviewRows(current)} rowClassNames={overviewRowClasses(current)} />}</> : null}
+            : <PreviewTable label="Exam overview" className="export-table--chronological" columns={overviewColumns} rows={overviewRows(current)} rowClassNames={overviewRowClasses(current)} />}</> : null}
         {report === "complete" ? <><h2>Room assignments</h2><PreviewTable label="Room assignments" columns={["Course", "Day / time", "Room", "Students", "Invigilators", "Room limit"]} rows={ledgerRows(current)} /></> : null}
         {report === "complete" || report === "staff" ? <><h2>Staff duties</h2><PreviewTable label="Staff duties" columns={["Invigilator", "Day / time", "Duty", "Course", "Room", "Load"]} rows={staffRows(current)} />
           <h2>Workload summary</h2><PreviewTable label="Workload summary" columns={["Invigilator", "Exam load", "Backup load", "Teaching duties", "Extra duties"]} rows={loadRows(current)} /></> : null}
@@ -191,7 +190,8 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, asdEx
   const records = report === "students" ? filtered?.students.length : report === "staff" ? filtered?.duties.length : filtered?.roomRows.length;
   const disabled = isExporting || !ready || !selectedWeeks.length;
   const chooseReport = (id) => { setReport(id); if (id === "complete" || id === "seating") setFormat("xlsx"); setSearch(""); setLimit(50); };
-  const exportOptions = { report, format, packaging: report === "seating" ? "course" : packaging, weeks: selectedWeeks, includeAsd: withAsd };
+  const exportOptions = { report, format, packaging: report === "seating" ? "course" : packaging, weeks: selectedWeeks, includeAsd: withAsd,
+    ...(report === "overview" ? { overviewMode: mode } : {}) };
   return <section className="export-studio" aria-label="Export workspace">
     <header className="export-hero">
       <div><h2>Export Schedule</h2></div>
@@ -246,7 +246,7 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, asdEx
             onClick={() => onExport(exportOptions)}>{isExporting ? "Exporting..." : report === "seating" ? "Download Course Files" : report === "complete" ? "Export Timetable" : format === "xlsx" ? "Download Excel" : "Download CSV"}</button>
           <button type="button" disabled={disabled} onClick={() => window.print()}>Print / Save PDF</button>
           {report === "seating" ? <small>Prints every CRN in the included weeks, starting each sheet on a new portrait page.</small> : null}
-          {report === "overview" ? <small className="export-print-layout" role="status">Print layout: {mode === "board" ? "Week board" : "Chronological list"}. Change it using the preview views. All included weeks are printed; Excel and CSV remain tables.</small> : null}
+          {report === "overview" ? <small className="export-print-layout" role="status">Print layout: {mode === "board" ? "Week board" : "Chronological list"}. All included weeks are printed. {mode === "board" ? "Excel and CSV use the detailed table." : "Excel and CSV match the six-column chronological list."}</small> : null}
           <small>{report === "seating" ? "Contains student IDs. Share only with authorised recipients." : report === "complete" || report === "students" ? "Contains student names and IDs. Share only with authorised recipients." : "Only the selected report and included weeks are exported."}</small>
         </div>
       </aside>
@@ -270,10 +270,10 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, asdEx
             onCrnChange={(crn) => { setPreviewCrn(crn); setSearch(""); setLimit(50); }}
             onSearch={(value) => { setSearch(value); setLimit(50); }} onShowMore={() => setLimit((previous) => previous + 50)}
             onDownload={() => onExport({ ...exportOptions, examIds: [seatingExam.id] })} />
-            : report === "overview" ? <><p className="export-overview-note">{overviewNote} {withAsd ? asdReferenceNote : ""}</p><div className="export-view-toggle"><button type="button" aria-pressed={mode === "board"} onClick={() => setMode("board")}>Week board</button>
+            : report === "overview" ? <>{mode === "board" || withAsd ? <p className="export-overview-note">{mode === "board" ? overviewNote : ""} {withAsd ? asdReferenceNote : ""}</p> : null}<div className="export-view-toggle"><button type="button" aria-pressed={mode === "board"} onClick={() => setMode("board")}>Week board</button>
             <button type="button" aria-pressed={mode === "table"} onClick={() => setMode("table")}>Chronological list</button></div>
             {mode === "board" ? <WeekBoard model={current} startDate={startDate} week={activeWeek} /> : <PreviewTable label="Exam overview preview"
-              columns={overviewColumns} rows={overviewRows(current)} rowClassNames={overviewRowClasses(current)} />}</> : <>
+              className="export-table--chronological" columns={overviewColumns} rows={overviewRows(current)} rowClassNames={overviewRowClasses(current)} />}</> : <>
             {report === "complete" ? <WorkbookMap model={current} week={activeWeek} /> : null}
             {report === "staff" ? <details className="export-workloads" open><summary>Workload balance / {previewLabel}</summary>
               {overall ? <p>Totals across included weeks: {selectedWeeks.map((week) => "Week " + week).join(", ")}. Include every week to match the Resource Review Pool. Invigilators with no assignments are shown too.</p> : null}

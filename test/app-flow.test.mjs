@@ -1070,10 +1070,25 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   assert.match(text(find(panel(), (node) => node.props.className === "export-print-layout")), /Print layout: Chronological list/);
   assert.ok(!nodes(printView()).some((node) => node.props.className === "export-board-print"));
   const printedOverviews = nodes(printView()).filter((node) => node.type?.name === "PreviewTable" && node.props.label === "Exam overview");
-  assert.deepEqual(JSON.parse(JSON.stringify(printedOverviews.map((table) => table.props.rows[0].slice(-3)))), [[2, "Yes", "Department"], [1, "No", "Department"]]);
-  assert.ok(printedOverviews.every((table) => table.props.columns.includes("Primary invigilators needed") && table.props.columns.includes("During lab time")));
+  const chronologicalColumns = ["#", "Date", "Day", "Time", "Course", "Course title"];
+  assert.deepEqual(JSON.parse(JSON.stringify(printedOverviews.map((table) => table.props.rows[0].slice(0, 5)))),
+    [[1, "19/10/2026", "Monday", "09:00-10:00", "MAIN-1000"], [1, "27/10/2026", "Tuesday", "12:00-13:00", "MAIN-2000"]]);
+  assert.ok(printedOverviews.every((table) => JSON.stringify(table.props.columns) === JSON.stringify(chronologicalColumns)));
   const labList = find(preview(), (node) => node.type?.name === "PreviewTable" && node.props.label === "Exam overview preview");
-  assert.deepEqual(JSON.parse(JSON.stringify(labList.props.rows[0].slice(-4))), ["P-B-4F/13", 2, "Yes", "Department"]);
+  assert.equal(labList.props.className, "export-table--chronological");
+  assert.deepEqual(JSON.parse(JSON.stringify(labList.props.rows[0].slice(0, 5))), [1, "19/10/2026", "Monday", "09:00-10:00", "MAIN-1000"]);
+  assert.ok(!text(preview()).includes("Primary invigilators"));
+  await button(tree, "Download Excel").props.onClick();
+  const chronologicalZip = await JSZip.loadAsync(await app.downloads.at(-1).arrayBuffer());
+  for (const week of [1, 2]) {
+    const file = await chronologicalZip.file("Week_" + week + "_Exam_Overview.xlsx").async("uint8array");
+    const sheet = XLSX.read(file, { type: "array", cellDates: true, cellNF: true }).Sheets["Exam overview"];
+    assert.deepEqual(XLSX.utils.sheet_to_json(sheet, { header: 1 })[0], chronologicalColumns);
+    assert.equal(sheet["!ref"], "A1:F2");
+    assert.equal(sheet.A2.v, 1);
+    assert.equal(sheet.B2.t, "d");
+    assert.equal(sheet.B2.z, "dd/mm/yyyy");
+  }
   weekInput(1).props.onChange();
   tree = app.render();
   assert.match(text(preview()), /MAIN-2000/);
@@ -1084,8 +1099,9 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   const overviewCsv = await app.downloads.at(-1).text();
   assert.ok(!overviewCsv.includes("Bob"));
   assert.ok(!overviewCsv.includes("PAD"));
-  assert.match(overviewCsv, /"Primary invigilators needed","During lab time"/);
-  assert.match(overviewCsv, /"P-B-4F\/\d+","1","No"/);
+  assert.match(overviewCsv, /"#","Date","Day","Time","Course","Course title"/);
+  assert.match(overviewCsv, /"1","27\/10\/2026","Tuesday","12:00-13:00","MAIN-2000"/);
+  assert.ok(!overviewCsv.includes("Primary invigilators"));
 
   const asdToggle = () => find(find(panel(), (node) => node.type === "label" && text(node).trim() === "Include ASD exams"),
     (node) => node.type === "input");
@@ -1114,20 +1130,20 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   button(tree, "Chronological list").props.onClick();
   tree = app.render();
   const asdList = find(preview(), (node) => node.type?.name === "PreviewTable" && node.props.label === "Exam overview preview");
-  assert.equal(asdList.props.rows[1][0], "ASD-1000", "Department exam stays first at the same time");
-  assert.equal(asdList.props.rows[1].at(-1), "ASD (reference)");
+  assert.equal(asdList.props.rows[1][4], "ASD-1000", "Department exam stays first at the same time");
+  assert.ok(asdList.props.rows[1].at(-1).endsWith(" (ASD)"));
   assert.equal(asdList.props.rowClassNames[1], "export-row--asd");
-  assert.deepEqual(JSON.parse(JSON.stringify(asdList.props.rows[1].slice(4, 8))), ["N/A", "Not managed here", "N/A", "N/A"]);
+  assert.equal(asdList.props.rows[1].length, 6);
   const asdPrintedTables = nodes(printView()).filter((node) => node.type?.name === "PreviewTable" && node.props.label === "Exam overview");
   assert.equal(asdPrintedTables.length, 3);
   assert.equal(asdPrintedTables[0].props.rowClassNames[1], "export-row--asd");
-  assert.equal(asdPrintedTables[2].props.rows[0][0], "ASD-2000");
+  assert.equal(asdPrintedTables[2].props.rows[0][4], "ASD-2000");
   assert.match(text(asdPrintedTables[2]), /10:30-12:00/);
   await button(tree, "Download CSV").props.onClick();
   const asdCsvZip = await JSZip.loadAsync(await app.downloads.at(-1).arrayBuffer());
   assert.deepEqual(Object.keys(asdCsvZip.files).sort(), ["Week_1_Exam_Overview.csv", "Week_2_Exam_Overview.csv", "Week_3_Exam_Overview.csv"]);
-  assert.match(await asdCsvZip.file("Week_1_Exam_Overview.csv").async("string"), /"ASD-1000".*"ASD \(reference\)"/);
-  assert.match(await asdCsvZip.file("Week_3_Exam_Overview.csv").async("string"), /"10:30","12:00","ASD-2000"/);
+  assert.match(await asdCsvZip.file("Week_1_Exam_Overview.csv").async("string"), /"ASD-1000".* \(ASD\)"/);
+  assert.match(await asdCsvZip.file("Week_3_Exam_Overview.csv").async("string"), /"10:30-12:00","ASD-2000"/);
   weekInput(1).props.onChange();
   weekInput(2).props.onChange();
   tree = app.render();
@@ -1140,7 +1156,8 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   const asdWorkbook = XLSX.read(await app.downloads.at(-1).arrayBuffer(), { type: "array" });
   const asdExcelRow = XLSX.utils.sheet_to_json(asdWorkbook.Sheets["Exam overview"])[0];
   assert.equal(asdExcelRow.Course, "ASD-2000");
-  assert.equal(asdExcelRow.Schedule, "ASD (reference)");
+  assert.ok(asdExcelRow["Course title"].endsWith(" (ASD)"));
+  assert.equal(asdExcelRow.Schedule, undefined);
   assert.equal(asdExcelRow.Students, undefined);
   assert.equal(asdExcelRow["Primary invigilators needed"], undefined);
   asdToggle().props.onChange({ target: { checked: false } });
@@ -1426,7 +1443,7 @@ test("week-board printing keeps every exam in busy days and all included weeks, 
   assert.equal(printedBoards().length, 0);
   const table = find(printView(), (node) => node.type?.name === "PreviewTable");
   assert.equal(table.props.rows.length, 1);
-  assert.equal(table.props.rows[0][0], "EXAM-12");
+  assert.equal(table.props.rows[0][4], "EXAM-12");
   button(tree, "Week board").props.onClick();
   tree = app.render();
   assert.equal(printedBoards().length, 1, "Switching back restores the printable board");

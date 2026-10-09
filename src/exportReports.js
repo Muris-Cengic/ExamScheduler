@@ -205,7 +205,15 @@ function courseSeatingWorkbook(exam) {
   return workbook;
 }
 
-export function reportTable(report, model) {
+export const formatChronologicalDate = (value) => value.split("-").reverse().join("/");
+
+export function reportTable(report, model, overviewMode = "board") {
+  if (report === "overview" && overviewMode === "table") return {
+    columns: ["#", "Date", "Day", "Time", "Course", "Course title"],
+    widths: [5, 13, 15, 16, 16, 52],
+    rows: model.overviewExams.map((exam, index) => [index + 1, exam.date, exam.day,
+      reportTimeRange(exam.start, exam.end), exam.code, exam.title + (exam.isAsd ? " (ASD)" : "")]),
+  };
   if (report === "overview") return {
     columns: ["Week", "Date", "Day", "Start", "End", "Course", "Course title", "CRNs", "Students", "Rooms", "Assigned rooms", "Primary invigilators needed", "During lab time", "Schedule"],
     widths: [10, 18, 16, 12, 12, 18, 44, 22, 12, 12, 48, 30, 20, 24],
@@ -228,13 +236,47 @@ export function reportTable(report, model) {
   throw new Error("Choose a supported focused report.");
 }
 
-function appendTable(workbook, name, columns, rows, widths, dateColumn) {
+function appendTable(workbook, name, columns, rows, widths, dateColumn, dateFormat = "dd mmm yyyy") {
   const typedRows = rows.map((row) => row.map((value, index) => index === dateColumn
-    ? { t: "d", v: new Date(value + "T00:00:00Z"), z: "dd mmm yyyy" } : value));
+    ? { t: "d", v: new Date(value + "T00:00:00Z"), z: dateFormat } : value));
   const sheet = XLSX.utils.aoa_to_sheet([columns, ...typedRows]);
   sheet["!cols"] = widths.map((wch) => ({ wch }));
   sheet["!autofilter"] = { ref: sheet["!ref"] };
   XLSX.utils.book_append_sheet(workbook, sheet, name);
+  return sheet;
+}
+
+function styleChronologicalSheet(sheet, table, exams) {
+  const rule = (style) => ({ style, color: { rgb: "FF111111" } });
+  const lineCount = (value, width) => String(value).split(/\r\n|\r|\n/)
+    .reduce((count, line) => count + Math.max(1, Math.ceil(line.length / (width - 2))), 0);
+  delete sheet["!autofilter"];
+  sheet["!rows"] = [{ hpt: 22 }];
+  [table.columns, ...table.rows].forEach((values, row) => {
+    const header = row === 0;
+    const asd = !header && exams[row - 1].isAsd;
+    const newDay = row > 1 && exams[row - 1].date !== exams[row - 2].date;
+    if (!header) sheet["!rows"][row] = {
+      hpt: Math.max(18, ...values.map((value, column) => lineCount(
+        column === 1 ? formatChronologicalDate(value) : value, table.widths[column]) * 15)),
+    };
+    values.forEach((_, column) => {
+      const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
+      cell.s = {
+        font: { name: "Calibri", sz: 11, color: { rgb: asd ? "FF777F89" : "FF111111" }, ...(asd ? { italic: true } : {}) },
+        fill: { patternType: "solid", fgColor: { rgb: header ? "FFA9C9E8" : asd ? "FFF7F7F7" : "FFF2F2F2" } },
+        alignment: { vertical: "center", horizontal: column === 0 ? "right" : "left", wrapText: true },
+        numFmt: header ? "General" : column === 0 ? "0" : column === 1 ? "dd/mm/yyyy" : "@",
+        border: {
+          ...(header ? { top: rule("thin"), bottom: rule("medium") } : {}),
+          ...(newDay ? { top: rule("double") } : {}),
+          ...(row === table.rows.length ? { bottom: rule("thin") } : {}),
+          ...(column === 0 ? { left: rule("thin") } : {}),
+          ...(column === table.columns.length - 1 ? { right: rule("thin") } : {}),
+        },
+      };
+    });
+  });
 }
 
 export function buildCombinedResourceWorkbook(options) {
@@ -257,11 +299,13 @@ export function buildCombinedResourceWorkbook(options) {
   return workbook;
 }
 
-function focusedWorkbook(report, model) {
+function focusedWorkbook(report, model, overviewMode) {
   const workbook = XLSX.utils.book_new();
-  const table = reportTable(report, model);
+  const table = reportTable(report, model, overviewMode);
   const title = REPORT_VIEWS.find((view) => view.id === report).label;
-  appendTable(workbook, title, table.columns, table.rows, table.widths, 1);
+  const chronological = report === "overview" && overviewMode === "table";
+  const sheet = appendTable(workbook, title, table.columns, table.rows, table.widths, 1, chronological ? "dd/mm/yyyy" : "dd mmm yyyy");
+  if (chronological) styleChronologicalSheet(sheet, table, model.overviewExams);
   if (report === "staff") appendTable(workbook, "Workload Summary",
     ["Invigilator", "Exam load", "Backup load", "During teaching hours", "Total extra duties", "Included in pool"],
     model.workloads.map((person) => [person.name, person.exam, person.backup, person.teaching, person.exam + person.backup, person.enabled ? "Yes" : "No"]),
@@ -276,12 +320,13 @@ function csvValue(value) {
   return '"' + text.replace(/"/g, '""') + '"';
 }
 
-export function buildExportFiles({ report = "complete", format = "xlsx", packaging = report === "seating" ? "course" : "combined", examIds, ...options }) {
+export function buildExportFiles({ report = "complete", format = "xlsx", packaging = report === "seating" ? "course" : "combined", overviewMode = "board", examIds, ...options }) {
   const view = REPORT_VIEWS.find((item) => item.id === report);
   if (!view || !["xlsx", "csv"].includes(format) || !(report === "seating" ? packaging === "course" : ["combined", "weekly"].includes(packaging))) throw new Error("Invalid export options.");
   if (report === "complete" && format !== "xlsx") throw new Error("The complete multi-sheet report is available as Excel.");
   if (report === "seating" && format !== "xlsx") throw new Error("Course seating uses Excel files with one sheet per CRN.");
   if (examIds !== undefined && report !== "seating") throw new Error("Exam selection is only available for course seating.");
+  if (report === "overview" && !["board", "table"].includes(overviewMode)) throw new Error("Choose a supported exam overview layout.");
   options = { ...options, includeAsd: report === "overview" && Boolean(options.includeAsd) };
   const model = buildExportModel(options);
   if (report === "seating") {
@@ -301,13 +346,16 @@ export function buildExportFiles({ report = "complete", format = "xlsx", packagi
     const scoped = buildExportModel({ ...options, weeks });
     const filename = (packaging === "weekly" ? "Week_" + weeks[0] + "_" : "") + view.filename + "." + format;
     if (format === "csv") {
-      const table = reportTable(report, scoped);
-      return { filename, mimeType: "text/csv;charset=utf-8", data: "\uFEFF" + [table.columns, ...table.rows].map((row) => row.map(csvValue).join(",")).join("\r\n") + "\r\n" };
+      const table = reportTable(report, scoped, overviewMode);
+      const rows = report === "overview" && overviewMode === "table"
+        ? table.rows.map((row) => row.map((value, column) => column === 1 ? formatChronologicalDate(value) : value)) : table.rows;
+      return { filename, mimeType: "text/csv;charset=utf-8", data: "\uFEFF" + [table.columns, ...rows].map((row) => row.map(csvValue).join(",")).join("\r\n") + "\r\n" };
     }
     const workbook = report === "complete"
       ? packaging === "weekly" ? buildResourceWorkbookForWeek({ ...options, week: weeks[0] }) : buildCombinedResourceWorkbook({ ...options, weeks })
-      : focusedWorkbook(report, scoped);
+      : focusedWorkbook(report, scoped, overviewMode);
     workbook.Props = { Title: view.label, Subject: "Confirmed department exam schedule" };
-    return { filename, mimeType: XLSX_MIME, data: XLSX.write(workbook, { bookType: "xlsx", type: "array", compression: true }) };
+    const writer = report === "overview" && overviewMode === "table" ? StyledXLSX : XLSX;
+    return { filename, mimeType: XLSX_MIME, data: writer.write(workbook, { bookType: "xlsx", type: "array", compression: true }) };
   });
 }
