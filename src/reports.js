@@ -4,15 +4,26 @@ import { invigilatorWorkloads, isTeachingTimeDuty, validateResourcePlan } from "
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const time = (minutes) => `${((Math.floor(minutes / 60) + 11) % 12) + 1}:${String(minutes % 60).padStart(2, "0")} ${minutes >= 720 ? "PM" : "AM"}`;
 
-export function buildResourceWorkbookForWeek({ week, sessions, catalog, plan, startDate, templateHeaders }) {
+export function buildResourceWorkbookForWeek({ week, ...options }) {
+  return buildResourceWorkbook(options, options.sessions.filter((session) => session.week === week), {
+    invSheetName: `Week ${week} Invigilators`, staffSheetName: `Week ${week} Invigilator Pool`, roomSheetName: `Week ${week} Room Pool`,
+  });
+}
+
+export function buildSharedResourceWorkbook({ weeks, ...options }) {
+  const selected = new Set(weeks);
+  const current = options.sessions.filter((session) => selected.has(session.week))
+    .sort((a, b) => a.week - b.week || DAYS.indexOf(a.day) - DAYS.indexOf(b.day) || a.start - b.start || a.end - b.end);
+  return buildResourceWorkbook(options, current, {
+    invSheetName: "Invigilator Duties", staffSheetName: "Invigilator Pool", roomSheetName: "Room Pool",
+  });
+}
+
+function buildResourceWorkbook({ sessions, catalog, plan, startDate, templateHeaders }, current, { invSheetName, staffSheetName, roomSheetName }) {
   const validation = validateResourcePlan(sessions, catalog, plan);
   if (!validation.complete) throw new Error("Complete valid resource assignments before exporting.");
-  const current = sessions.filter((session) => session.week === week);
   if (!current.length) return null;
   const workbook = XLSX.utils.book_new();
-  const invSheetName = `Week ${week} Invigilators`;
-  const staffSheetName = `Week ${week} Invigilator Pool`;
-  const roomSheetName = `Week ${week} Room Pool`;
   const staffRows = new Map(catalog.invigilators.map((person, index) => [person.id, index + 2]));
   const roomRows = new Map(catalog.rooms.map((room, index) => [room.id, index + 2]));
   const staff = new Map(catalog.invigilators.map((person) => [person.id, person]));
@@ -23,7 +34,7 @@ export function buildResourceWorkbookForWeek({ week, sessions, catalog, plan, st
   const formatter = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
   current.forEach((session) => {
     const date = new Date(`${startDate}T00:00:00Z`);
-    date.setUTCDate(date.getUTCDate() + (week - 1) * 7 + DAYS.indexOf(session.day));
+    date.setUTCDate(date.getUTCDate() + (session.week - 1) * 7 + DAYS.indexOf(session.day));
     const range = `${time(session.start)} - ${time(session.end)}`;
     session.rooms.forEach((room, index) => {
       const allocation = plan.allocations[room.id];
@@ -39,8 +50,9 @@ export function buildResourceWorkbookForWeek({ week, sessions, catalog, plan, st
         extraDuty(allocation.invigilatorIds[0]), extraDuty(allocation.invigilatorIds[1]), extraDuty(plan.backups[session.id]?.[index]),
         room.distributionChoice === "standard" ? `Normal limit: ${room.maxStudents}` : `Approved up to 27: ${room.distributionChoice === "merge" ? "merge overflow" : "staffing-aware distribution"}`,
       ]);
-      if (!daily.has(session.day)) daily.set(session.day, [templateHeaders.studentHeader]);
-      room.students.forEach((student) => daily.get(session.day).push([
+      const dailySheetName = `Week ${session.week} ${session.day}`;
+      if (!daily.has(dailySheetName)) daily.set(dailySheetName, [templateHeaders.studentHeader]);
+      room.students.forEach((student) => daily.get(dailySheetName).push([
         student.crn || "", room.code, `${room.title} (${range})`, student.id, student.name,
         { t: "s", v: assignedRoom.name, f: `'${invSheetName}'!H${rowNumber}` }, "",
       ]));
@@ -72,10 +84,10 @@ export function buildResourceWorkbookForWeek({ week, sessions, catalog, plan, st
   const roomSheet = XLSX.utils.aoa_to_sheet(roomData);
   roomSheet["!cols"] = [40, 18, 26, 28, 20].map((wch) => ({ wch }));
   XLSX.utils.book_append_sheet(workbook, roomSheet, roomSheetName);
-  daily.forEach((rows, day) => {
+  daily.forEach((rows, name) => {
     const sheet = XLSX.utils.aoa_to_sheet(rows);
     sheet["!cols"] = [14, 16, 56, 18, 40, 40, 20].map((wch) => ({ wch }));
-    XLSX.utils.book_append_sheet(workbook, sheet, `Week ${week} ${day}`);
+    XLSX.utils.book_append_sheet(workbook, sheet, name);
   });
   return workbook;
 }

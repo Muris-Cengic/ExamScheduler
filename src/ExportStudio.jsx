@@ -90,18 +90,20 @@ function PrintWeekBoard({ model, startDate, week }) {
   </table>;
 }
 
-function WorkbookMap({ model, week }) {
+function WorkbookMap({ model, week, packaging }) {
+  const combined = packaging === "combined";
   const sheets = [
-    ["Invigilators", model.roomRows.length + " room assignments"],
-    ["Invigilator Pool", model.workloads.length + " named invigilators"],
-    ["Room Pool", "Confirmed room references"],
-    ...REPORT_DAYS.filter((day) => model.sessions.some((session) => session.day === day))
-      .map((day) => [day, model.students.filter((student) => student.day === day).length + " student sittings"]),
+    ...(combined ? [["Schedule Index", model.selectedWeeks.length + " included weeks"]] : []),
+    [combined ? "Invigilator Duties" : "Week " + week + " Invigilators", model.roomRows.length + " room assignments"],
+    [(combined ? "" : "Week " + week + " ") + "Invigilator Pool", model.workloads.length + " named invigilators"],
+    [(combined ? "" : "Week " + week + " ") + "Room Pool", "Confirmed room references"],
+    ...model.selectedWeeks.flatMap((currentWeek) => REPORT_DAYS.filter((day) => model.sessions.some((session) => session.week === currentWeek && session.day === day))
+      .map((day) => ["Week " + currentWeek + " " + day, model.students.filter((student) => student.week === currentWeek && student.day === day).length + " student sittings"])),
   ];
   return <div className="export-sheet-map" aria-label="Workbook sheet preview">
     {sheets.map(([name, detail], index) => <div key={name}><span>{String(index + 1).padStart(2, "0")}</span>
-      <strong>{"Week " + week + " " + name}</strong><small>{detail}</small></div>)}
-    <p>Room and invigilator references remain linked inside Excel. A combined workbook adds a Schedule Index and preserves every week's sheets.</p>
+      <strong>{name}</strong><small>{detail}</small></div>)}
+    <p>{combined ? "Duties and pools cover all included weeks once. Student sheets stay separate by week and day." : "Each weekly workbook has its own duties, pools and daily student sheets."} Room and invigilator references remain linked inside Excel.</p>
   </div>;
 }
 
@@ -341,7 +343,7 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
             <button type="button" aria-pressed={mode === "table"} onClick={() => setMode("table")}>Chronological list</button></div>
             {mode === "board" ? <WeekBoard model={current} startDate={startDate} week={activeWeek} /> : <PreviewTable label="Exam overview preview"
               className="export-table--chronological" columns={overviewColumns} rows={overviewRows(current)} rowClassNames={overviewRowClasses(current)} />}</> : <>
-            {report === "complete" ? <WorkbookMap model={current} week={activeWeek} /> : null}
+            {report === "complete" ? <WorkbookMap model={packaging === "combined" ? selected : current} week={activeWeek} packaging={packaging} /> : null}
             {report === "staff" ? <details className="export-workloads" open><summary>Workload balance / {previewLabel}</summary>
               {overall ? <p>Totals across included weeks: {selectedWeeks.map((week) => "Week " + week).join(", ")}. Include every week to match the Resource Review Pool. Invigilators with no assignments are shown too.</p> : null}
               <PreviewTable label="Workload balance" columns={["Invigilator", "Exam load", "Backup load", "Teaching duties", "Extra duties"]} rows={loadRows(current, overall)} />

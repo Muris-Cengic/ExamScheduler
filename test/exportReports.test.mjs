@@ -309,20 +309,25 @@ test("export model uses confirmed resources, excludes empty weeks and counts sit
   assert.equal(reportDate("2026-12-28", 2, "Friday"), "2027-01-08", "Calendar dates cross year boundaries without host-timezone shifts");
 });
 
-test("combined complete report preserves every weekly formula and adds a navigable schedule index", () => {
+test("combined complete report shares duties and pools with correct daily references and schedule links", () => {
   const options = fixture();
   const workbook = buildCombinedResourceWorkbook(options);
   assert.equal(workbook.SheetNames[0], "Schedule Index");
   assert.deepEqual(rows(workbook, "Schedule Index").slice(1).map((row) => row[0]), [1, 2]);
-  assert.equal(workbook.Sheets["Schedule Index"].F2.l.Target, "#'Week 1 Invigilators'!A1");
+  assert.deepEqual(workbook.SheetNames, ["Schedule Index", "Invigilator Duties", "Invigilator Pool", "Room Pool", "Week 1 Monday", "Week 2 Tuesday"]);
+  assert.equal(workbook.Sheets["Schedule Index"].F2.l.Target, "#'Invigilator Duties'!A2");
+  assert.equal(workbook.Sheets["Schedule Index"].F3.l.Target, "#'Invigilator Duties'!A3");
   for (const week of [1, 2]) {
-    assert.ok(workbook.Sheets["Week " + week + " Invigilators"]);
     const day = week === 1 ? "Monday" : "Tuesday";
     const daily = workbook.Sheets["Week " + week + " " + day];
-    assert.equal(daily.F2.f, "'Week " + week + " Invigilators'!H2");
-    const staff = workbook.Sheets["Week " + week + " Invigilator Pool"];
-    assert.match(staff.B2.f, new RegExp("Week " + week + " Invigilators"));
+    assert.equal(daily.F2.f, "'Invigilator Duties'!H" + (week === 1 ? 2 : 3));
   }
+  assert.equal(workbook.Sheets["Week 2 Tuesday"].F15.f, "'Invigilator Duties'!H4", "The second room links to its own global duty row");
+  const duties = workbook.Sheets["Invigilator Duties"];
+  assert.equal(duties.I2.f, "'Invigilator Pool'!A2");
+  assert.match(duties.H2.f, /^'Room Pool'!A\d+$/);
+  assert.match(workbook.Sheets["Invigilator Pool"].B2.f, /SUMIF\('Invigilator Duties'!I:I.*SUMIF\('Invigilator Duties'!J:J/);
+  assert.equal(workbook.Sheets["Room Pool"].B2.f, "COUNTIF('Invigilator Duties'!H:H,A2)");
   // Round-trip the file, checking that every referenced sheet actually exists.
   const restored = read(buildExportFiles(options)[0]);
   for (const sheet of Object.values(restored.Sheets)) {
@@ -330,8 +335,39 @@ test("combined complete report preserves every weekly formula and adds a navigab
       if (cell?.f) for (const match of cell.f.matchAll(/'([^']+)'!/g)) assert.ok(restored.Sheets[match[1]], "Missing referenced sheet: " + match[1]);
     }
   }
-  assert.equal(restored.Sheets["Week 1 Invigilator Pool"].B2.v, 0);
-  assert.equal(restored.Sheets["Week 1 Invigilator Pool"].D2.v, 1);
+  const workload = buildExportModel(options).workloads[0];
+  assert.equal(restored.Sheets["Invigilator Pool"].B2.v, workload.exam);
+  assert.equal(restored.Sheets["Invigilator Pool"].C2.v, workload.backup);
+  assert.equal(restored.Sheets["Invigilator Pool"].D2.v, workload.teaching);
+  const dutyRows = rows(restored, "Invigilator Duties").slice(1);
+  rows(restored, "Invigilator Pool").slice(1).forEach(([name, exam, backup, teaching, total]) => {
+    const expectedExam = dutyRows.reduce((sum, row) => sum + (row[8] === name ? row[11] : 0) + (row[9] === name ? row[12] : 0), 0);
+    const expectedBackup = dutyRows.reduce((sum, row) => sum + (row[10] === name ? row[13] : 0), 0);
+    const count = dutyRows.reduce((sum, row) => sum + row.slice(8, 11).filter((value) => value === name).length, 0);
+    assert.deepEqual([exam, backup, teaching, total], [expectedExam, expectedBackup, count - expectedExam - expectedBackup, expectedExam + expectedBackup]);
+  });
+  rows(restored, "Room Pool").slice(1).forEach(([name, count]) => {
+    assert.equal(count, dutyRows.filter((row) => row[7] === name).length);
+  });
+});
+
+test("shared duties and pool totals include only selected non-contiguous weeks and keep recurring days separate", () => {
+  const options = fixture();
+  options.sessions.push(...buildExamSessions({ 3: { Monday: { "12:00": ["C"] } } }, { C: course("C", 5) }, 60));
+  options.sessions.reverse();
+  options.plan = assignResources(options.sessions, options.catalog);
+  const scoped = { ...options, weeks: [3, 1, 3] };
+  const before = JSON.stringify(scoped);
+  const workbook = read(buildExportFiles(scoped)[0]);
+  assert.deepEqual(workbook.SheetNames, ["Schedule Index", "Invigilator Duties", "Invigilator Pool", "Room Pool", "Week 1 Monday", "Week 3 Monday"]);
+  assert.deepEqual(rows(workbook, "Invigilator Duties").slice(1).map((row) => row[1]), ["A", "C"]);
+  assert.equal(workbook.Sheets["Schedule Index"].F3.l.Target, "#'Invigilator Duties'!A3");
+  assert.equal(workbook.Sheets["Week 3 Monday"].F2.f, "'Invigilator Duties'!H3");
+  const expected = buildExportModel(scoped);
+  assert.deepEqual(rows(workbook, "Invigilator Pool").slice(1).map((row) => row.slice(0, 5)),
+    expected.workloads.map((person) => [person.name, person.exam, person.backup, person.teaching, person.exam + person.backup]));
+  assert.equal(rows(workbook, "Room Pool").slice(1).reduce((sum, row) => sum + row[1], 0), 2);
+  assert.equal(JSON.stringify(scoped), before);
 });
 
 test("complete Excel packaging supports one workbook, weekly files and non-contiguous selected weeks", () => {
@@ -597,8 +633,8 @@ test("overview room labels remove standalone PAD tokens and compact separators w
   assert.match(csv, /"P-B-4F\/13","2","Yes"/);
   assert.ok(!csv.includes("PAD"));
   const complete = read(buildExportFiles(options)[0]);
-  assert.equal(complete.Sheets["Week 1 Invigilators"].H2.v, "PAD / P-B-4F / 13");
-  assert.equal(complete.Sheets["Week 1 Monday"].F2.f, "'Week 1 Invigilators'!H2");
+  assert.equal(complete.Sheets["Invigilator Duties"].H2.v, "PAD / P-B-4F / 13");
+  assert.equal(complete.Sheets["Week 1 Monday"].F2.f, "'Invigilator Duties'!H2");
   assert.equal(complete.Sheets["Week 1 Monday"].F2.v, "PAD / P-B-4F / 13");
   assert.equal(JSON.stringify(options), before, "Display formatting cannot mutate saved resources or assignments");
 });

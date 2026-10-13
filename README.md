@@ -322,7 +322,11 @@ previews:
 
 Choose which populated exam weeks to include. For Excel reports other than Course
 seating, select **One workbook** or **Separate weekly files**. The combined complete report adds a navigable
-**Schedule Index** and preserves all week-qualified sheet names and formula links.
+**Schedule Index**, one shared **Invigilator Duties** sheet, one **Invigilator Pool**
+and one **Room Pool**. Duty rows and pool totals cover only included weeks.
+Student sheets remain separate by week/day and link to the correct rows in the
+shared duties sheet. The index links to the first duty row for each week.
+Separate weekly files retain their own week-qualified duties and pools.
 Multiple weekly files download as one ZIP; a single selected week downloads
 directly. Empty weeks are excluded. With **Include ASD exams** enabled, the Exam
 overview also offers weeks containing only ASD exams. ASD never appears in the

@@ -830,7 +830,7 @@ test("wizard imports, exam toggles, draft, saved-state round trip and report exc
   const asdCodes = new Set(snapshot.courses.filter((course) => department.assignmentIds(snapshot.asdAssignments).has(course.id)).map((course) => course.code));
   for (const bytes of exportedBytes) {
     const workbook = XLSX.read(bytes, { type: "array" });
-    const invigilators = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames.find((name) => /Invigilators$/.test(name))], { header: 1 });
+    const invigilators = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames.find((name) => name === "Invigilator Duties" || /Invigilators$/.test(name))], { header: 1 });
     invigilators.slice(1).forEach((row) => {
       assert.ok(!asdCodes.has(row[1]), "ASD excluded from invigilator reports");
       assert.ok(Number(row[3]) <= 25);
@@ -916,7 +916,7 @@ test("CRN Info choices control invigilator availability across scheduling, revie
   tree = app.render();
   assert.equal(find(tree, (node) => node.type?.name === "ExportStudio").props.ready, true);
   await button(tree, "Export Timetable").props.onClick();
-  assert.equal(XLSX.read(await app.downloads.at(-1).arrayBuffer(), { type: "array" }).Sheets["Week 1 Invigilators"].G2.v, "Alice");
+  assert.equal(XLSX.read(await app.downloads.at(-1).arrayBuffer(), { type: "array" }).Sheets["Invigilator Duties"].G2.v, "Alice");
   const loaded = harness();
   tree = loaded.render();
   await find(tree, (node) => node.type === "input" && node.props.accept === "application/json").props.onChange(jsonEvent(saved));
@@ -1062,7 +1062,7 @@ test("room consolidation choices require a click, preserve other exams, survive 
   tree = reloaded.render();
   await button(tree, "Export Timetable").props.onClick();
   const exported = XLSX.read(await reloaded.downloads.at(-1).arrayBuffer(), { type: "array" });
-  const reportRows = XLSX.utils.sheet_to_json(exported.Sheets["Week 1 Invigilators"], { header: 1 });
+  const reportRows = XLSX.utils.sheet_to_json(exported.Sheets["Invigilator Duties"], { header: 1 });
   const examRows = reportRows.slice(1).filter((row) => row[1] === exam.code);
   assert.deepEqual(examRows.map((row) => row[3]), [26, 26]);
   assert.ok(examRows.every((row) => /Approved up to 27/.test(row[14])));
@@ -1128,7 +1128,7 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   assert.equal(weekInput(2).props.checked, true);
   assert.ok(!nodes(panel()).some((node) => node.props["aria-label"] === "Include Week 3"), "Empty weeks are omitted");
   assert.ok(!text(panel()).includes("ASD-1000"));
-  assert.match(text(preview()), /Week 1 Invigilators/);
+  assert.match(text(preview()), /Invigilator Duties/);
   assert.match(text(preview()), /19 Oct 2026/, "Preview and downloads use the same Monday-aligned date");
   find(preview(), (node) => node.type === "input" && node.props.type === "search").props.onChange({ target: { value: "Staff 0" } });
   tree = app.render();
@@ -1136,13 +1136,14 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   await button(tree, "Export Timetable").props.onClick();
   const combined = XLSX.read(await app.downloads.at(-1).arrayBuffer(), { type: "array" });
   assert.ok(combined.Sheets["Schedule Index"]);
-  assert.ok(combined.Sheets["Week 1 Invigilators"]);
-  assert.ok(combined.Sheets["Week 2 Invigilators"]);
-  assert.match(combined.Sheets["Week 1 Invigilators"].E2.v, /19 Oct 2026/);
-  assert.equal(combined.Sheets["Week 2 Tuesday"].F2.f, "'Week 2 Invigilators'!H2");
+  assert.deepEqual(combined.SheetNames, ["Schedule Index", "Invigilator Duties", "Invigilator Pool", "Room Pool", "Week 1 Monday", "Week 2 Tuesday"]);
+  assert.match(combined.Sheets["Invigilator Duties"].E2.v, /19 Oct 2026/);
+  assert.equal(combined.Sheets["Week 2 Tuesday"].F2.f, "'Invigilator Duties'!H3");
 
   radio("Separate weekly files").props.onChange();
   tree = app.render();
+  assert.match(text(preview()), /Week 1 Invigilators/);
+  assert.ok(!text(preview()).includes("Duties and pools cover all included weeks once"));
   await button(tree, "Export Timetable").props.onClick();
   const zip = await JSZip.loadAsync(await app.downloads.at(-1).arrayBuffer());
   assert.deepEqual(Object.keys(zip.files).sort(), ["Midterm Exam Schedule Fall 26-27 Complete Report Week 1.xlsx", "Midterm Exam Schedule Fall 26-27 Complete Report Week 2.xlsx"]);

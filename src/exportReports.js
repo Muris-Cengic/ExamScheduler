@@ -1,7 +1,7 @@
 import * as XLSX from "xlsx/xlsx.mjs";
 import StyledXLSX from "xlsx-js-style";
 import { clock, invigilatorWorkloads, isTeachingTimeDuty, validateResourcePlan } from "./resources.js";
-import { buildResourceWorkbookForWeek } from "./reports.js";
+import { buildResourceWorkbookForWeek, buildSharedResourceWorkbook } from "./reports.js";
 import { inferAcademicTerm } from "./examSetup.js";
 
 export const REPORT_VIEWS = [
@@ -380,19 +380,19 @@ export function buildCombinedResourceWorkbook(options) {
   options = { ...options, includeAsd: false };
   const model = buildExportModel(options);
   const workbook = XLSX.utils.book_new();
+  let dutyRow = 2;
   const rows = model.selectedWeeks.map((week) => {
     const exams = model.exams.filter((exam) => exam.week === week);
     const roomRows = model.roomRows.filter((room) => room.week === week);
+    const target = "#'Invigilator Duties'!A" + dutyRow;
+    dutyRow += roomRows.length;
     return [week, reportDate(options.startDate, week, "Monday"), exams.length, roomRows.length,
       roomRows.reduce((sum, room) => sum + room.studentCount, 0),
-      { t: "s", v: "Open Week " + week, l: { Target: "#'Week " + week + " Invigilators'!A1" } }];
+      { t: "s", v: "Open Week " + week, l: { Target: target } }];
   });
   appendTable(workbook, "Schedule Index", ["Week", "Week commencing", "Exams", "Room sessions", "Student sittings", "Weekly report"], rows, [10, 22, 14, 18, 20, 28], 1);
-  model.selectedWeeks.forEach((week) => {
-    const weekly = buildResourceWorkbookForWeek({ ...options, week });
-    // Week-qualified sheet names preserve every existing cross-sheet formula.
-    weekly.SheetNames.forEach((name) => XLSX.utils.book_append_sheet(workbook, weekly.Sheets[name], name));
-  });
+  const shared = buildSharedResourceWorkbook({ ...options, weeks: model.selectedWeeks });
+  shared.SheetNames.forEach((name) => XLSX.utils.book_append_sheet(workbook, shared.Sheets[name], name));
   return workbook;
 }
 
