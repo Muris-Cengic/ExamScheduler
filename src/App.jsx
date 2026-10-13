@@ -13,7 +13,7 @@ import ResourcePool from "./ResourcePool.jsx";
 import { FRIDAY_EXAM_NOTICE, isFridayExamTimeAllowed } from "./examWindows.js";
 import { assignResources, buildExamSessions, parseResourceCatalog, readResourceCatalog, readResourcePlan, reconcileRoomDistribution, resourceFingerprint, scopeInvigilatorAvailability, validateResourcePlan } from "./resources.js";
 import { examInvigilatorsNeeded, examRoomSizes, readRoomDistributionChoices, roomCapacity } from "./examRooms.js";
-import { buildAsdOverviewExams, buildExportFiles, reportFileName } from "./exportReports.js";
+import { buildAsdOverviewExams, buildEnvelopeCoverFiles, buildExportFiles, reportFileName } from "./exportReports.js";
 import ExportStudio from "./ExportStudio.jsx";
 import { inferAcademicTerm } from "./examSetup.js";
 import ImportPrompt from "./ImportPrompt.jsx";
@@ -2192,7 +2192,8 @@ function App() {
 
     try {
       const templateHeaders = (options.report || "complete") === "complete" ? await getTemplateHeaders() : undefined;
-      const exportedFiles = buildExportFiles({
+      const exportFiles = options.report === "envelopes" && options.format === "pdf" ? buildEnvelopeCoverFiles : buildExportFiles;
+      const exportedFiles = await exportFiles({
         ...options, templateHeaders, startDate: exportStartDate, examStartDate: startDate,
         sessions: examSessions, catalog: activeResourceCatalog, plan: resourcePlan,
         asdExams: asdOverviewExams,

@@ -1434,6 +1434,99 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   assert.equal(asdToggle().props.checked, true, "The overview preference is retained without affecting another report");
   assert.equal(weekInput(3).props.checked, true);
   assert.match(text(preview()), /ASD-1000/);
+  reportButton("Envelope covers").props.onClick();
+  tree = app.render();
+  assert.equal(radio("PDF covers (.pdf)").props.checked, true);
+  assert.ok(!nodes(panel()).some((node) => node.props.className === "export-asd-option" || node.props["aria-label"] === "Include Week 3"));
+  assert.ok(!text(preview()).includes("ASD-") && !text(printView()).includes("ASD-"));
+  assert.ok(!text(preview()).includes("Alice") && !text(preview()).includes("StudentID"));
+  assert.ok(!text(printView()).includes("Department"));
+  assert.match(text(preview()), /MAIN-1000 Envelope Cover/);
+  assert.equal(nodes(printView()).filter((node) => node.props.className === "export-print__envelope").length, 1);
+  await button(tree, "Download This Course").props.onClick();
+  assert.equal(app.downloadNames.at(-1), "MAIN-1000 - First Exam.pdf");
+  assert.equal((await app.downloads.at(-1).text()).slice(0, 5), "%PDF-");
+  weekInput(2).props.onChange();
+  tree = app.render();
+  assert.equal(nodes(printView()).filter((node) => node.props.className === "export-print__envelope").length, 2);
+  await button(tree, "Download Envelope PDFs").props.onClick();
+  assert.equal(app.downloadNames.at(-1), "Midterm Exam Schedule Fall 26-27 Envelope Covers.zip");
+  const coverZip = await JSZip.loadAsync(await app.downloads.at(-1).arrayBuffer());
+  assert.deepEqual(Object.keys(coverZip.files).sort(), ["MAIN-1000 - First Exam.pdf", "MAIN-2000 - Second Exam.pdf"]);
+  assert.equal((await coverZip.file("MAIN-2000 - Second Exam.pdf").async("string")).slice(0, 5), "%PDF-");
+  radio("Excel (.xlsx)").props.onChange();
+  tree = app.render();
+  radio("One workbook").props.onChange();
+  tree = app.render();
+  await button(tree, "Download Excel").props.onClick();
+  assert.equal(app.downloadNames.at(-1), "Midterm Exam Schedule Fall 26-27 Envelope Covers.xlsx");
+  const packing = XLSX.read(await app.downloads.at(-1).arrayBuffer(), { type: "array" });
+  assert.deepEqual(packing.SheetNames, ["2026-10-19 0900-1000", "2026-10-27 1200-1300"]);
+  button(tree, "Print / Save PDF").props.onClick();
+  assert.equal(app.printedTitles.at(-1), "Midterm Exam Schedule Fall 26-27 Envelope Covers");
+  assert.equal(app.documentTitle(), "Midterm Exam Scheduling Helper");
+  weekInput(1).props.onChange();
+  weekInput(2).props.onChange();
+  tree = app.render();
+  assert.equal(button(tree, "Download Excel").props.disabled, true);
+  assert.equal(button(tree, "Print / Save PDF").props.disabled, true);
+});
+
+test("envelope preview switches courses and rooms without restricting downloads or print to that preview", () => {
+  const course = (code, count) => ({ id: code, code, title: code + " title", crns: ["101", "102"], labSessions: [],
+    students: Array.from({ length: count }, (_, i) => ({ id: code + "-PRIVATE-" + i, name: "Private name " + i, crn: i < 25 ? "101" : "102" })) });
+  const sessions = resources.buildExamSessions({ 1: { Monday: { "12:00": ["A", "B"] } }, 2: { Tuesday: { "12:00": ["C"] } } },
+    { A: course("A", 60), B: course("B", 2), C: course("C", 3) }, 60);
+  const catalog = {
+    rooms: Array.from({ length: 5 }, (_, i) => ({ id: "R" + i, name: "PAD / P-B-4F / " + (13 + i), enabled: true, busy: [] })),
+    invigilators: Array.from({ length: 12 }, (_, i) => ({ id: "I" + i, name: "Staff " + i, enabled: true, busy: [] })),
+  };
+  const exports = [];
+  const props = { sessions, catalog, plan: resources.assignResources(sessions, catalog), startDate: "2026-10-19", ready: true, isExporting: false,
+    onExport(options) { exports.push(JSON.parse(JSON.stringify(options))); } };
+  const app = harness("ExportStudio", props);
+  let tree = app.render();
+  button(tree, "Envelope covers").props.onClick();
+  tree = app.render();
+  const preview = () => find(tree, (node) => node.props.className === "export-preview");
+  const print = () => find(tree, (node) => node.props.className === "export-print");
+  const control = (label) => find(preview(), (node) => node.type === "select" && node.props["aria-label"] === label);
+  const cover = () => find(preview(), (node) => node.type?.name === "EnvelopeCover").props.page;
+  const rooms = nodes(control("Envelope room")).filter((node) => node.type === "option");
+  assert.equal(rooms.length, 3);
+  assert.equal(cover().code, "A");
+  const location = find(preview(), (node) => node.type === "div" && node.children.some((child) => child?.type === "dt" && text(child) === "Location"));
+  assert.equal(text(find(location, (node) => node.type === "dd")), cover().roomName.replace("/", "\n"));
+  assert.ok(!text(print()).includes("P-B-4F/"));
+  const counts = find(preview(), (node) => node.type === "dl" && node.props.className.includes("export-envelope-cover__row--counts"));
+  assert.equal(counts.children.length, 2);
+  assert.equal(text(find(counts, (node) => node.type === "small")), "Include one extra copy.");
+  assert.match(text(counts), /# of students.*# of exam copies/);
+  assert.match(text(print()), /# of exam copies/);
+  assert.match(text(print()), /Include one extra copy\./);
+  control("Envelope room").props.onChange({ target: { value: rooms[2].props.value } });
+  tree = app.render();
+  assert.equal(cover().id, rooms[2].props.value);
+  const selectedRoom = sessions.flatMap((session) => session.rooms).find((room) => room.id === cover().id);
+  assert.deepEqual(Array.from(cover().crns), [...new Set(selectedRoom.students.map((student) => student.crn))].sort());
+  assert.ok(!text(preview()).includes("Private name") && !text(print()).includes("PRIVATE"));
+  assert.equal(nodes(print()).filter((node) => node.type?.name === "EnvelopeCover").length, 5);
+  button(tree, "Download Envelope PDFs").props.onClick();
+  assert.deepEqual(exports.at(-1), { report: "envelopes", format: "pdf", packaging: "course", weeks: [1, 2], includeAsd: false });
+  control("Envelope course").props.onChange({ target: { value: "B" } });
+  tree = app.render();
+  assert.equal(cover().code, "B");
+  assert.equal(cover().studentCount, 2);
+  button(tree, "Download This Course").props.onClick();
+  assert.deepEqual(exports.at(-1).courseCodes, ["B"]);
+  assert.equal(exports.at(-1).format, "pdf");
+  button(preview(), "Week 2").props.onClick();
+  tree = app.render();
+  assert.equal(cover().code, "C", "An unavailable prior selection falls back to a valid course in this week");
+  button(tree, "Staff duties").props.onClick();
+  tree = app.render();
+  assert.ok(!nodes(tree).some((node) => node.type?.name === "EnvelopeCover"));
+  assert.ok(nodes(tree).some((node) => node.type === "input" && node.props.name === "export-format" && node.props.checked));
 });
 
 test("PDF names follow the setup term, layout, selected weeks and actual ASD entries, restoring the page title", () => {

@@ -10,6 +10,7 @@ export const REPORT_VIEWS = [
   { id: "staff", label: "Staff duties", audience: "For invigilators", description: "Named duties and a workload summary. Backups and replaced teaching hours stay separate.", filename: "Staff Duties" },
   { id: "students", label: "Student room lists", audience: "For room check-in", description: "Every student sitting, with the course, time and confirmed room. Contains personal data.", filename: "Student Room Lists" },
   { id: "seating", label: "Course seating", audience: "For course sections", description: "One Excel file per exam, with a student-to-room sheet for each CRN.", filename: "Course Seating" },
+  { id: "envelopes", label: "Envelope covers", audience: "For exam packing", description: "Room-specific A4 covers, course PDFs and a session packing list. No student names or IDs.", filename: "Envelope Covers" },
 ];
 export const REPORT_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -26,7 +27,7 @@ export function reportFileName({ report = "complete", startDate, format = "xlsx"
     : view.filename;
   return ["Midterm Exam Schedule", term.semester, year,
     report === "overview" && includeAsd ? "ASD Included" : "", layout,
-    week !== undefined ? "Week " + week : "", format === "zip" && report !== "seating" ? "Weekly Files" : "",
+    week !== undefined ? "Week " + week : "", format === "zip" && !["seating", "envelopes"].includes(report) ? "Weekly Files" : "",
   ].filter(Boolean).join(" ") + "." + format;
 }
 
@@ -144,6 +145,85 @@ export function buildCourseSeating(model) {
 export function courseSeatingInfo(exam) {
   return [["Course", exam.code], ["Course title", exam.title],
     ["Date", exam.date], ["Day", exam.day], ["Time", reportTimeRange(exam.start, exam.end)]];
+}
+
+export function buildEnvelopeCourses(model) {
+  const courses = new Map();
+  // Use the reviewed room rosters, never re-slice enrollment to estimate CRNs or counts.
+  [...model.roomRows].sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start || a.end - b.end ||
+    a.code.localeCompare(b.code, "en", { numeric: true }) || a.roomName.localeCompare(b.roomName, "en", { numeric: true }))
+    .forEach((room) => {
+      const course = courses.get(room.code) || { code: room.code, title: room.title, pages: [] };
+      course.pages.push({ id: room.id, code: room.code, title: room.title, week: room.week, day: room.day,
+        date: room.date, start: room.start, end: room.end, roomName: formatRoomDisplayName(room.roomName),
+        crns: [...room.crns].sort((a, b) => a.localeCompare(b, "en", { numeric: true })), studentCount: room.studentCount });
+      courses.set(room.code, course);
+    });
+  return [...courses.values()].sort((a, b) => a.code.localeCompare(b.code, "en", { numeric: true }));
+}
+
+export const envelopeCoverInfo = (page) => [["Course Title", page.title], ["CRNs", page.crns.join(", ")],
+  ["# of students", String(page.studentCount)], ["# of exam copies", "", "Include one extra copy."], ["Instructor Name", ""]];
+export function envelopeCoverRows(page) {
+  const [title, crns, students, copies, instructor] = envelopeCoverInfo(page);
+  return [[title], [crns], [students, copies], [instructor]];
+}
+export function envelopeSessionInfo(page) {
+  const parts = formatRoomDisplayName(page.roomName).split("/");
+  const location = parts.length > 1 ? parts.slice(0, -1).join(" ") + "\n" + parts.at(-1) : parts[0];
+  return [["Date", formatChronologicalDate(page.date)], ["Time", reportTimeRange(page.start, page.end)], ["Location", location]];
+}
+
+export async function buildEnvelopeCoverFiles({ report = "envelopes", format = "pdf", packaging = "course", courseCodes, ...options }) {
+  if (report !== "envelopes" || format !== "pdf" || packaging !== "course") throw new Error("Envelope covers use course PDF files.");
+  const courses = buildEnvelopeCourses(buildExportModel({ ...options, includeAsd: false }));
+  if (courseCodes !== undefined && (!Array.isArray(courseCodes) || !courseCodes.length ||
+    courseCodes.some((code) => !courses.some((course) => course.code === code)))) throw new Error("Choose a course from the included weeks.");
+  const { envelopeCoverPdf } = await import("./envelopePdf.js");
+  const filenames = new Set();
+  return courses.filter((course) => courseCodes === undefined || courseCodes.includes(course.code)).map((course) => ({
+    filename: uniqueExportName((course.code + " - " + course.title).replace(/[<>:"/\\|?*\p{Cc}]/gu, "_").trim().replace(/[. ]+$/g, ""), filenames, 180) + ".pdf",
+    mimeType: "application/pdf", data: envelopeCoverPdf(course.pages),
+  }));
+}
+
+function envelopeWorkbook(model) {
+  const workbook = XLSX.utils.book_new();
+  const sessions = new Map();
+  buildEnvelopeCourses(model).forEach((course) => course.pages.forEach((page) => {
+    const key = page.date + "/" + page.start + "/" + page.end;
+    const group = sessions.get(key) || { date: page.date, start: page.start, end: page.end, courses: new Map() };
+    const entry = group.courses.get(course.code) || { ...course, pages: [] };
+    entry.pages.push(page);
+    group.courses.set(course.code, entry);
+    sessions.set(key, group);
+  }));
+  [...sessions.values()].sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start || a.end - b.end).forEach((session) => {
+    const rows = [["Date", formatChronologicalDate(session.date)], ["Time", reportTimeRange(session.start, session.end)],
+      [], ["Course / room", "Students"]];
+    const headings = new Set([0, 1, 3]);
+    session.courses.forEach((course) => {
+      headings.add(rows.length);
+      rows.push([course.code + " - " + course.title, course.pages.reduce((sum, page) => sum + page.studentCount, 0)]);
+      course.pages.forEach((page) => rows.push([page.roomName, page.studentCount]));
+    });
+    const sheet = XLSX.utils.aoa_to_sheet(rows);
+    sheet["!cols"] = [{ wch: 68 }, { wch: 18 }];
+    sheet["!rows"] = rows.map((row, index) => ({ hpt: Math.max(22, Math.ceil(String(row[0] || "").length / 60) * 16 + 8), hidden: false,
+      ...(index === 2 ? { hpt: 10 } : {}) }));
+    rows.forEach((row, index) => row.forEach((_, column) => {
+      sheet[XLSX.utils.encode_cell({ r: index, c: column })].s = {
+        font: { name: "Calibri", sz: 11, bold: headings.has(index), color: { rgb: "FF244761" } },
+        fill: { patternType: "solid", fgColor: { rgb: index <= 3 ? "FFD8E7E2" : headings.has(index) ? "FFF0F4F7" : "FFFFFFFF" } },
+        alignment: { vertical: "center", horizontal: column === 1 ? "right" : "left", wrapText: true,
+          ...(!headings.has(index) && column === 0 ? { indent: 1 } : {}) },
+        border: { bottom: { style: "thin", color: { rgb: "FFD8E0E8" } } },
+      };
+    }));
+    const name = session.date + " " + clock(session.start).replace(":", "") + "-" + clock(session.end).replace(":", "");
+    XLSX.utils.book_append_sheet(workbook, sheet, name);
+  });
+  return workbook;
 }
 
 function uniqueExportName(base, used, maxLength) {
@@ -342,6 +422,7 @@ export function buildExportFiles({ report = "complete", format = "xlsx", packagi
   if (!view || !["xlsx", "csv"].includes(format) || !(report === "seating" ? packaging === "course" : ["combined", "weekly"].includes(packaging))) throw new Error("Invalid export options.");
   if (report === "complete" && format !== "xlsx") throw new Error("The complete multi-sheet report is available as Excel.");
   if (report === "seating" && format !== "xlsx") throw new Error("Course seating uses Excel files with one sheet per CRN.");
+  if (report === "envelopes" && format !== "xlsx") throw new Error("The envelope packing list uses Excel. Use course PDF export for covers.");
   if (examIds !== undefined && report !== "seating") throw new Error("Exam selection is only available for course seating.");
   if (report === "overview" && !["board", "table"].includes(overviewMode)) throw new Error("Choose a supported exam overview layout.");
   options = { ...options, includeAsd: report === "overview" && Boolean(options.includeAsd) };
@@ -371,9 +452,9 @@ export function buildExportFiles({ report = "complete", format = "xlsx", packagi
     }
     const workbook = report === "complete"
       ? packaging === "weekly" ? buildResourceWorkbookForWeek({ ...options, week: weeks[0] }) : buildCombinedResourceWorkbook({ ...options, weeks })
-      : focusedWorkbook(report, scoped, overviewMode);
+      : report === "envelopes" ? envelopeWorkbook(scoped) : focusedWorkbook(report, scoped, overviewMode);
     workbook.Props = { Title: filename.slice(0, -5), Subject: "Confirmed department exam schedule" };
-    const writer = report === "overview" && overviewMode === "table" ? StyledXLSX : XLSX;
+    const writer = report === "envelopes" || report === "overview" && overviewMode === "table" ? StyledXLSX : XLSX;
     return { filename, mimeType: XLSX_MIME, data: writer.write(workbook, { bookType: "xlsx", type: "array", compression: true }) };
   });
 }

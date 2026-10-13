@@ -175,6 +175,28 @@
 .export-show-more { margin: 16px 26px; font-size: 11px !important; }
 .export-empty { padding: 40px 26px; text-align: center; color: var(--export-muted); font-size: 13px; }
 .export-print { display: none; }
+.export-envelope-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding: 20px 26px; }
+.export-envelope-controls label { display: grid; flex: 1 1 220px; gap: 6px; min-width: 0; font-size: 12px; }
+.export-envelope-controls select { max-width: 100%; min-width: 0; padding: 10px; font: inherit; border: 1px solid var(--export-line); border-radius: 6px; background: #fff; }
+.export-envelope-cover { max-width: 620px; margin: 0 auto; padding: clamp(16px, 4vw, 40px); color: #1f2937; background: #fff; font-family: "Segoe UI", sans-serif; }
+.export-envelope-cover h4 { margin: 0 0 28px; text-align: center; font-size: clamp(20px, 3vw, 30px); line-height: 1.2; overflow-wrap: anywhere; }
+.export-envelope-cover dl { margin: 0; }
+.export-envelope-cover__fields { display: grid; gap: 20px; }
+.export-envelope-cover__row { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 16px; }
+.export-envelope-cover__row > div { min-width: 0; min-height: 88px; padding: 18px; box-sizing: border-box; border: 1px solid #bec2c9; border-radius: 9px; }
+.export-envelope-cover__row--counts dt { min-height: 2.8em; line-height: 1.4; }
+.export-envelope-cover__row small { display: block; margin-top: 10px; color: #64748b; font-size: 11px; line-height: 1.4; }
+.export-envelope-cover dt { font-size: 14px; font-weight: 700; }
+.export-envelope-cover dd { margin: 16px 0 0; font-size: 20px; line-height: 1.3; overflow-wrap: anywhere; }
+.export-envelope-cover .export-envelope-cover__session { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 20px; padding: 24px 12px; text-align: center; border: 1px solid #bec2c9; border-radius: 9px; }
+.export-envelope-cover__session dd { white-space: pre-line; }
+.export-envelope-packing { padding: 20px 26px; }
+.export-envelope-packing summary { margin-bottom: 16px; font-weight: 600; cursor: pointer; }
+@media (max-width: 600px) {
+  .export-envelope-controls, .export-envelope-packing { padding: 16px; }
+  .export-envelope-cover dd { font-size: 16px; }
+  .export-envelope-cover .export-envelope-cover__session { gap: 8px; padding: 20px 8px; }
+}
 .export-studio .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 @keyframes export-arrive { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 1000px) {
@@ -214,6 +236,18 @@
   .export-print__week { break-before: page; }
   .export-print__week:first-child { break-before: auto; }
   .export-print[data-report="seating"] { page: exam-seating; }
+  .export-print[data-report="envelopes"] { page: exam-seating; }
+  .export-print__envelope { break-before: page; break-inside: avoid; }
+  .export-print__envelope:first-child { break-before: auto; }
+  .export-print .export-envelope-cover { max-width: none; padding: 4mm; }
+  .export-print .export-envelope-cover h4 { font: bold 24pt/1.2 "Segoe UI", sans-serif; margin: 0 0 8mm; }
+  .export-print .export-envelope-cover dt { font-size: 12pt; }
+  .export-print .export-envelope-cover dd { font-size: 16pt; margin-top: 4mm; }
+  .export-print .export-envelope-cover__fields { gap: 6mm; }
+  .export-print .export-envelope-cover__row { gap: 4mm; }
+  .export-print .export-envelope-cover__row > div { min-height: 28mm; padding: 5mm; }
+  .export-print .export-envelope-cover__row small { font-size: 9pt; margin-top: 3mm; }
+  .export-print .export-envelope-cover .export-envelope-cover__session { margin-top: 6mm; padding: 8mm 3mm; gap: 4mm; }
   .export-print__crn { break-before: page; }
   .export-print__crn:first-child { break-before: auto; }
   .export-print .export-seating-sheet > header { padding: 0 0 4mm; break-inside: avoid; }

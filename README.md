@@ -302,14 +302,31 @@ previews:
   Excel sheets use a blue title and table headers, shaded exam-detail labels and
   alternating room-group shading with separators. Long text wraps without
   widening the student table.
+- **Envelope covers**: adapted from the General Exam Scheduling app. Preview a
+  course and room, then download A4 portrait PDFs with one page per confirmed
+  course/room allocation. Each cover has the course code/title, that room's CRNs
+  and **# of students**, a blank **# of exam copies** field beside the
+  student count with the note **Include one extra copy.**, a blank **Instructor Name**, exam date/time and room
+  location. Building/location and room appear on separate lines, without a slash
+  (for example, **P-B-4F** above **13**). The **Department** field is omitted. Student names, IDs, invigilator
+  names and ASD exams are never included. Counts and CRNs come directly from the
+  reviewed room rosters, not a new distribution of enrollment.
+  **Download Envelope PDFs** produces one **Course code - Course title.pdf** per
+  course, combining its room covers across included weeks; multiple courses are
+  packaged in a **Midterm Exam Schedule Fall 26-27 Envelope Covers.zip** archive.
+  **Download This Course** exports only the selected course for all included
+  weeks. Choose **Excel** for a styled packing list, with a sheet per exam
+  date/time showing course totals and individual room counts. It supports one
+  combined workbook or separate weekly workbooks. **Print / Save PDF** prints
+  every room cover in the included weeks, not just the selected preview.
 
-Choose which populated exam weeks to include. For reports other than Course
+Choose which populated exam weeks to include. For Excel reports other than Course
 seating, select **One workbook** or **Separate weekly files**. The combined complete report adds a navigable
 **Schedule Index** and preserves all week-qualified sheet names and formula links.
 Multiple weekly files download as one ZIP; a single selected week downloads
 directly. Empty weeks are excluded. With **Include ASD exams** enabled, the Exam
 overview also offers weeks containing only ASD exams. ASD never appears in the
-Complete report, Staff duties, Student room lists or Course seating, including their print/PDF
+Complete report, Staff duties, Student room lists, Course seating or Envelope covers, including their print/PDF
 exports.
 
 Report filenames include the semester and academic year from **Exam Setup**,

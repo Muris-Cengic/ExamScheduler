@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { buildCourseSeating, buildExportModel, courseSeatingInfo, formatChronologicalDate, formatReportDate, reportDate, reportFileName, reportTable, REPORT_DAYS, REPORT_VIEWS, reportTimeRange } from "./exportReports.js";
+import { buildCourseSeating, buildEnvelopeCourses, buildExportModel, courseSeatingInfo, envelopeCoverRows, envelopeSessionInfo, formatChronologicalDate, formatReportDate, reportDate, reportFileName, reportTable, REPORT_DAYS, REPORT_VIEWS, reportTimeRange } from "./exportReports.js";
 import "./ExportStudio.css";
 
 function ReportIcon({ kind }) {
@@ -9,6 +9,7 @@ function ReportIcon({ kind }) {
     staff: "M16 21v-3a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v3M21 21v-3a4 4 0 0 0-3-4M18 3a4 4 0 0 1 0 8",
     students: "M4 3h16v18H4V3ZM8 7h8M8 11h8M8 15h4",
     seating: "M3 4h18v16H3V4ZM3 9h18M11 9v11M6 13h2M6 16h2M14 13h4M14 16h4",
+    envelopes: "M3 5h18v14H3V5Zm0 0 9 7 9-7M3 19l6-6m12 6-6-6",
   };
   return <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d={paths[kind]} />{kind === "staff" ? <circle cx="9" cy="7" r="4" /> : null}
@@ -135,7 +136,47 @@ function SeatingPreview({ exams, exam, sheet, onExamChange, onCrnChange, search,
   </>;
 }
 
+function EnvelopeCover({ page }) {
+  return <article className="export-envelope-cover" aria-label={page.code + " envelope cover for " + page.roomName}>
+    <h4>{page.code} Envelope Cover</h4>
+    <div className="export-envelope-cover__fields">{envelopeCoverRows(page).map((row) => <dl key={row[0][0]}
+      className={"export-envelope-cover__row" + (row.length > 1 ? " export-envelope-cover__row--counts" : "")}>
+      {row.map(([label, value, note]) => <div key={label}>
+        <dt>{label}</dt><dd>{value || "\u00a0"}</dd>{note ? <small>{note}</small> : null}
+      </div>)}
+    </dl>)}</div>
+    <dl className="export-envelope-cover__session">{envelopeSessionInfo(page).map(([label, value]) => <div key={label}>
+      <dt>{label}</dt><dd>{value}</dd>
+    </div>)}</dl>
+  </article>;
+}
+
+function EnvelopePreview({ courses, course, page, onCourseChange, onRoomChange, onDownload, disabled }) {
+  return <>
+    <div className="export-envelope-controls">
+      <label><span>Course</span><select aria-label="Envelope course" value={course.code} disabled={disabled}
+        onChange={(event) => onCourseChange(event.target.value)}>{courses.map((item) => <option key={item.code} value={item.code}>
+          {item.code}: {item.title}</option>)}</select></label>
+      <label><span>Room / exam</span><select aria-label="Envelope room" value={page.id} disabled={disabled}
+        onChange={(event) => onRoomChange(event.target.value)}>{course.pages.map((item) => <option key={item.id} value={item.id}>
+          {formatReportDate(item.date)} / {reportTimeRange(item.start, item.end)} / {item.roomName} / {item.studentCount} students</option>)}</select></label>
+      <button type="button" onClick={onDownload} disabled={disabled}>Download This Course</button>
+    </div>
+    <EnvelopeCover page={page} />
+    <details className="export-envelope-packing" open><summary>Session packing list / this week</summary>
+      <PreviewTable label="Envelope packing list" columns={["Date", "Time", "Course", "Room", "CRNs", "Students"]}
+        rows={courses.flatMap((item) => item.pages).sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start || a.code.localeCompare(b.code))
+          .map((item) => [formatChronologicalDate(item.date), reportTimeRange(item.start, item.end), item.code, item.roomName, item.crns.join(", "), item.studentCount])} />
+    </details>
+  </>;
+}
+
 function PrintReport({ report, overviewMode, model, startDate, sessions, catalog, plan, asdExams }) {
+  if (report === "envelopes") return <div className="export-print" data-report="envelopes">
+    {buildEnvelopeCourses(model).flatMap((course) => course.pages.map((page) => <section className="export-print__envelope" key={page.id}>
+      <EnvelopeCover page={page} />
+    </section>))}
+  </div>;
   if (report === "seating") return <div className="export-print" data-report="seating">
     {buildCourseSeating(model).flatMap((exam) => exam.crnSheets.map((sheet) => <section className="export-print__crn" key={exam.id + "/" + sheet.crn}>
       <SeatingSheet exam={exam} sheet={sheet} label={exam.code + " CRN " + (sheet.crn || "Unspecified") + " seating"} />
@@ -173,6 +214,7 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
   const [limit, setLimit] = useState(50);
   const [previewExam, setPreviewExam] = useState(null);
   const [previewCrn, setPreviewCrn] = useState(null);
+  const [previewRoom, setPreviewRoom] = useState(null);
   const withAsd = report === "overview" && includeAsd;
   const full = useMemo(() => ready ? buildExportModel({ sessions, catalog, plan, startDate, asdExams, includeAsd: withAsd }) : null, [sessions, catalog, plan, startDate, asdExams, withAsd, ready]);
   const selectedWeeks = useMemo(() => full?.selectedWeeks.filter((week) => !excludedWeeks.includes(week)) || [], [full, excludedWeeks]);
@@ -183,14 +225,18 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
   const seatingExams = useMemo(() => report === "seating" && current ? buildCourseSeating(current) : [], [report, current]);
   const seatingExam = seatingExams.find((exam) => exam.id === previewExam) || seatingExams[0];
   const seatingSheet = seatingExam?.crnSheets.find((sheet) => sheet.crn === previewCrn) || seatingExam?.crnSheets[0];
+  const envelopeCourses = useMemo(() => report === "envelopes" && current ? buildEnvelopeCourses(current) : [], [report, current]);
+  const envelopeCourse = envelopeCourses.find((course) => course.code === previewExam) || envelopeCourses[0];
+  const envelopePage = envelopeCourse?.pages.find((page) => page.id === previewRoom) || envelopeCourse?.pages[0];
   const previewLabel = overall ? "Overall" : "Week " + activeWeek;
   const view = REPORT_VIEWS.find((item) => item.id === report);
   const matches = (record) => Object.values(record).flat().filter((value) => typeof value === "string").join(" ").toLowerCase().includes(search.toLowerCase());
   const filtered = current ? { ...current, roomRows: current.roomRows.filter(matches), duties: current.duties.filter(matches), students: current.students.filter(matches) } : null;
   const records = report === "students" ? filtered?.students.length : report === "staff" ? filtered?.duties.length : filtered?.roomRows.length;
   const disabled = isExporting || !ready || !selectedWeeks.length;
-  const chooseReport = (id) => { setReport(id); if (id === "complete" || id === "seating") setFormat("xlsx"); setSearch(""); setLimit(50); };
-  const exportOptions = { report, format, packaging: report === "seating" ? "course" : packaging, weeks: selectedWeeks, includeAsd: withAsd,
+  const chooseReport = (id) => { setReport(id); if (id === "envelopes") setFormat("pdf"); else if (id === "complete" || id === "seating" || format === "pdf") setFormat("xlsx"); setSearch(""); setLimit(50); };
+  const coursePdfs = report === "envelopes" && format === "pdf";
+  const exportOptions = { report, format, packaging: report === "seating" || coursePdfs ? "course" : packaging, weeks: selectedWeeks, includeAsd: withAsd,
     ...(report === "overview" ? { overviewMode: mode } : {}) };
   const pdfFilename = reportFileName({ report, startDate: examStartDate, format: "pdf", overviewMode: mode,
     includeAsd: selected?.overviewExams.some((exam) => exam.isAsd), week: selectedWeeks.length === 1 ? selectedWeeks[0] : undefined });
@@ -239,25 +285,31 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
           <p>One workbook per exam, with a sheet for each CRN. Uses confirmed room assignments.</p>
           <small>Multiple workbooks download as a ZIP. Student names and ASD exams are excluded.</small>
         </div> : <><fieldset className="export-format"><legend>File format</legend>
+          {report === "envelopes" ? <label><input type="radio" name="export-format" checked={format === "pdf"} disabled={isExporting} onChange={() => setFormat("pdf")} />PDF covers (.pdf)</label> : null}
           <label><input type="radio" name="export-format" checked={format === "xlsx"} disabled={isExporting} onChange={() => setFormat("xlsx")} />Excel (.xlsx)</label>
-          <label><input type="radio" name="export-format" checked={format === "csv"} disabled={isExporting || report === "complete"} onChange={() => setFormat("csv")} />CSV (.csv)</label>
+          {report !== "envelopes" ? <label><input type="radio" name="export-format" checked={format === "csv"} disabled={isExporting || report === "complete"} onChange={() => setFormat("csv")} />CSV (.csv)</label> : null}
+          {report === "envelopes" ? <small>PDF: one A4 page per room, grouped by course. Excel: packing list with one sheet per session.</small> : null}
           {report === "complete" ? <small>The complete report keeps its linked Excel sheets.</small> : report === "staff" && format === "csv" ? <small>CSV contains duties; the workload summary is included in Excel and print.</small> : null}
         </fieldset>
-        <fieldset className="export-packaging"><legend>Package your files</legend>
+        {coursePdfs ? <div className="export-seating-package"><h3>PDF files by course</h3>
+          <p>Each course PDF contains its room covers for the included weeks.</p><small>Multiple courses download as a ZIP. Instructor Name is left blank; Department is omitted.</small>
+        </div> : <fieldset className="export-packaging"><legend>Package your files</legend>
           <label><input type="radio" name="export-packaging" checked={packaging === "combined"} disabled={isExporting} onChange={() => setPackaging("combined")} />
             <span><strong>{format === "xlsx" ? "One workbook" : "One CSV"}</strong><small>All included weeks in one file.</small></span></label>
           <label><input type="radio" name="export-packaging" checked={packaging === "weekly"} disabled={isExporting} onChange={() => setPackaging("weekly")} />
             <span><strong>Separate weekly files</strong><small>One file per week; multiple files download as a ZIP.</small></span></label>
-        </fieldset>
+        </fieldset>}
         </>}
         <div className="export-download">
-          <p>{report === "seating" ? selected?.exams.length ? selected.exams.length + (selected.exams.length === 1 ? " exam workbook" : " exam workbooks / ZIP download") : "Select a week to export."
+          <p>{coursePdfs ? selected ? buildEnvelopeCourses(selected).length + " course PDFs / " + selected.roomRows.length + " room covers" : "Select a week to export."
+            : report === "seating" ? selected?.exams.length ? selected.exams.length + (selected.exams.length === 1 ? " exam workbook" : " exam workbooks / ZIP download") : "Select a week to export."
             : selectedWeeks.length ? packaging === "weekly" && selectedWeeks.length > 1 ? selectedWeeks.length + " weekly files / ZIP download" : "1 " + (format === "xlsx" ? "Excel workbook" : "CSV file") : "Select a week to export."}</p>
           <button type="button" className="export-download__primary" disabled={disabled}
-            onClick={() => onExport(exportOptions)}>{isExporting ? "Exporting..." : report === "seating" ? "Download Course Files" : report === "complete" ? "Export Timetable" : format === "xlsx" ? "Download Excel" : "Download CSV"}</button>
+            onClick={() => onExport(exportOptions)}>{isExporting ? "Exporting..." : coursePdfs ? "Download Envelope PDFs" : report === "seating" ? "Download Course Files" : report === "complete" ? "Export Timetable" : format === "xlsx" ? "Download Excel" : "Download CSV"}</button>
           <button type="button" disabled={disabled} onClick={handlePrint}>Print / Save PDF</button>
           <small className="export-pdf-filename">PDF name: {pdfFilename}</small>
           {report === "seating" ? <small>Prints every CRN in the included weeks, starting each sheet on a new portrait page.</small> : null}
+          {report === "envelopes" ? <small>Print/PDF includes every room cover in the included weeks, not just the preview.</small> : null}
           {report === "overview" ? <small className="export-print-layout" role="status">Print layout: {mode === "board" ? "Week board" : "Chronological list"}. All included weeks are printed. {mode === "board" ? "Excel and CSV use the detailed table." : "Excel and CSV match the six-column chronological list."}</small> : null}
           <small>{report === "seating" ? "Contains student IDs. Share only with authorised recipients." : report === "complete" || report === "students" ? "Contains student names and IDs. Share only with authorised recipients." : "Only the selected report and included weeks are exported."}</small>
         </div>
@@ -275,13 +327,16 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
           <p>{ready ? "Select at least one exam week above." : "Return to Resources to resolve the assignments before exporting."}</p></div> : <>
           <header className="export-paper-heading"><span className="export-kicker">Department exams / {previewLabel}</span><h3>{view.label}</h3>
             <p>{formatReportDate(reportDate(startDate, overall ? selectedWeeks[0] : activeWeek, "Monday"), true) + " - " + formatReportDate(reportDate(startDate, overall ? selectedWeeks.at(-1) : activeWeek, "Friday"), true)}</p>
-            <small>{report === "overview" ? "Shareable timetable / no student names or IDs" : report === "seating" ? "Student IDs and rooms / one sheet per CRN" : report === "students" ? "Room check-in register / personal data" : report === "staff" ? "Exam duties, slot backups and teaching-time load" : "Confirmed allocations / linked weekly Excel sheets"}</small>
+            <small>{report === "envelopes" ? "One cover per confirmed room / no student names or IDs" : report === "overview" ? "Shareable timetable / no student names or IDs" : report === "seating" ? "Student IDs and rooms / one sheet per CRN" : report === "students" ? "Room check-in register / personal data" : report === "staff" ? "Exam duties, slot backups and teaching-time load" : "Confirmed allocations / linked weekly Excel sheets"}</small>
           </header>
           {report === "seating" ? <SeatingPreview exams={seatingExams} exam={seatingExam} sheet={seatingSheet} search={search} limit={limit} disabled={disabled}
             onExamChange={(id) => { setPreviewExam(id); setPreviewCrn(null); setSearch(""); setLimit(50); }}
             onCrnChange={(crn) => { setPreviewCrn(crn); setSearch(""); setLimit(50); }}
             onSearch={(value) => { setSearch(value); setLimit(50); }} onShowMore={() => setLimit((previous) => previous + 50)}
             onDownload={() => onExport({ ...exportOptions, examIds: [seatingExam.id] })} />
+            : report === "envelopes" && envelopePage ? <EnvelopePreview courses={envelopeCourses} course={envelopeCourse} page={envelopePage} disabled={disabled}
+              onCourseChange={(code) => { setPreviewExam(code); setPreviewRoom(null); }} onRoomChange={setPreviewRoom}
+              onDownload={() => onExport({ ...exportOptions, format: "pdf", packaging: "course", courseCodes: [envelopeCourse.code] })} />
             : report === "overview" ? <>{mode === "board" || withAsd ? <p className="export-overview-note">{mode === "board" ? overviewNote : ""} {withAsd ? asdReferenceNote : ""}</p> : null}<div className="export-view-toggle"><button type="button" aria-pressed={mode === "board"} onClick={() => setMode("board")}>Week board</button>
             <button type="button" aria-pressed={mode === "table"} onClick={() => setMode("table")}>Chronological list</button></div>
             {mode === "board" ? <WeekBoard model={current} startDate={startDate} week={activeWeek} /> : <PreviewTable label="Exam overview preview"
