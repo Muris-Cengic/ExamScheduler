@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { buildCourseSeating, buildEnvelopeCourses, buildExportModel, buildStaffDistribution, courseSeatingInfo, envelopeCoverRows, envelopeSessionInfo, formatChronologicalDate, formatReportDate, reportDate, reportFileName, reportTable, REPORT_DAYS, REPORT_VIEWS, reportTimeRange } from "./exportReports.js";
+import { buildCourseSeating, buildEnvelopeCourses, buildExportModel, buildStaffDistribution, buildStaffSessionRosters, courseSeatingInfo, envelopeCoverRows, envelopeSessionInfo, formatChronologicalDate, formatReportDate, reportDate, reportFileName, reportTable, REPORT_DAYS, REPORT_VIEWS, reportTimeRange } from "./exportReports.js";
 import { clock } from "./resources.js";
 import "./ExportStudio.css";
 
@@ -232,7 +232,36 @@ function StaffDistribution({ model, query = "", sort = "name" }) {
   </section>;
 }
 
-function PrintReport({ report, overviewMode, staffView, model, startDate, sessions, catalog, plan, asdExams }) {
+function StaffSessionRosters({ model, query = "" }) {
+  const search = query.trim().toLowerCase();
+  const days = new Map();
+  buildStaffSessionRosters(model).forEach((session) => {
+    const duties = session.duties.filter((duty) => !search || [duty.name, duty.code, duty.roomName].join(" ").toLowerCase().includes(search));
+    if (!duties.length) return;
+    if (!days.has(session.date)) days.set(session.date, []);
+    days.get(session.date).push({ ...session, duties });
+  });
+  return <section className="staff-sessions" aria-label="Invigilators by session">
+    {[...days].map(([date, sessions]) => <section key={date} className="staff-sessions__day">
+      <header><span>{"Week " + sessions[0].week}</span><h4>{sessions[0].day + " / " + formatReportDate(date, true)}</h4></header>
+      {sessions.map((session) => <article key={session.id} className="staff-sessions__session"
+        aria-label={"Week " + session.week + " / " + session.day + " " + formatReportDate(date) + " / " + reportTimeRange(session.start, session.end) + " invigilators"}>
+        <header><div><h5><time dateTime={date + "T" + clock(session.start)}>{reportTimeRange(session.start, session.end)}</time></h5>
+          <p>{session.courses.join(" / ")}</p></div>
+          <span>{session.invigilatorCount} {session.invigilatorCount === 1 ? "invigilator" : "invigilators"} / {session.roomCount} {session.roomCount === 1 ? "room" : "rooms"}</span>
+        </header>
+        {search ? <p className="staff-sessions__matches">Showing {session.duties.length} matching {session.duties.length === 1 ? "duty" : "duties"}; session totals above are unchanged.</p> : null}
+        <PreviewTable label={"Week " + session.week + " " + session.day + " " + reportTimeRange(session.start, session.end) + " invigilator roster"}
+          className="export-table--session-roster" columns={["Invigilator", "Course", "Room", "Start", "End", "Load"]}
+          rows={session.duties.map((duty) => [<strong>{duty.name}</strong>, duty.code, duty.roomName, clock(duty.start), clock(duty.end),
+            duty.teaching ? <span className="export-teaching">Lab/tutorial hours / 0 load</span> : "1 extra duty"])} />
+      </article>)}
+    </section>)}
+    {!days.size ? <p className="export-empty">No matching session duties.</p> : null}
+  </section>;
+}
+
+function PrintReport({ report, overviewMode, staffView = "duties", model, startDate, sessions, catalog, plan, asdExams }) {
   if (report === "envelopes") return <div className="export-print" data-report="envelopes">
     {buildEnvelopeCourses(model).flatMap((course) => course.pages.map((page) => <section className="export-print__envelope" key={page.id}>
       <EnvelopeCover page={page} />
@@ -255,7 +284,8 @@ function PrintReport({ report, overviewMode, staffView, model, startDate, sessio
             : <PreviewTable label="Exam overview" className="export-table--chronological" columns={overviewColumns} rows={overviewRows(current)} rowClassNames={overviewRowClasses(current)} />}</> : null}
         {report === "complete" ? <><h2>Room assignments</h2><PreviewTable label="Room assignments" columns={["Course", "Day / time", "Room", "Students", "Invigilators", "Room limit"]} rows={ledgerRows(current)} /></> : null}
         {report === "staff" && staffView === "distribution" ? <><h2>Session distribution</h2><StaffDistribution model={current} /></> : null}
-        {report === "complete" || (report === "staff" && staffView !== "distribution") ? <><h2>Staff duties</h2><PreviewTable label="Staff duties" columns={["Invigilator", "Day / time", "Duty", "Course", "Room", "Load"]} rows={staffRows(current)} />
+        {report === "staff" && staffView === "sessions" ? <><h2>Invigilators by session</h2><StaffSessionRosters model={current} /></> : null}
+        {report === "complete" || (report === "staff" && staffView === "duties") ? <><h2>Staff duties</h2><PreviewTable label="Staff duties" columns={["Invigilator", "Day / time", "Duty", "Course", "Room", "Load"]} rows={staffRows(current)} />
           <h2>Workload summary</h2><PreviewTable label="Workload summary" columns={["Invigilator", "Exam load", "Teaching duties"]} rows={loadRows(current)} /></> : null}
         {report === "complete" || report === "students" ? <><h2>Student room lists</h2><PreviewTable label="Student room lists" columns={["Student ID", "Name", "Course", "CRN", "Day / time", "Room"]} rows={studentRows(current)} /></> : null}
         <footer>{model.includeAsd ? asdReferenceNote : "ASD exams are excluded."} Teaching-time duties do not add extra invigilation load. {report === "complete" || report === "students" ? "Contains student personal data." : ""}</footer>
@@ -375,7 +405,7 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
           {report === "seating" ? <small>Prints every CRN in the included weeks, starting each sheet on a new portrait page.</small> : null}
           {report === "envelopes" ? <small>Print/PDF includes every room cover in the included weeks, not just the preview.</small> : null}
           {report === "overview" ? <small className="export-print-layout" role="status">Print layout: {mode === "board" ? "Week board" : "Chronological list"}. All included weeks are printed. {mode === "board" ? "Excel and CSV use the detailed table." : "Excel and CSV match the six-column chronological list."}</small> : null}
-          {report === "staff" ? <small>Print layout: {staffView === "distribution" ? "Session distribution with daily start/end times" : "Duty list and workload summary"}. All included weeks are printed.</small> : null}
+          {report === "staff" ? <small>Print layout: {staffView === "distribution" ? "Session distribution with daily start/end times" : staffView === "sessions" ? "Invigilators by session" : "Duty list and workload summary"}. All included weeks are printed.</small> : null}
           <small>{report === "seating" ? "Contains student IDs. Share only with authorised recipients." : report === "complete" || report === "students" ? "Contains student names and IDs. Share only with authorised recipients." : "Only the selected report and included weeks are exported."}</small>
         </div>
       </aside>
@@ -410,6 +440,7 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
             {report === "staff" ? <div className="export-view-toggle" aria-label="Staff duty views">
               <button type="button" aria-pressed={staffView === "duties"} onClick={() => { setStaffView("duties"); setSearch(""); setLimit(50); }}>Duty list</button>
               <button type="button" aria-pressed={staffView === "distribution"} onClick={() => { setStaffView("distribution"); setSearch(""); }}>Session distribution</button>
+              <button type="button" aria-pressed={staffView === "sessions"} onClick={() => { setStaffView("sessions"); setSearch(""); }}>Invigilators by session</button>
             </div> : null}
             {report === "staff" && staffView === "duties" ? <details className="export-workloads" open><summary>Workload balance / {previewLabel}</summary>
               {overall ? <p>Totals across included weeks: {selectedWeeks.map((week) => "Week " + week).join(", ")}. Include every week to match the Resource Review Pool. Invigilators with no assignments are shown too.</p> : null}
@@ -421,10 +452,10 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
               <label className="staff-distribution__sort">Sort invigilators<select value={staffSort} onChange={(event) => setStaffSort(event.target.value)}>
                 <option value="name">Name</option><option value="exam">Extra exam load (highest first)</option><option value="total">Exam-room duties (highest first)</option>
               </select></label><StaffDistribution model={current} query={search} sort={staffSort} />
-            </> : <PreviewTable label={view.label + " preview"} limit={limit}
+            </> : report === "staff" && staffView === "sessions" ? <StaffSessionRosters model={current} query={search} /> : <PreviewTable label={view.label + " preview"} limit={limit}
               columns={report === "students" ? ["Student ID", "Name", "Course", "CRN", "Day / time", "Room"] : report === "staff" ? ["Invigilator", overall ? "Week / date / time" : "Day / time", "Duty", "Course", "Room", "Load"] : ["Course", "Day / time", "Room", "Students", "Invigilators", "Room limit"]}
               rows={report === "students" ? studentRows(filtered) : report === "staff" ? staffRows(filtered, overall) : ledgerRows(filtered)} />}
-            {!(report === "staff" && staffView === "distribution") && records > limit ? <button type="button" className="export-show-more" onClick={() => setLimit((previous) => previous + 50)}>Show 50 more ({records - limit} remaining)</button> : null}
+            {!(report === "staff" && staffView !== "duties") && records > limit ? <button type="button" className="export-show-more" onClick={() => setLimit((previous) => previous + 50)}>Show 50 more ({records - limit} remaining)</button> : null}
           </>}
           <footer className="export-preview__footer">Previewing {overall ? "all included weeks" : previewLabel}. {report === "seating" ? "Download This Exam includes only the selected exam, with all its CRNs. Course files and print include all " : "Downloads and print include all "}{selectedWeeks.length} selected {selectedWeeks.length === 1 ? "week" : "weeks"}. {withAsd ? asdReferenceNote : "ASD exams are excluded."}</footer>
         </>}

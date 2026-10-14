@@ -189,6 +189,22 @@
 .staff-distribution__span--long { border-color: #e5bd7b; border-radius: 4px; background: #fff3df; color: #80510b; }
 .staff-distribution__unknown { color: #80510b; overflow-wrap: anywhere; }
 .staff-distribution__week-total { margin: 8px 0 0 75px; font-size: 10px; color: var(--export-muted); }
+.staff-sessions { padding: 0 26px 24px; }
+.staff-sessions__day + .staff-sessions__day { margin-top: 28px; }
+.staff-sessions__day > header { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 12px; }
+.staff-sessions__day > header > span { padding: 3px 7px; border: 1px solid var(--export-line); border-radius: 4px; color: var(--export-muted); font-size: 10px; }
+.staff-sessions__day h4 { margin: 0; color: var(--export-ink); font-size: 13px; font-weight: 600; }
+.staff-sessions__session { overflow: hidden; border: 1px solid var(--export-line); border-radius: 8px; }
+.staff-sessions__session + .staff-sessions__session { margin-top: 14px; }
+.staff-sessions__session > header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; padding: 14px 16px; border-left: 3px solid #7296cf; border-bottom: 1px solid var(--export-line); background: #f3f7fc; }
+.staff-sessions__session h5 { margin: 0; color: #365d91; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.staff-sessions__session header p { margin: 4px 0 0; font-size: 11px; color: var(--export-muted); overflow-wrap: anywhere; }
+.staff-sessions__session > header > span { padding: 5px 8px; border-radius: 4px; background: #e3ecfa; color: #365d91; font-size: 11px; }
+.staff-sessions__matches { margin: 10px 16px; color: var(--export-muted); font-size: 10px; }
+.staff-sessions .export-table-wrap { max-height: none; }
+.export-table--session-roster th, .export-table--session-roster td { padding: 10px 12px; }
+.export-table--session-roster th:first-child, .export-table--session-roster td:first-child { min-width: 155px; }
+.export-table--session-roster td:nth-child(4), .export-table--session-roster td:nth-child(5) { white-space: nowrap; min-width: 60px; font-variant-numeric: tabular-nums; }
 .export-seating-package { margin-top: 24px; padding: 16px; border: 1px solid var(--export-line); border-radius: 8px; background: #f7f9fc; }
 .export-seating-package p, .export-seating-package small { font-size: 12px; color: var(--export-muted); line-height: 1.6; }
 .export-seating-package p { margin: 0 0 8px; }
@@ -256,6 +272,7 @@
   .export-search, .export-workloads { margin: 16px; }
   .staff-distribution__legend, .staff-distribution__sort { margin-left: 16px; margin-right: 16px; }
   .staff-distribution__note { margin: 10px 16px 16px; }
+  .staff-sessions { padding: 0 16px 16px; }
   .export-overview-note { margin: 16px 16px 0; }
   .export-board { grid-template-columns: minmax(0, 1fr); padding: 16px; }
   .export-board__day > header { font-size: 13px; }
@@ -318,6 +335,14 @@
   .export-print .staff-distribution__grid { min-width: 0; grid-template-columns: 20mm repeat(5, minmax(12mm, 1fr)); }
   .export-print .staff-distribution__dot { width: 18px; font-size: 8pt; }
   .export-print .staff-distribution__span { font-size: 7pt; }
+  .export-print .staff-sessions { padding: 0; }
+  .export-print .staff-sessions__day > header { break-after: avoid; }
+  .export-print .staff-sessions__day + .staff-sessions__day { margin-top: 6mm; }
+  .export-print .staff-sessions__session { overflow: visible; border-radius: 0; margin-top: 3mm; }
+  .export-print .staff-sessions__session > header { break-after: avoid; padding: 3mm; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .export-print .staff-sessions__session h5 { font-size: 12pt; }
+  .export-print .staff-sessions__session > header > span { font-size: 8pt; }
+  .export-print .export-table--session-roster td:first-child { min-width: 0; }
   .export-print .export-table--chronological { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
   .export-print .export-table--chronological th { background: #a9c9e8; padding: 1mm 2mm; }
   .export-print .export-table--chronological td { padding: 1mm 2mm; }

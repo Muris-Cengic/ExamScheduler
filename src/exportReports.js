@@ -122,6 +122,24 @@ export function buildExportModel({ sessions, catalog, plan, startDate, weeks, as
     summary: { exams: exams.length, roomSessions: roomRows.length, students: new Set(students.map((student) => student.id)).size, sittings: students.length } };
 }
 
+export function buildStaffSessionRosters(model) {
+  const bySession = new Map();
+  model.duties.forEach((duty) => {
+    if (!bySession.has(duty.sessionId)) bySession.set(duty.sessionId, []);
+    bySession.get(duty.sessionId).push(duty);
+  });
+  return [...model.sessions].sort((a, b) => a.week - b.week || REPORT_DAYS.indexOf(a.day) - REPORT_DAYS.indexOf(b.day) || a.start - b.start || a.end - b.end)
+    .map((session) => {
+      const duties = [...(bySession.get(session.id) || [])].sort((a, b) => a.name.localeCompare(b.name) ||
+        a.code.localeCompare(b.code) || a.roomName.localeCompare(b.roomName, "en", { numeric: true }));
+      return { id: session.id, week: session.week, day: session.day, date: reportDate(model.startDate, session.week, session.day),
+        start: session.start, end: session.end, duties, roomCount: session.rooms.length,
+        invigilatorCount: new Set(duties.map((duty) => duty.invigilatorId)).size,
+        courses: [...new Set(session.rooms.map((room) => room.code))].sort(),
+      };
+    }).filter((session) => session.duties.length);
+}
+
 export function buildStaffDistribution(model) {
   const slotKey = (session) => `${session.start}/${session.end}`;
   const weeks = model.selectedWeeks.map((week) => ({ week,

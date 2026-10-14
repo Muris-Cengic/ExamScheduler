@@ -313,6 +313,13 @@ previews:
   Week tabs and **Overall** follow the included-week selection. Print/PDF uses the
   chosen staff view; Excel includes **Session Distribution** and **Daily Duty Hours**
   sheets alongside the duty list and workload summary. CSV remains exam duties only.
+  **Invigilators by session** groups the assigned staff by date and exam time,
+  with their course, room, start/end times and extra-load status. Session headers
+  show full invigilator and room counts; search filters matching duties without
+  changing those totals. It follows the Week/Overall preview and supports print/PDF
+  for all included weeks. Backup-only and unassigned staff are excluded from these
+  rosters. Excel and CSV retain the existing detailed duty list rather than adding
+  another duplicate worksheet.
 - **Student room lists**: a searchable check-in register of student sittings,
   courses, times and confirmed rooms. Contains student personal data.
 - **Course seating**: one Excel workbook per exam, with one worksheet per CRN.
