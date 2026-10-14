@@ -302,7 +302,17 @@ previews:
   names and counts are excluded. Use the **Overall** preview tab for totals and duties
   across all included weeks, or a week tab for that week's figures. Overall also
   shows invigilators with zero assignments. Include every populated week to match
-  the Resource Review Pool totals.
+  the Resource Review Pool totals. Switch to **Session distribution** for a
+  compact weekly grid of exam duties for every included invigilator, distinguishing
+  extra-load exams from zero-load lab/tutorial-hour exams. Search by invigilator,
+  course or room, and sort by name, extra load or total exam-room duties.
+  Each day shows start/end times and the first-to-last span of remaining teaching
+  and exam duties, including gaps. Days over eight hours are highlighted; missing
+  class times are marked as incomplete. Tutorials, unchecked courses, canceled
+  lab classes and backups do not extend these spans, matching scheduling rules.
+  Week tabs and **Overall** follow the included-week selection. Print/PDF uses the
+  chosen staff view; Excel includes **Session Distribution** and **Daily Duty Hours**
+  sheets alongside the duty list and workload summary. CSV remains exam duties only.
 - **Student room lists**: a searchable check-in register of student sittings,
   courses, times and confirmed rooms. Contains student personal data.
 - **Course seating**: one Excel workbook per exam, with one worksheet per CRN.

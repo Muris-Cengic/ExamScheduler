@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx/xlsx.mjs";
 import StyledXLSX from "xlsx-js-style";
-import { clock, invigilatorWorkloads, isTeachingTimeDuty, validateResourcePlan } from "./resources.js";
+import { clock, invigilatorDaySpan, invigilatorWorkloads, isTeachingTimeDuty, validateResourcePlan } from "./resources.js";
 import { buildResourceWorkbookForWeek, buildSharedResourceWorkbook } from "./reports.js";
 import { inferAcademicTerm } from "./examSetup.js";
 
@@ -117,9 +117,45 @@ export function buildExportModel({ sessions, catalog, plan, startDate, weeks, as
     .map((exam) => ({ ...exam, date: reportDate(startDate, exam.week, exam.day) }))]
     .sort((a, b) => a.week - b.week || REPORT_DAYS.indexOf(a.day) - REPORT_DAYS.indexOf(b.day) ||
       a.start - b.start || Number(Boolean(a.isAsd)) - Number(Boolean(b.isAsd)) || a.code.localeCompare(b.code));
-  return { selectedWeeks, sessions: current, roomRows, exams, overviewExams, includeAsd, duties, students,
+  return { startDate, selectedWeeks, sessions: current, roomRows, exams, overviewExams, includeAsd, duties, students,
     workloads: invigilatorWorkloads(catalog, current, plan),
     summary: { exams: exams.length, roomSessions: roomRows.length, students: new Set(students.map((student) => student.id)).size, sittings: students.length } };
+}
+
+export function buildStaffDistribution(model) {
+  const slotKey = (session) => `${session.start}/${session.end}`;
+  const weeks = model.selectedWeeks.map((week) => ({ week,
+    slots: [...new Map(model.sessions.filter((session) => session.week === week)
+      .map((session) => [slotKey(session), { key: slotKey(session), start: session.start, end: session.end }])).values()]
+      .sort((a, b) => a.start - b.start || a.end - b.end),
+    days: REPORT_DAYS.map((day) => ({ day, date: reportDate(model.startDate, week, day),
+      sessions: model.sessions.filter((session) => session.week === week && session.day === day) })),
+  }));
+  const byPerson = new Map();
+  model.duties.forEach((duty) => {
+    if (!byPerson.has(duty.invigilatorId)) byPerson.set(duty.invigilatorId, []);
+    byPerson.get(duty.invigilatorId).push(duty);
+  });
+  const rows = model.workloads.filter((person) => person.enabled).map((person) => {
+    const duties = byPerson.get(person.id) || [];
+    return { id: person.id, name: person.name, exam: person.exam, teaching: person.teaching, total: duties.length,
+      weeks: weeks.map((week) => {
+        const weekly = duties.filter((duty) => duty.week === week.week);
+        return { week: week.week, exam: weekly.reduce((sum, duty) => sum + duty.extraLoad, 0), teaching: weekly.filter((duty) => duty.teaching).length,
+          days: week.days.map((day) => {
+            const daily = weekly.filter((duty) => duty.day === day.day).sort((a, b) => a.start - b.start || a.end - b.end);
+            return { day: day.day, date: day.date, duties: daily,
+              span: invigilatorDaySpan(person, { week: week.week, day: day.day }, model.sessions, daily),
+              slots: week.slots.map((slot) => ({ key: slot.key,
+                scheduled: day.sessions.some((session) => slotKey(session) === slot.key),
+                duty: daily.find((duty) => slotKey(duty) === slot.key) || null })),
+            };
+          }),
+        };
+      }),
+    };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+  return { weeks, rows };
 }
 
 export function buildCourseSeating(model) {
@@ -398,10 +434,29 @@ function focusedWorkbook(report, model, overviewMode) {
   const chronological = report === "overview" && overviewMode === "table";
   const sheet = appendTable(workbook, title, table.columns, table.rows, table.widths, 1, chronological ? "dd/mm/yyyy" : "dd mmm yyyy");
   if (chronological) styleChronologicalSheet(sheet, table, model.overviewExams);
-  if (report === "staff") appendTable(workbook, "Workload Summary",
-    ["Invigilator", "Exam load", "During teaching hours", "Included in pool"],
-    model.workloads.map((person) => [person.name, person.exam, person.teaching, person.enabled ? "Yes" : "No"]),
-    [34, 18, 26, 20]);
+  if (report === "staff") {
+    appendTable(workbook, "Workload Summary",
+      ["Invigilator", "Exam load", "During teaching hours", "Included in pool"],
+      model.workloads.map((person) => [person.name, person.exam, person.teaching, person.enabled ? "Yes" : "No"]),
+      [34, 18, 26, 20]);
+    const distribution = buildStaffDistribution(model);
+    const sessions = [...model.sessions].sort((a, b) => a.week - b.week || REPORT_DAYS.indexOf(a.day) - REPORT_DAYS.indexOf(b.day) || a.start - b.start || a.end - b.end);
+    appendTable(workbook, "Session Distribution",
+      ["Invigilator", "Extra exam load", "Lab/tutorial duties", "Exam-room duties", ...sessions.map((session) =>
+        "Week " + session.week + " / " + formatReportDate(reportDate(model.startDate, session.week, session.day)) + " / " + reportTimeRange(session.start, session.end))],
+      distribution.rows.map((person) => [person.name, person.exam, person.teaching, person.total, ...sessions.map((session) => {
+        const duty = person.weeks.find((week) => week.week === session.week).days.find((day) => day.day === session.day).duties.find((entry) => entry.sessionId === session.id);
+        return duty ? duty.teaching ? "Lab/tutorial (0 load)" : "Exam (+1 load)" : "";
+      })]), [34, 18, 22, 20, ...sessions.map(() => 32)]);
+    appendTable(workbook, "Daily Duty Hours",
+      ["Week", "Date", "Day", "Invigilator", "Start", "End", "Span (hours)", "Exam-room duties", "Extra exam load", "Lab/tutorial duties", "Class time unspecified"],
+      distribution.rows.flatMap((person) => person.weeks.flatMap((week) => week.days.filter((day) => day.span || day.duties.length).map((day) => [
+        week.week, day.date, day.day, person.name, day.span?.start != null ? clock(day.span.start) : "",
+        day.span?.end != null ? clock(day.span.end) : "", day.span?.minutes != null ? Math.round(day.span.minutes / 60 * 100) / 100 : "",
+        day.duties.length, day.duties.reduce((sum, duty) => sum + duty.extraLoad, 0), day.duties.filter((duty) => duty.teaching).length,
+        day.span?.unknownTime ? "Yes - span may be incomplete" : "No",
+      ]))), [10, 18, 16, 34, 12, 12, 18, 20, 18, 22, 36], 1);
+  }
   return workbook;
 }
 

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { buildCourseSeating, buildEnvelopeCourses, buildExportModel, courseSeatingInfo, envelopeCoverRows, envelopeSessionInfo, formatChronologicalDate, formatReportDate, reportDate, reportFileName, reportTable, REPORT_DAYS, REPORT_VIEWS, reportTimeRange } from "./exportReports.js";
+import { buildCourseSeating, buildEnvelopeCourses, buildExportModel, buildStaffDistribution, courseSeatingInfo, envelopeCoverRows, envelopeSessionInfo, formatChronologicalDate, formatReportDate, reportDate, reportFileName, reportTable, REPORT_DAYS, REPORT_VIEWS, reportTimeRange } from "./exportReports.js";
+import { clock } from "./resources.js";
 import "./ExportStudio.css";
 
 function ReportIcon({ kind }) {
@@ -173,7 +174,65 @@ function EnvelopePreview({ courses, course, page, onCourseChange, onRoomChange, 
   </>;
 }
 
-function PrintReport({ report, overviewMode, model, startDate, sessions, catalog, plan, asdExams }) {
+function StaffDistribution({ model, query = "", sort = "name" }) {
+  const distribution = buildStaffDistribution(model);
+  const search = query.trim().toLowerCase();
+  const rows = distribution.rows.filter((person) => !search || [person.name,
+    ...person.weeks.flatMap((week) => week.days.flatMap((day) => day.duties.flatMap((duty) => [duty.code, duty.roomName])))
+  ].join(" ").toLowerCase().includes(search)).sort((a, b) =>
+    (sort === "name" ? 0 : b[sort] - a[sort]) || a.name.localeCompare(b.name));
+  return <section className="staff-distribution" aria-label="Invigilator session distribution">
+    <div className="staff-distribution__legend">
+      <span><i className="staff-distribution__dot staff-distribution__dot--exam" aria-hidden="true">1</i>Extra exam load</span>
+      <span><i className="staff-distribution__dot staff-distribution__dot--teaching" aria-hidden="true">0</i>Lab/tutorial hours</span>
+      <span><i className="staff-distribution__dot staff-distribution__dot--none" aria-hidden="true" />No exam duty</span>
+      <span><i className="staff-distribution__dot staff-distribution__dot--off" aria-hidden="true" />No exam session</span>
+    </div>
+    <p className="staff-distribution__note">Daily start/end includes remaining teaching and exam duties, including gaps. Tutorials, unchecked courses, replaced lab classes and backups do not extend the span. Days over eight hours are highlighted.</p>
+    <div className="staff-distribution__scroll" tabIndex="0" aria-label="Session distribution table">
+      <table className="staff-distribution__table">
+        <caption className="sr-only">Exam session distribution and daily duty hours for included invigilators</caption>
+        <thead><tr><th scope="col">Invigilator</th><th scope="col">Extra<br />load</th><th scope="col">Lab/tutorial<br />duties</th>
+          {distribution.weeks.map((week) => <th key={week.week} scope="col" className="staff-distribution__week-heading">
+            <strong>{"Week " + week.week}</strong><div className="staff-distribution__grid staff-distribution__dates"><span>Exam time</span>
+              {week.days.map((day) => <span key={day.day}>{day.day.slice(0, 3)}<small>{formatReportDate(day.date)}</small></span>)}
+            </div>
+          </th>)}
+        </tr></thead>
+        <tbody>{rows.map((person) => <tr key={person.id}>
+          <th scope="row"><strong>{person.name}</strong><small>{person.total} exam-room {person.total === 1 ? "duty" : "duties"}</small></th>
+          <td className="staff-distribution__total">{person.exam}</td><td className="staff-distribution__total staff-distribution__total--teaching">{person.teaching}</td>
+          {person.weeks.map((week, index) => <td key={week.week} className="staff-distribution__week-cell">
+            <div className="staff-distribution__grid">
+              <div className="staff-distribution__times">{distribution.weeks[index].slots.map((slot) => <span key={slot.key}>{reportTimeRange(slot.start, slot.end)}</span>)}<small>Daily span</small></div>
+              {week.days.map((day) => <div key={day.day} className="staff-distribution__day">
+                {day.slots.map((slot, slotIndex) => {
+                  const timing = distribution.weeks[index].slots[slotIndex];
+                  const status = slot.duty ? slot.duty.teaching ? "teaching" : "exam" : slot.scheduled ? "none" : "off";
+                  const label = person.name + " / " + day.day + " " + formatReportDate(day.date) + " / " + reportTimeRange(timing.start, timing.end) + ": " +
+                    (slot.duty ? slot.duty.code + " / " + slot.duty.roomName + (slot.duty.teaching ? " / lab or tutorial hours, zero extra load" : " / one extra exam load") : slot.scheduled ? "No exam duty" : "No exam session");
+                  return <span key={slot.key} className={"staff-distribution__dot staff-distribution__dot--" + status} title={label} aria-label={label}>
+                    {slot.duty ? slot.duty.extraLoad : ""}</span>;
+                })}
+                <div className={"staff-distribution__span" + (day.span?.overrun ? " staff-distribution__span--long" : "")}
+                  aria-label={person.name + " / " + day.day + " " + formatReportDate(day.date) + " daily duty hours"}>
+                  <span>Start <b>{day.span?.start != null ? clock(day.span.start) : "-"}</b></span>
+                  <span>End <b>{day.span?.end != null ? clock(day.span.end) : "-"}</b></span>
+                  {day.span?.minutes != null ? <small>{Math.round(day.span.minutes / 60 * 10) / 10}h{day.span.overrun ? " / over 8h" : ""}</small> : null}
+                  {day.span?.unknownTime ? <small className="staff-distribution__unknown">Class time unknown; span incomplete</small> : null}
+                </div>
+              </div>)}
+            </div>
+            <p className="staff-distribution__week-total">{week.exam} extra / {week.teaching} lab/tutorial</p>
+          </td>)}
+        </tr>)}</tbody>
+      </table>
+      {!rows.length ? <p className="export-empty">No matching invigilators.</p> : null}
+    </div>
+  </section>;
+}
+
+function PrintReport({ report, overviewMode, staffView, model, startDate, sessions, catalog, plan, asdExams }) {
   if (report === "envelopes") return <div className="export-print" data-report="envelopes">
     {buildEnvelopeCourses(model).flatMap((course) => course.pages.map((page) => <section className="export-print__envelope" key={page.id}>
       <EnvelopeCover page={page} />
@@ -195,7 +254,8 @@ function PrintReport({ report, overviewMode, model, startDate, sessions, catalog
           {overviewMode === "board" ? <PrintWeekBoard model={current} startDate={startDate} week={week} />
             : <PreviewTable label="Exam overview" className="export-table--chronological" columns={overviewColumns} rows={overviewRows(current)} rowClassNames={overviewRowClasses(current)} />}</> : null}
         {report === "complete" ? <><h2>Room assignments</h2><PreviewTable label="Room assignments" columns={["Course", "Day / time", "Room", "Students", "Invigilators", "Room limit"]} rows={ledgerRows(current)} /></> : null}
-        {report === "complete" || report === "staff" ? <><h2>Staff duties</h2><PreviewTable label="Staff duties" columns={["Invigilator", "Day / time", "Duty", "Course", "Room", "Load"]} rows={staffRows(current)} />
+        {report === "staff" && staffView === "distribution" ? <><h2>Session distribution</h2><StaffDistribution model={current} /></> : null}
+        {report === "complete" || (report === "staff" && staffView !== "distribution") ? <><h2>Staff duties</h2><PreviewTable label="Staff duties" columns={["Invigilator", "Day / time", "Duty", "Course", "Room", "Load"]} rows={staffRows(current)} />
           <h2>Workload summary</h2><PreviewTable label="Workload summary" columns={["Invigilator", "Exam load", "Teaching duties"]} rows={loadRows(current)} /></> : null}
         {report === "complete" || report === "students" ? <><h2>Student room lists</h2><PreviewTable label="Student room lists" columns={["Student ID", "Name", "Course", "CRN", "Day / time", "Room"]} rows={studentRows(current)} /></> : null}
         <footer>{model.includeAsd ? asdReferenceNote : "ASD exams are excluded."} Teaching-time duties do not add extra invigilation load. {report === "complete" || report === "students" ? "Contains student personal data." : ""}</footer>
@@ -211,6 +271,8 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
   const [excludedWeeks, setExcludedWeeks] = useState([]);
   const [previewWeek, setPreviewWeek] = useState(null);
   const [mode, setMode] = useState("board");
+  const [staffView, setStaffView] = useState("duties");
+  const [staffSort, setStaffSort] = useState("name");
   const [includeAsd, setIncludeAsd] = useState(false);
   const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(50);
@@ -291,7 +353,7 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
           <label><input type="radio" name="export-format" checked={format === "xlsx"} disabled={isExporting} onChange={() => setFormat("xlsx")} />Excel (.xlsx)</label>
           {report !== "envelopes" ? <label><input type="radio" name="export-format" checked={format === "csv"} disabled={isExporting || report === "complete"} onChange={() => setFormat("csv")} />CSV (.csv)</label> : null}
           {report === "envelopes" ? <small>PDF: one A4 page per room, grouped by course. Excel: packing list with one sheet per session.</small> : null}
-          {report === "complete" ? <small>The complete report keeps its linked Excel sheets.</small> : report === "staff" && format === "csv" ? <small>CSV contains duties; the workload summary is included in Excel and print.</small> : null}
+          {report === "complete" ? <small>The complete report keeps its linked Excel sheets.</small> : report === "staff" ? <small>Excel includes duties, workload, session distribution and daily start/end times. CSV contains exam duties only.</small> : null}
         </fieldset>
         {coursePdfs ? <div className="export-seating-package"><h3>PDF files by course</h3>
           <p>Each course PDF contains its room covers for the included weeks.</p><small>Multiple courses download as a ZIP. Instructor Name is left blank; Department is omitted.</small>
@@ -313,6 +375,7 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
           {report === "seating" ? <small>Prints every CRN in the included weeks, starting each sheet on a new portrait page.</small> : null}
           {report === "envelopes" ? <small>Print/PDF includes every room cover in the included weeks, not just the preview.</small> : null}
           {report === "overview" ? <small className="export-print-layout" role="status">Print layout: {mode === "board" ? "Week board" : "Chronological list"}. All included weeks are printed. {mode === "board" ? "Excel and CSV use the detailed table." : "Excel and CSV match the six-column chronological list."}</small> : null}
+          {report === "staff" ? <small>Print layout: {staffView === "distribution" ? "Session distribution with daily start/end times" : "Duty list and workload summary"}. All included weeks are printed.</small> : null}
           <small>{report === "seating" ? "Contains student IDs. Share only with authorised recipients." : report === "complete" || report === "students" ? "Contains student names and IDs. Share only with authorised recipients." : "Only the selected report and included weeks are exported."}</small>
         </div>
       </aside>
@@ -344,21 +407,29 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
             {mode === "board" ? <WeekBoard model={current} startDate={startDate} week={activeWeek} /> : <PreviewTable label="Exam overview preview"
               className="export-table--chronological" columns={overviewColumns} rows={overviewRows(current)} rowClassNames={overviewRowClasses(current)} />}</> : <>
             {report === "complete" ? <WorkbookMap model={packaging === "combined" ? selected : current} week={activeWeek} packaging={packaging} /> : null}
-            {report === "staff" ? <details className="export-workloads" open><summary>Workload balance / {previewLabel}</summary>
+            {report === "staff" ? <div className="export-view-toggle" aria-label="Staff duty views">
+              <button type="button" aria-pressed={staffView === "duties"} onClick={() => { setStaffView("duties"); setSearch(""); setLimit(50); }}>Duty list</button>
+              <button type="button" aria-pressed={staffView === "distribution"} onClick={() => { setStaffView("distribution"); setSearch(""); }}>Session distribution</button>
+            </div> : null}
+            {report === "staff" && staffView === "duties" ? <details className="export-workloads" open><summary>Workload balance / {previewLabel}</summary>
               {overall ? <p>Totals across included weeks: {selectedWeeks.map((week) => "Week " + week).join(", ")}. Include every week to match the Resource Review Pool. Invigilators with no assignments are shown too.</p> : null}
               <PreviewTable label="Workload balance" columns={["Invigilator", "Exam load", "Teaching duties"]} rows={loadRows(current, overall)} />
               <p>Exam duties fully within listed lab or tutorial hours count as zero extra load. Lecture hours do not qualify. Backups are excluded from duties and workload.</p></details> : null}
             <label className="export-search"><span>Search this preview</span><input type="search" value={search} placeholder={report === "students" ? "Student, course or room..." : report === "staff" ? "Invigilator, course or room..." : "Course, room or invigilator..."}
               onChange={(event) => { setSearch(event.target.value); setLimit(50); }} /><small>Search affects the preview only, not the download or print.</small></label>
-            <PreviewTable label={view.label + " preview"} limit={limit}
+            {report === "staff" && staffView === "distribution" ? <>
+              <label className="staff-distribution__sort">Sort invigilators<select value={staffSort} onChange={(event) => setStaffSort(event.target.value)}>
+                <option value="name">Name</option><option value="exam">Extra exam load (highest first)</option><option value="total">Exam-room duties (highest first)</option>
+              </select></label><StaffDistribution model={current} query={search} sort={staffSort} />
+            </> : <PreviewTable label={view.label + " preview"} limit={limit}
               columns={report === "students" ? ["Student ID", "Name", "Course", "CRN", "Day / time", "Room"] : report === "staff" ? ["Invigilator", overall ? "Week / date / time" : "Day / time", "Duty", "Course", "Room", "Load"] : ["Course", "Day / time", "Room", "Students", "Invigilators", "Room limit"]}
-              rows={report === "students" ? studentRows(filtered) : report === "staff" ? staffRows(filtered, overall) : ledgerRows(filtered)} />
-            {records > limit ? <button type="button" className="export-show-more" onClick={() => setLimit((previous) => previous + 50)}>Show 50 more ({records - limit} remaining)</button> : null}
+              rows={report === "students" ? studentRows(filtered) : report === "staff" ? staffRows(filtered, overall) : ledgerRows(filtered)} />}
+            {!(report === "staff" && staffView === "distribution") && records > limit ? <button type="button" className="export-show-more" onClick={() => setLimit((previous) => previous + 50)}>Show 50 more ({records - limit} remaining)</button> : null}
           </>}
           <footer className="export-preview__footer">Previewing {overall ? "all included weeks" : previewLabel}. {report === "seating" ? "Download This Exam includes only the selected exam, with all its CRNs. Course files and print include all " : "Downloads and print include all "}{selectedWeeks.length} selected {selectedWeeks.length === 1 ? "week" : "weeks"}. {withAsd ? asdReferenceNote : "ASD exams are excluded."}</footer>
         </>}
       </main>
     </div>
-    {selected ? <PrintReport report={report} overviewMode={mode} model={selected} sessions={sessions} catalog={catalog} plan={plan} startDate={startDate} asdExams={asdExams} /> : null}
+    {selected ? <PrintReport report={report} overviewMode={mode} staffView={staffView} model={selected} sessions={sessions} catalog={catalog} plan={plan} startDate={startDate} asdExams={asdExams} /> : null}
   </section>;
 }

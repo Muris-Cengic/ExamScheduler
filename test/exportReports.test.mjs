@@ -396,7 +396,7 @@ test("focused workbooks contain the right audience's data and staff has a separa
   assert.ok(!JSON.stringify(schedule.slice(1)).includes("Invigilator 0"), "Counts do not expose staff names");
   assert.equal(schedule[1][1].toISOString().slice(0, 10), "2026-10-19");
   const staff = read(buildExportFiles({ ...options, report: "staff", weeks: [1] })[0]);
-  assert.deepEqual(staff.SheetNames, ["Staff duties", "Workload Summary"]);
+  assert.deepEqual(staff.SheetNames, ["Staff duties", "Workload Summary", "Session Distribution", "Daily Duty Hours"]);
   const load = rows(staff, "Workload Summary").find((row) => row[0] === "Invigilator 0");
   assert.deepEqual(load.slice(1), [0, 1, "Yes"]);
   assert.equal(rows(staff, "Staff duties").filter((row) => row[6] === "Backup").length, 0);

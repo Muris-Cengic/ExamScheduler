@@ -128,7 +128,7 @@
 .export-teaching { color: #28765d; font-size: 11px; }
 .export-exception { color: #8a581e; font-size: 10px; }
 .export-preview__footer { padding: 16px 26px; font-size: 11px; color: var(--export-muted); border-top: 1px solid var(--export-line); background: #f7f9fc; }
-.export-view-toggle { display: flex; gap: 6px; padding: 18px 26px 0; }
+.export-view-toggle { display: flex; flex-wrap: wrap; gap: 6px; padding: 18px 26px 0; }
 .export-view-toggle button { font-size: 11px; padding: 7px 12px; }
 .export-board { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)); padding: 22px; gap: 10px; overflow-x: auto; }
 .export-board__day { border: 1px solid var(--export-line); background: #f7f9fc; border-radius: 8px; min-width: 0; }
@@ -152,6 +152,43 @@
 .export-workloads { margin: 20px 26px; border: 1px solid var(--export-line); border-radius: 8px; overflow: hidden; }
 .export-workloads summary { cursor: pointer; padding: 12px 14px; font-size: 12px; font-weight: 700; background: #f3f7fc; }
 .export-workloads p { font-size: 10px; padding: 0 14px; color: var(--export-muted); }
+.staff-distribution { --slot-height: 24px; font-variant-numeric: tabular-nums; }
+.staff-distribution__sort { margin: 0 26px 16px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 11px; }
+.staff-distribution__sort select { max-width: 100%; padding: 7px 10px; border: 1px solid var(--export-line); border-radius: 5px; background: #fff; color: var(--export-ink); font: inherit; }
+.staff-distribution__legend { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 0 26px 10px; font-size: 11px; color: var(--export-muted); }
+.staff-distribution__legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.staff-distribution__note { margin: 10px 26px 18px; font-size: 11px; line-height: 1.6; color: var(--export-muted); }
+.staff-distribution__scroll { overflow: auto; max-height: 650px; border-top: 1px solid var(--export-line); }
+.staff-distribution__table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 11px; text-align: left; }
+.staff-distribution__table th, .staff-distribution__table td { padding: 12px; border-right: 1px solid var(--export-line); border-bottom: 1px solid var(--export-line); vertical-align: top; }
+.staff-distribution__table thead th { position: sticky; top: 0; z-index: 2; background: #edf2f8; color: #4b6078; font-size: 10px; }
+.staff-distribution__table tr > :first-child { position: sticky; left: 0; min-width: 150px; max-width: 210px; background: #fff; z-index: 1; overflow-wrap: anywhere; box-shadow: 1px 0 0 var(--export-line); }
+.staff-distribution__table thead th:first-child { background: #edf2f8; z-index: 3; }
+.staff-distribution__table tbody th > strong { display: block; font-size: 12px; color: var(--export-ink); }
+.staff-distribution__table tbody th > small { display: block; margin-top: 6px; font-size: 10px; font-weight: 400; color: var(--export-muted); }
+.staff-distribution__table tr:nth-child(even) > * { background: #f7f9fc; }
+.staff-distribution__table .staff-distribution__total { min-width: 50px; text-align: center; font-size: 18px; font-weight: 600; color: #365d91; }
+.staff-distribution__table .staff-distribution__total--teaching { color: #28765d; }
+.staff-distribution__week-heading > strong { display: block; margin-bottom: 10px; color: var(--export-ink); }
+.staff-distribution__grid { display: grid; grid-template-columns: 70px repeat(5, minmax(52px, 1fr)); gap: 5px; min-width: 370px; }
+.staff-distribution__dates { text-align: center; font-weight: 600; }
+.staff-distribution__dates > span:first-child { text-align: left; align-self: end; font-size: 9px; font-weight: 400; }
+.staff-distribution__dates small { display: block; margin-top: 4px; font-weight: 400; font-size: 9px; }
+.staff-distribution__day, .staff-distribution__times { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.staff-distribution__times { align-items: stretch; color: var(--export-muted); }
+.staff-distribution__times > span { display: flex; align-items: center; height: var(--slot-height); font-size: 9px; white-space: nowrap; }
+.staff-distribution__times > small { margin-top: 6px; font-size: 9px; }
+.staff-distribution__dot { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; box-sizing: border-box; width: 24px; height: var(--slot-height); border: 1px solid #c4cedb; border-radius: 5px; font-style: normal; font-size: 10px; font-weight: 700; }
+.staff-distribution__dot--exam { background: #315caa; border-color: #315caa; color: #fff; }
+.staff-distribution__dot--teaching { background: #dff2e9; border-color: #81b7a1; color: #246b50; }
+.staff-distribution__dot--none { background: #fff; }
+.staff-distribution__dot--off { background: repeating-linear-gradient(135deg, #eef1f5, #eef1f5 3px, #e4e9f0 3px, #e4e9f0 4px); border-color: transparent; }
+.staff-distribution__span { display: grid; align-content: start; gap: 3px; margin-top: 3px; padding: 5px 3px; width: 100%; box-sizing: border-box; font-size: 9px; line-height: 1.4; color: var(--export-muted); text-align: center; border-top: 1px solid var(--export-line); }
+.staff-distribution__span b { color: var(--export-ink); font-weight: 600; }
+.staff-distribution__span small { font-size: 9px; }
+.staff-distribution__span--long { border-color: #e5bd7b; border-radius: 4px; background: #fff3df; color: #80510b; }
+.staff-distribution__unknown { color: #80510b; overflow-wrap: anywhere; }
+.staff-distribution__week-total { margin: 8px 0 0 75px; font-size: 10px; color: var(--export-muted); }
 .export-seating-package { margin-top: 24px; padding: 16px; border: 1px solid var(--export-line); border-radius: 8px; background: #f7f9fc; }
 .export-seating-package p, .export-seating-package small { font-size: 12px; color: var(--export-muted); line-height: 1.6; }
 .export-seating-package p { margin: 0 0 8px; }
@@ -217,6 +254,8 @@
   .export-seating-sheet > header { padding: 16px 16px 12px; }
   .export-seating-info { padding: 0 16px 20px; }
   .export-search, .export-workloads { margin: 16px; }
+  .staff-distribution__legend, .staff-distribution__sort { margin-left: 16px; margin-right: 16px; }
+  .staff-distribution__note { margin: 10px 16px 16px; }
   .export-overview-note { margin: 16px 16px 0; }
   .export-board { grid-template-columns: minmax(0, 1fr); padding: 16px; }
   .export-board__day > header { font-size: 13px; }
@@ -265,6 +304,20 @@
   .export-print .export-table td { min-width: 0; max-width: none; padding: 2mm; }
   .export-print .export-table tr { break-inside: avoid; }
   .export-print .export-table thead { display: table-header-group; }
+  .export-print .staff-distribution { --slot-height: 15px; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .export-print .staff-distribution__legend { margin: 3mm 0; gap: 3mm; font-size: 8pt; }
+  .export-print .staff-distribution__note { margin: 2mm 0 4mm; font-size: 8pt; }
+  .export-print .staff-distribution__scroll { max-height: none; overflow: visible; }
+  .export-print .staff-distribution__table { font-size: 8pt; }
+  .export-print .staff-distribution__table thead { display: table-header-group; }
+  .export-print .staff-distribution__table tr { break-inside: avoid; }
+  .export-print .staff-distribution__table th, .export-print .staff-distribution__table td { position: static; padding: 2mm; box-shadow: none; }
+  .export-print .staff-distribution__table tr > :first-child { min-width: 32mm; max-width: 42mm; }
+  .export-print .staff-distribution__table tbody th > strong { font-size: 9pt; }
+  .export-print .staff-distribution__table .staff-distribution__total { min-width: 10mm; font-size: 12pt; }
+  .export-print .staff-distribution__grid { min-width: 0; grid-template-columns: 20mm repeat(5, minmax(12mm, 1fr)); }
+  .export-print .staff-distribution__dot { width: 18px; font-size: 8pt; }
+  .export-print .staff-distribution__span { font-size: 7pt; }
   .export-print .export-table--chronological { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
   .export-print .export-table--chronological th { background: #a9c9e8; padding: 1mm 2mm; }
   .export-print .export-table--chronological td { padding: 1mm 2mm; }

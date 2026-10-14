@@ -120,6 +120,78 @@ function harness(component = "App", props) {
   };
 }
 
+test("staff distribution shows enabled staff, daily teaching/exam spans and selected weeks, while search never filters print", () => {
+  const exam = (id) => ({ id, code: id, title: id, crns: ["101", "102"], labSessions: [],
+    students: [{ id: id + "-S", name: "Student", crn: "101" }] });
+  const sessions = resources.buildExamSessions({ 1: { Monday: { "12:00": ["EXAM"], "17:00": ["LATE"] } }, 2: { Tuesday: { "12:00": ["EXAM"] } } },
+    { EXAM: exam("EXAM"), LATE: exam("LATE") }, 60);
+  const catalog = { rooms: [{ id: "R", name: "Room", enabled: true, busy: [] }], invigilators: [
+    { id: "A", name: "Alice", enabled: true, busy: [{ code: "LECTURE", crn: "101", days: ["Monday"], isLab: false, start: 480, end: 530 }],
+      teachingSchedule: [{ code: "TUTORIAL", crn: "101", days: ["Monday"], isLab: false, type: "T", start: 720, end: 770 }] },
+    { id: "B", name: "Bob", enabled: true, busy: [] }, { id: "C", name: "Excluded", enabled: false, busy: [] }, { id: "D", name: "Idle", enabled: true, busy: [] },
+  ] };
+  const plan = resources.emptyResourcePlan(sessions, catalog);
+  sessions.forEach((session) => {
+    plan.allocations[session.rooms[0].id] = { roomId: "R", invigilatorIds: ["A"] };
+    plan.backups[session.id] = ["B"];
+  });
+  assert.equal(resources.validateResourcePlan(sessions, catalog, plan).complete, true);
+  const exports = [];
+  const app = harness("ExportStudio", { sessions, catalog, plan, startDate: "2026-10-19", ready: true, isExporting: false, onExport: (options) => exports.push(options) });
+  let tree = app.render();
+  button(tree, "Staff duties").props.onClick();
+  tree = app.render();
+  const preview = () => find(tree, (node) => node.props["aria-label"] === "Report preview");
+  const print = () => find(tree, (node) => node.props.className === "export-print");
+  const distribution = () => find(preview(), (node) => node.type?.name === "StaffDistribution");
+  button(preview(), "Session distribution").props.onClick();
+  tree = app.render();
+  assert.equal(button(preview(), "Session distribution").props["aria-pressed"], true);
+  assert.ok(!nodes(preview()).some((node) => node.type?.name === "PreviewTable" && node.props.label === "Staff duties preview"));
+  assert.match(text(distribution()), /Alice/);
+  assert.match(text(distribution()), /Bob/);
+  assert.match(text(distribution()), /Idle/);
+  assert.ok(!text(distribution()).includes("Excluded"));
+  const span = find(distribution(), (node) => node.props["aria-label"] === "Alice / Monday 19 Oct daily duty hours");
+  assert.match(text(span), /Start 08:00\s*End 18:00\s*10h \/ over 8h/);
+  assert.match(span.props.className, /span--long/);
+  assert.ok(nodes(distribution()).some((node) => node.props["aria-label"]?.includes("lab or tutorial hours, zero extra load")));
+  assert.match(text(print()), /Session distribution/);
+  assert.match(text(print()), /Start 08:00\s*End 18:00/);
+  button(preview(), "Overall").props.onClick();
+  tree = app.render();
+  assert.deepEqual(Array.from(distribution().props.model.selectedWeeks), [1, 2]);
+  find(preview(), (node) => node.type === "input" && node.props.type === "search").props.onChange({ target: { value: "NO-MATCH" } });
+  tree = app.render();
+  assert.match(text(distribution()), /No matching invigilators/);
+  assert.match(text(print()), /Alice/, "Search must not alter printed distribution or hours");
+  assert.match(text(print()), /Idle/);
+  find(preview(), (node) => node.type === "input" && node.props.type === "search").props.onChange({ target: { value: "Room" } });
+  tree = app.render();
+  assert.match(text(distribution()), /Alice/);
+  assert.ok(!text(distribution()).includes("Idle"), "Room searches filter people, not their duties or spans");
+  find(preview(), (node) => node.type === "select" && node.props.value === "name").props.onChange({ target: { value: "exam" } });
+  tree = app.render();
+  assert.equal(distribution().props.sort, "exam");
+  find(tree, (node) => node.type === "input" && node.props["aria-label"] === "Include Week 1").props.onChange();
+  tree = app.render();
+  assert.deepEqual(Array.from(distribution().props.model.selectedWeeks), [2]);
+  assert.ok(!text(print()).includes("19 Oct"));
+  assert.match(text(print()), /Start 12:00\s*End 13:00/);
+  button(tree, "Print / Save PDF").props.onClick();
+  assert.equal(app.prints(), 1);
+  button(tree, "Download Excel").props.onClick();
+  assert.deepEqual(Array.from(exports[0].weeks), [2]);
+  assert.equal(exports[0].report, "staff");
+  button(preview(), "Duty list").props.onClick();
+  tree = app.render();
+  assert.ok(nodes(preview()).some((node) => node.type?.name === "PreviewTable" && node.props.label === "Staff duties preview"));
+  assert.ok(!nodes(print()).some((node) => node.type?.name === "StaffDistribution"));
+  button(tree, "Exam overview").props.onClick();
+  tree = app.render();
+  assert.ok(!nodes(preview()).some((node) => node.props["aria-label"] === "Staff duty views"));
+});
+
 test("invigilator and backup selectors show available people first and update after assignments", () => {
   const makeCourse = (id, count) => ({ id, code: id, title: id, crns: ["101"], labSessions: [],
     students: Array.from({ length: count }, (_, i) => ({ id: id + i, name: "Student " + i, crn: "101" })) });

@@ -369,14 +369,19 @@ export function invigilatorWorkloads(catalog, sessions, plan) {
   });
 }
 
-function invigilatorDayOverrun(person, session, sessions, bookings) {
-  const commitments = [session,
-    ...person.busy.filter((entry) => entry.days.includes(session.day) && !entry.unknownTime && !isTutorialType(entry.type) && !isReplacedLab(entry, session, sessions)),
-    ...bookings.filter((booking) => booking.resourceId === person.id && booking.courseCode),
-  ];
+export function invigilatorDaySpan(person, session, sessions, duties) {
+  const classes = person.busy.filter((entry) => entry.days.includes(session.day) && !isTutorialType(entry.type) && !isReplacedLab(entry, session, sessions));
+  const unknownTime = classes.some((entry) => entry.unknownTime);
+  const commitments = [...classes.filter((entry) => !entry.unknownTime), ...duties];
+  if (!commitments.length) return unknownTime ? { start: null, end: null, minutes: null, overrun: 0, unknownTime } : null;
   const start = Math.min(...commitments.map((entry) => entry.start));
   const end = Math.max(...commitments.map((entry) => entry.end));
-  return Math.max(0, end - start - PREFERRED_INVIGILATOR_DAY_MINUTES);
+  return { start, end, minutes: end - start, overrun: Math.max(0, end - start - PREFERRED_INVIGILATOR_DAY_MINUTES), unknownTime };
+}
+
+function invigilatorDayOverrun(person, session, sessions, bookings) {
+  return invigilatorDaySpan(person, session, sessions,
+    [session, ...bookings.filter((booking) => booking.resourceId === person.id && booking.courseCode)]).overrun;
 }
 
 export function assignResources(sessions, catalog, { balance = true, previousPlan } = {}) {
@@ -472,10 +477,8 @@ export function balanceInvigilatorPlan(sessions, catalog, original) {
   const dayKey = (session) => `${session.week}/${session.day}`;
   const dayPositions = new Map(sessions.map((session) => [dayKey(session), positions.filter((position) => sameDay(position.session, session))]));
   const overrun = (id, session) => {
-    const commitments = [...people.get(id).busy.filter((entry) => entry.days.includes(session.day) && !entry.unknownTime &&
-      !isTutorialType(entry.type) && !isReplacedLab(entry, session, sessions)),
-    ...dayPositions.get(dayKey(session)).filter((position) => get(position) === id).map((position) => position.session)];
-    return commitments.length ? Math.max(0, Math.max(...commitments.map((entry) => entry.end)) - Math.min(...commitments.map((entry) => entry.start)) - PREFERRED_INVIGILATOR_DAY_MINUTES) : 0;
+    return invigilatorDaySpan(people.get(id), session, sessions,
+      dayPositions.get(dayKey(session)).filter((position) => get(position) === id).map((position) => position.session))?.overrun || 0;
   };
   const compare = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
   // Strict improvements and a bounded pass keep generation predictable on large timetables.
