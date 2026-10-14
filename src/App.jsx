@@ -2317,7 +2317,7 @@ function App() {
   }, [wizardStep, isWorkspaceOpen]);
 
   const handleAssignResources = () => {
-    setResourcePlan(assignResources(examSessions, activeResourceCatalog));
+    setResourcePlan(assignResources(examSessions, activeResourceCatalog, { previousPlan: resourcePlan }));
     setExportError("");
   };
 

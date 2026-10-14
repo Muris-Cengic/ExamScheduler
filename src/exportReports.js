@@ -7,7 +7,7 @@ import { inferAcademicTerm } from "./examSetup.js";
 export const REPORT_VIEWS = [
   { id: "complete", label: "Complete report", audience: "For the exam team", description: "The existing report, with room assignments, invigilator pools and daily student sheets.", filename: "Complete Report" },
   { id: "overview", label: "Exam overview", audience: "For sharing the timetable", description: "A course timetable with compact rooms, required invigilators and lab-time exams. No student names." },
-  { id: "staff", label: "Staff duties", audience: "For invigilators", description: "Named duties and a workload summary. Backups and replaced teaching hours stay separate.", filename: "Staff Duties" },
+  { id: "staff", label: "Staff duties", audience: "For invigilators", description: "Exam-room duties and workload. Duties within listed lab or tutorial hours add no extra load; backups are excluded.", filename: "Staff Duties" },
   { id: "students", label: "Student room lists", audience: "For room check-in", description: "Every student sitting, with the course, time and confirmed room. Contains personal data.", filename: "Student Room Lists" },
   { id: "seating", label: "Course seating", audience: "For course sections", description: "One Excel file per exam, with a student-to-room sheet for each CRN.", filename: "Course Seating" },
   { id: "envelopes", label: "Envelope covers", audience: "For exam packing", description: "Room-specific A4 covers, course PDFs and a session packing list. No student names or IDs.", filename: "Envelope Covers" },
@@ -104,7 +104,7 @@ export function buildExportModel({ sessions, catalog, plan, startDate, weeks, as
       exam.primaryInvigilatorsNeeded += room.requiredInvigilators;
       courses.set(room.courseId, exam);
       allocation.invigilatorIds.forEach((id) => {
-        const teaching = isTeachingTimeDuty(staff.get(id), session, sessions);
+        const teaching = isTeachingTimeDuty(staff.get(id), session);
         duties.push({ ...timing, id: room.id + "/" + id, invigilatorId: id, name: staff.get(id).name, role: "Exam", code: room.code,
           roomName, teaching, extraLoad: teaching ? 0 : 1 });
       });
@@ -112,11 +112,6 @@ export function buildExportModel({ sessions, catalog, plan, startDate, weeks, as
         code: room.code, title: room.title, roomName }));
     });
     courses.forEach((exam) => exams.push({ ...exam, crns: [...exam.crns].sort() }));
-    (plan.backups[session.id] || []).forEach((id) => {
-      const teaching = isTeachingTimeDuty(staff.get(id), session, sessions);
-      duties.push({ ...timing, id: session.id + "/backup/" + id, invigilatorId: id, name: staff.get(id).name, role: "Backup",
-        code: [...courses.values()].map((exam) => exam.code).join(", "), roomName: "Slot standby", teaching, extraLoad: teaching ? 0 : 1 });
-    });
   });
   const overviewExams = [...exams, ...references.filter((exam) => selectedWeeks.includes(exam.week))
     .map((exam) => ({ ...exam, date: reportDate(startDate, exam.week, exam.day) }))]
@@ -404,9 +399,9 @@ function focusedWorkbook(report, model, overviewMode) {
   const sheet = appendTable(workbook, title, table.columns, table.rows, table.widths, 1, chronological ? "dd/mm/yyyy" : "dd mmm yyyy");
   if (chronological) styleChronologicalSheet(sheet, table, model.overviewExams);
   if (report === "staff") appendTable(workbook, "Workload Summary",
-    ["Invigilator", "Exam load", "Backup load", "During teaching hours", "Total extra duties", "Included in pool"],
-    model.workloads.map((person) => [person.name, person.exam, person.backup, person.teaching, person.exam + person.backup, person.enabled ? "Yes" : "No"]),
-    [34, 18, 18, 26, 22, 20]);
+    ["Invigilator", "Exam load", "During teaching hours", "Included in pool"],
+    model.workloads.map((person) => [person.name, person.exam, person.teaching, person.enabled ? "Yes" : "No"]),
+    [34, 18, 26, 20]);
   return workbook;
 }
 

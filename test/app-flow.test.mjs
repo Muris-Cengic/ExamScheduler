@@ -317,7 +317,7 @@ test("Exam Setup derives metadata from the entered date and restores it after sa
   assert.ok(!nodes(tree).some((node) => node.props.type === "date"));
   await review(tree).props.onUpload(workbookEvent([
     ["Campus", "Crn No", "Course Code", "Title", "Cr", "Maximum Load", "No Of Enrolled", "Session Id", "DAYS", "Time", "Primary Instructor", "Second Instructor", "Type", "Building", "Room"],
-    ["PAD", "101", "EXAM-1000", "Exam Course", 3, 25, 1, "01", "M", "0800 - 0950", "10: Alice", "20: Bob", "T", "Building", "A"],
+    ["PAD", "101", "EXAM-1000", "Exam Course", 3, 25, 1, "01", "M", "0800 - 0950", "10: Alice", "20: Bob", "LEC", "Building", "A"],
   ]));
   tree = app.render();
   step(tree, "setup").props.onClick();
@@ -557,8 +557,8 @@ test("resource selection precedes generation and stays editable after the resour
   assert.equal(excludedRoom.enabled, false);
   assert.ok(Object.values(assignment().plan.allocations).every((allocation) => allocation.roomId !== excludedRoom.id));
   const model = exportReports.buildExportModel({ ...assignment(), startDate: "2026-10-19" });
-  assert.equal(model.duties.length, 2, "Unassigned standby people cannot become report duties");
-  assert.equal(model.workloads.filter((person) => person.exam + person.backup + person.teaching === 0).length, 1);
+  assert.equal(model.duties.length, 1, "Neither backups nor spare standby people become report duties");
+  assert.equal(model.workloads.filter((person) => person.exam + person.teaching === 0).length, 2);
   const primaryIds = Object.values(assignment().plan.allocations).flatMap((allocation) => allocation.invigilatorIds);
   const backupIds = Object.values(assignment().plan.backups).flat();
   const spare = assignment().catalog.invigilators.find((person) => !primaryIds.includes(person.id) && !backupIds.includes(person.id));
@@ -874,8 +874,8 @@ test("CRN Info choices control invigilator availability across scheduling, revie
   tree = app.render();
   await review(tree).props.onUpload(workbookEvent([
     ["Campus", "Crn No", "Course Code", "Title", "Cr", "Maximum Load", "No Of Enrolled", "Session Id", "DAYS", "Time", "Primary Instructor", "Second Instructor", "Type", "Building", "Room"],
-    ["PAD", "101", "EXAM-1000", "Selected Exam", 3, 25, 1, "01", "M", "0800 - 0950", "10: Alice", "", "T", "Building", "A"],
-    ["PAD", "201", "NOEXAM-1000", "Other Course", 3, 25, 1, "01", "M", "1200 - 1250", "10: Alice", "", "T", "Building", "B"],
+    ["PAD", "101", "EXAM-1000", "Selected Exam", 3, 25, 1, "01", "M", "0800 - 0950", "10: Alice", "", "LEC", "Building", "A"],
+    ["PAD", "201", "NOEXAM-1000", "Other Course", 3, 25, 1, "01", "M", "1200 - 1250", "10: Alice", "", "LEC", "Building", "B"],
     ["PAD", "301", "CAP-1000", "Capstone Project", 3, 25, 1, "01", "M", "1200 - 1250", "20: Bob", "", "GP", "Building", "C"],
     ["PAD", "401", "OCT-1000", "OCT", 3, 25, 1, "01", "M", "0800 - 0950", "30: Carol", "", "F", "Building", "D"],
   ]));
@@ -1065,7 +1065,7 @@ test("room consolidation choices require a click, preserve other exams, survive 
   const reportRows = XLSX.utils.sheet_to_json(exported.Sheets["Invigilator Duties"], { header: 1 });
   const examRows = reportRows.slice(1).filter((row) => row[1] === exam.code);
   assert.deepEqual(examRows.map((row) => row[3]), [26, 26]);
-  assert.ok(examRows.every((row) => /Approved up to 27/.test(row[14])));
+  assert.ok(examRows.every((row) => /Approved up to 27/.test(row[13])));
   step(tree, "resources").props.onClick();
   tree = reloaded.render();
   decisionButton("Keep the extra room (normal limit)").props.onClick();
@@ -1299,7 +1299,7 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   assert.ok(!nodes(panel()).some((node) => node.props["aria-label"] === "Include Week 3"));
   assert.ok(!text(printView()).includes("ASD-"));
   assert.match(text(preview()), /Workload balance/);
-  assert.match(text(preview()), /Backup/);
+  assert.ok(!text(preview()).includes("Backup load"));
   assert.ok(!text(preview()).includes("Bob"));
   radio("Excel (.xlsx)").props.onChange();
   tree = app.render();
@@ -1323,13 +1323,13 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   const exportProps = find(tree, (node) => node.type?.name === "ExportStudio").props;
   const plainRows = (value) => JSON.parse(JSON.stringify(value));
   const expectedOverall = plainRows(resources.invigilatorWorkloads(exportProps.catalog, exportProps.sessions, exportProps.plan)
-    .map((person) => [person.name, person.exam, person.backup, person.teaching, person.exam + person.backup]));
+    .map((person) => [person.name, person.exam, person.teaching]));
   const workloadRows = () => plainRows(find(preview(), (node) => node.type?.name === "PreviewTable" && node.props.label === "Workload balance").props.rows);
   assert.deepEqual(workloadRows(), expectedOverall, "Overall matches the full Resource Review Pool when all weeks are included");
   assert.ok(workloadRows().some((row) => row.slice(1).every((load) => load === 0)), "Overall includes idle invigilators for a complete pool comparison");
   const staffProps = () => find(tree, (node) => node.type?.name === "ExportStudio").props;
   const expectedWeek2 = plainRows(exportReports.buildExportModel({ ...exportProps, weeks: [2] }).workloads
-    .map((person) => [person.name, person.exam, person.backup, person.teaching, person.exam + person.backup]));
+    .map((person) => [person.name, person.exam, person.teaching]));
   weekInput(1).props.onChange();
   tree = app.render();
   assert.equal(button(preview(), "Overall").props["aria-pressed"], true);
@@ -1337,7 +1337,7 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   assert.ok(!text(preview()).includes("MAIN-1000"));
   await button(tree, "Download Excel").props.onClick();
   const filteredStaff = XLSX.read(await app.downloads.at(-1).arrayBuffer(), { type: "array" });
-  assert.deepEqual(XLSX.utils.sheet_to_json(filteredStaff.Sheets["Workload Summary"], { header: 1 }).slice(1).map((row) => row.slice(0, 5)),
+  assert.deepEqual(XLSX.utils.sheet_to_json(filteredStaff.Sheets["Workload Summary"], { header: 1 }).slice(1).map((row) => row.slice(0, 3)),
     expectedWeek2, "The Overall preview matches the exported workload summary");
   weekInput(2).props.onChange();
   tree = app.render();
@@ -1350,8 +1350,8 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   assert.equal(button(preview(), "Overall").props["aria-pressed"], false);
   assert.match(text(preview()), /Workload balance \/ Week 2/);
   const weeklyExpected = plainRows(exportReports.buildExportModel({ ...staffProps(), weeks: [2] }).workloads
-    .filter((person) => person.exam + person.backup + person.teaching > 0)
-    .map((person) => [person.name, person.exam, person.backup, person.teaching, person.exam + person.backup]));
+    .filter((person) => person.exam + person.teaching > 0)
+    .map((person) => [person.name, person.exam, person.teaching]));
   assert.deepEqual(workloadRows(), weeklyExpected, "Weekly tabs retain weekly-only totals");
 
   reportButton("Student room lists").props.onClick();

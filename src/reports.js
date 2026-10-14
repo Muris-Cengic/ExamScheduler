@@ -29,7 +29,7 @@ function buildResourceWorkbook({ sessions, catalog, plan, startDate, templateHea
   const staff = new Map(catalog.invigilators.map((person) => [person.id, person]));
   const rooms = new Map(catalog.rooms.map((room) => [room.id, room]));
   const invRows = [[...templateHeaders.invigilatorHeader.slice(0, 8), "Invigilator 1", "Invigilator 2", "Backup Invigilator",
-    "Invigilator 1 extra duty", "Invigilator 2 extra duty", "Backup extra duty", "Room allocation decision"]];
+    "Invigilator 1 extra duty", "Invigilator 2 extra duty", "Room allocation decision"]];
   const daily = new Map();
   const formatter = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
   current.forEach((session) => {
@@ -40,14 +40,14 @@ function buildResourceWorkbook({ sessions, catalog, plan, startDate, templateHea
       const allocation = plan.allocations[room.id];
       const assignedRoom = rooms.get(allocation.roomId);
       const staffCell = (id) => id ? { t: "s", v: staff.get(id).name, f: `'${staffSheetName}'!A${staffRows.get(id)}` } : "";
-      const extraDuty = (id) => id ? Number(!isTeachingTimeDuty(staff.get(id), session, sessions)) : "";
+      const extraDuty = (id) => id ? Number(!isTeachingTimeDuty(staff.get(id), session)) : "";
       const rowNumber = invRows.length + 1;
       const crns = [...new Set(room.students.map((student) => student.crn).filter(Boolean))].sort().join(", ");
       invRows.push([
         crns, room.code, room.title, room.students.length, formatter.format(date), range, room.instructors.join(", "),
         { t: "s", v: assignedRoom.name, f: `'${roomSheetName}'!A${roomRows.get(assignedRoom.id)}` },
         staffCell(allocation.invigilatorIds[0]), staffCell(allocation.invigilatorIds[1]), staffCell(plan.backups[session.id]?.[index]),
-        extraDuty(allocation.invigilatorIds[0]), extraDuty(allocation.invigilatorIds[1]), extraDuty(plan.backups[session.id]?.[index]),
+        extraDuty(allocation.invigilatorIds[0]), extraDuty(allocation.invigilatorIds[1]),
         room.distributionChoice === "standard" ? `Normal limit: ${room.maxStudents}` : `Approved up to 27: ${room.distributionChoice === "merge" ? "merge overflow" : "staffing-aware distribution"}`,
       ]);
       const dailySheetName = `Week ${session.week} ${session.day}`;
@@ -61,21 +61,20 @@ function buildResourceWorkbook({ sessions, catalog, plan, startDate, templateHea
   const invSheet = XLSX.utils.aoa_to_sheet(invRows);
   invSheet["!cols"] = [18, 16, 42, 16, 30, 26, 30, 35, 30, 30, 30].map((wch) => ({ wch }));
   // Hidden duty flags let Excel recalculate loads without charging replaced teaching hours.
-  invSheet["!cols"].push(...Array.from({ length: 3 }, () => ({ wch: 22, hidden: true })));
+  invSheet["!cols"].push(...Array.from({ length: 2 }, () => ({ wch: 22, hidden: true })));
   invSheet["!cols"].push({ wch: 40 });
   XLSX.utils.book_append_sheet(workbook, invSheet, invSheetName);
   const workloads = invigilatorWorkloads(catalog, current, plan);
-  const staffData = [["Invigilator", "Invigilation load", "Backup load", "During teaching hours", "Total extra duties", "Included in pool"],
+  const staffData = [["Invigilator", "Invigilation load", "During teaching hours", "Included in pool"],
     ...workloads.map((person, index) => {
       const row = index + 2;
       return [person.name,
         { t: "n", v: person.exam, f: `SUMIF('${invSheetName}'!I:I,A${row},'${invSheetName}'!L:L)+SUMIF('${invSheetName}'!J:J,A${row},'${invSheetName}'!M:M)` },
-        { t: "n", v: person.backup, f: `SUMIF('${invSheetName}'!K:K,A${row},'${invSheetName}'!N:N)` },
-        { t: "n", v: person.teaching, f: `COUNTIF('${invSheetName}'!I:I,A${row})+COUNTIF('${invSheetName}'!J:J,A${row})+COUNTIF('${invSheetName}'!K:K,A${row})-B${row}-C${row}` },
-        { t: "n", v: person.exam + person.backup, f: `B${row}+C${row}` }, person.enabled ? "Yes" : "No"];
+        { t: "n", v: person.teaching, f: `COUNTIF('${invSheetName}'!I:I,A${row})+COUNTIF('${invSheetName}'!J:J,A${row})-B${row}` },
+        person.enabled ? "Yes" : "No"];
     })];
   const staffSheet = XLSX.utils.aoa_to_sheet(staffData);
-  staffSheet["!cols"] = [32, 22, 22, 24, 22, 20].map((wch) => ({ wch }));
+  staffSheet["!cols"] = [32, 22, 24, 20].map((wch) => ({ wch }));
   XLSX.utils.book_append_sheet(workbook, staffSheet, staffSheetName);
   const roomData = [["Room", "Assignments", "Normal maximum students", "Largest approved exam limit", "Included in pool"], ...catalog.rooms.map((room, index) => [
     room.name, { t: "n", v: current.reduce((sum, session) => sum + session.rooms.filter((examRoom) => plan.allocations[examRoom.id].roomId === room.id).length, 0), f: `COUNTIF('${invSheetName}'!H:H,A${index + 2})` }, 25,

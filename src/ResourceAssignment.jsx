@@ -5,7 +5,7 @@ function InvigilatorOptions({ people, session, sessions, plan, owner, fixedId = 
   const choices = people.map((person) => {
     const reason = fixedId && person.id !== fixedId ? "Lab instructor required"
       : resourceChoiceSummary(person, "invigilator", session, sessions, plan, owner);
-    return { person, reason, teaching: !reason && isTeachingTimeDuty(person, session, sessions) };
+    return { person, reason, teaching: !owner.includes("/backup/") && !reason && isTeachingTimeDuty(person, session) };
   }).sort((a, b) => a.person.name.localeCompare(b.person.name));
   const available = choices.filter((choice) => !choice.reason);
   const unavailable = choices.filter((choice) => choice.reason);
@@ -35,8 +35,9 @@ export default function ResourceAssignment({ sessions, catalog, plan, validation
       </div>
       <details className="schedule-rules"><summary>Room and availability rules</summary>
         <p>Students are balanced, keeping the last room at 15 when that saves an invigilator. Up to 27 per room requires approval for that exam.</p>
-        <p>The first CRN sheet supplies resources and class commitments. Only courses checked in CRN Info block invigilators or extend their daily span; room commitments are unchanged. Single-CRN lab exams keep their lab room and instructor; listed :50 lab endings count through the next hour. Availability outside listed classes is assumed.</p>
-        <p>Auto-assignment prefers at most eight hours from the first class or duty to the last, including gaps and backups. Longer days are allowed when needed; fixed lab instructors remain required.</p>
+        <p>The first CRN sheet supplies resources and class commitments. Tutorials and unchecked CRN Info courses do not block invigilators or extend their daily span; room commitments are unchanged. Single-CRN lab exams keep their lab room and instructor; listed :50 lab endings count through the next hour. Availability outside listed classes is assumed.</p>
+        <p>An exam fully within the invigilator's listed lab or tutorial hours adds no extra load, even for unchecked courses. Lecture hours do not qualify. For load credit, :50 endings count through the next hour. Other class and exam conflicts still block assignment.</p>
+        <p>Auto-assignment balances exam duties overall and by time slot, preferring at most eight hours from the first class or exam duty to the last, including gaps. Backups do not add workload or extend this span. Longer days are allowed when needed; fixed lab instructors remain required.</p>
       </details>
       <div className="resource-panel__summary" role="status">
         <span>{catalog.rooms.filter((room) => room.enabled).length} rooms</span>

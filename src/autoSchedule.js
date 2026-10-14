@@ -1,7 +1,7 @@
 import { assignmentIds, labExamEndMinutes } from "./department.js";
 import { examInvigilatorsNeeded, roomCapacity } from "./examRooms.js";
 import { FRIDAY_EXAM_NOTICE, FRIDAY_EXAM_WINDOWS, isFridayExamTimeAllowed } from "./examWindows.js";
-import { assignResources, buildExamSessions, PREFERRED_STANDBY_COUNT, resourceSessionLabel, standbyAvailability, validateResourcePlan } from "./resources.js";
+import { assignResources, balanceInvigilatorPlan, buildExamSessions, PREFERRED_STANDBY_COUNT, resourceSessionLabel, standbyAvailability, validateResourcePlan } from "./resources.js";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const MORNING_LAB_START = 540;
@@ -109,7 +109,7 @@ export function autoSchedule({ courses, courseLookup, assignments, asdAssignment
       }
       const proposed = withExam(next, candidate, item.course.id);
       const sessions = buildExamSessions(proposed, courseLookup, duration, capacity, roomDistributionChoices);
-      const plan = assignResources(sessions, catalog);
+      const plan = assignResources(sessions, catalog, { balance: false });
       const validation = validateResourcePlan(sessions, catalog, plan);
       if (!validation.complete) {
         validation.issues.forEach((issue) => reasons.add(issue.context + (issue.exam ? " / " + issue.exam : "") + ": " + issue.title + ". " + issue.message));
@@ -159,7 +159,7 @@ export function autoSchedule({ courses, courseLookup, assignments, asdAssignment
     }
   });
   let sessions = buildExamSessions(next, courseLookup, duration, capacity, roomDistributionChoices);
-  resourcePlan ??= assignResources(sessions, catalog);
+  resourcePlan ??= assignResources(sessions, catalog, { balance: false });
   // Once noon exams are known, improve student breaks by moving only this run's placements, labs first.
   const spacingOrder = [...pending.filter((item) => item.lab), ...flexible];
   let improved;
@@ -188,7 +188,7 @@ export function autoSchedule({ courses, courseLookup, assignments, asdAssignment
           [entry.slotId]: next[entry.week][entry.day][entry.slotId].filter((id) => id !== item.course.id) } } };
         const proposed = withExam(withoutExam, candidate, item.course.id);
         const trialSessions = buildExamSessions(proposed, courseLookup, duration, capacity, roomDistributionChoices);
-        const plan = assignResources(trialSessions, catalog);
+        const plan = assignResources(trialSessions, catalog, { balance: false });
         if (!validateResourcePlan(trialSessions, catalog, plan).complete) continue;
         if (trialSessions.some((session) => standbyAvailability(session, trialSessions, catalog, plan).count <
           (standbyTargets.get(session.id) ?? standbyTargets.get(previousSessionId)))) continue;
@@ -203,6 +203,7 @@ export function autoSchedule({ courses, courseLookup, assignments, asdAssignment
       }
     }
   } while (improved); // Each accepted move strictly reduces the total student break shortfall.
+  resourcePlan = balanceInvigilatorPlan(sessions, catalog, resourcePlan);
   const warnings = sessions.flatMap((session) => {
     const standby = standbyAvailability(session, sessions, catalog, resourcePlan);
     return standby.count < PREFERRED_STANDBY_COUNT ? [{ sessionId: session.id,

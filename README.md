@@ -182,6 +182,9 @@ is highlighted without changing existing backup report rules.
   lab-instructor restriction. The current selection remains available in its own
   selector unless another conflict blocks it; nobody is silently reassigned.
 - Availability is checked against regular classes on the **first sheet only**.
+  **T**, **TUT** and **TUTORIAL** meetings are ignored for invigilator availability
+  and daily presence spans. Their room bookings remain in force; student and lab
+  scheduling rules are unchanged.
   Courses unchecked in **CRN Info** do not block invigilators or extend their
   eight-hour daily presence span, including courses unchecked by default.
   Their instructors stay in the resource pool. Room commitments are unchanged.
@@ -223,21 +226,36 @@ is highlighted without changing existing backup report rules.
   times that overlap. Backups cannot also invigilate an exam room at that time.
 - There is no primary/secondary distinction for exam invigilators: either course
   instructor can invigilate when available. Extra invigilation loads are balanced
-  overall and by time of day; backup loads are balanced separately. An exam duty
-  entirely within the instructor's replaced lab hours adds **no extra load**,
-  including when assigned to another exam or as backup during those hours.
+  overall and by time of day. A final pass transfers and swaps flexible exam
+  duties to improve the completed plan, without changing exam times or rooms,
+  moving fixed lab instructors, introducing conflicts, reducing protected standby
+  capacity, or increasing anyone's eight-hour overrun. An exam duty
+  entirely within the invigilator's listed **lab or tutorial hours** adds **no
+  extra load**, including unchecked CRN Info courses and another course's replaced
+  lab hours. Lecture hours do not qualify. Credit uses each person's actual
+  teaching assignments, not merely being listed as a course instructor. Listed
+  :50 endings count through the next hour for load credit; adjacent lab/tutorial
+  periods can cover one exam.
   Such duties still reserve the instructor for the full exam duration. Partial
   overlap alone does not exempt a duty. Fixed lab assignments and availability
-  take precedence. Resource pools and reports show teaching-hour duties separately.
+  take precedence: non-replaced active classes still prevent assignment, even
+  during credited hours. Resource pools and reports show teaching-hour duties separately.
   There is at least one backup per time slot, with a maximum of 40% of the slot's
   room count (rounded down, with a minimum of one).
-- Automatic room-invigilator and backup assignments prefer a daily presence span
-  of **at most eight hours**, from the first class/duty to the last, including gaps.
-  The span includes remaining classes on that weekday and assigned exam/backup
+  **Auto-Assign Resources** retains reviewed room assignments that are still
+  available, while rebuilding and balancing invigilator assignments.
+- Backup names are retained only in **Slot Backups** and the complete workbook's
+  **Backup Invigilator** column. They have no workload counters, report duty rows,
+  totals or day-span hours. They still must be available and cannot cover an exam
+  room or another overlapping backup slot at the same time. Backup names may be
+  exchanged to allow a better-balanced exam assignment.
+- Automatic room-invigilator assignments prefer a daily presence span
+  of **at most eight hours**, from the first non-tutorial class/exam duty to the last, including gaps.
+  The span includes remaining non-tutorial classes on that weekday and assigned exam
   duties in the same week/day, even duties that add no extra invigilation load.
   A replaced lab's canceled class hours do not extend the day; its actual exam
   duties still count. Within the eight-hour target, normal overall/time-slot load
-  balancing applies, with exam and backup loads kept separate. If everyone
+  balancing applies, with backups excluded. If everyone
   available would exceed eight hours, the shortest excess is preferred. This is
   a preference, not an availability restriction or export blocker; required lab
   instructors and manual assignments remain allowed.
@@ -279,9 +297,9 @@ previews:
   restarting for separate weekly files. Optional ASD entries are labeled **(ASD)**
   in the course title and muted in Excel, preview and print. Department resource
   and student totals stay unchanged.
-- **Staff duties**: each exam duty and slot-level backup, plus a separate workload
+- **Staff duties**: exam-room duties only, plus a separate workload
   summary in Excel and print. Teaching-time duties add zero extra load; backup
-  duties remain separate. Use the **Overall** preview tab for totals and duties
+  names and counts are excluded. Use the **Overall** preview tab for totals and duties
   across all included weeks, or a week tab for that week's figures. Overall also
   shows invigilators with zero assignments. Include every populated week to match
   the Resource Review Pool totals.

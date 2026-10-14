@@ -34,12 +34,12 @@ const ledgerRows = (model) => model.roomRows.map((room) => [
 ]);
 const staffRows = (model, overall = false) => model.duties.map((duty) => [duty.name,
   (overall ? "Week " + duty.week + " / " + formatReportDate(duty.date) : duty.day) + " / " + reportTimeRange(duty.start, duty.end),
-  <span className={duty.role === "Backup" ? "export-duty export-duty--backup" : "export-duty"}>{duty.role}</span>,
+  <span className="export-duty">{duty.role}</span>,
   duty.code, duty.roomName, duty.teaching ? <span className="export-teaching">Teaching hours / 0 load</span> : "1 extra duty"]);
 const studentRows = (model) => model.students.map((student) => [student.id, student.name, student.code, student.crn,
   student.day + " / " + reportTimeRange(student.start, student.end), student.roomName]);
-const loadRows = (model, includeIdle = false) => model.workloads.filter((person) => includeIdle || person.exam + person.backup + person.teaching > 0)
-  .map((person) => [person.name, person.exam, person.backup, person.teaching, person.exam + person.backup]);
+const loadRows = (model, includeIdle = false) => model.workloads.filter((person) => includeIdle || person.exam + person.teaching > 0)
+  .map((person) => [person.name, person.exam, person.teaching]);
 const overviewColumns = ["#", "Date", "Day", "Time", "Course", "Course title"];
 const overviewRows = (model) => reportTable("overview", model, "table").rows
   .map((row) => row.map((value, column) => column === 1 ? formatChronologicalDate(value) : value));
@@ -196,7 +196,7 @@ function PrintReport({ report, overviewMode, model, startDate, sessions, catalog
             : <PreviewTable label="Exam overview" className="export-table--chronological" columns={overviewColumns} rows={overviewRows(current)} rowClassNames={overviewRowClasses(current)} />}</> : null}
         {report === "complete" ? <><h2>Room assignments</h2><PreviewTable label="Room assignments" columns={["Course", "Day / time", "Room", "Students", "Invigilators", "Room limit"]} rows={ledgerRows(current)} /></> : null}
         {report === "complete" || report === "staff" ? <><h2>Staff duties</h2><PreviewTable label="Staff duties" columns={["Invigilator", "Day / time", "Duty", "Course", "Room", "Load"]} rows={staffRows(current)} />
-          <h2>Workload summary</h2><PreviewTable label="Workload summary" columns={["Invigilator", "Exam load", "Backup load", "Teaching duties", "Extra duties"]} rows={loadRows(current)} /></> : null}
+          <h2>Workload summary</h2><PreviewTable label="Workload summary" columns={["Invigilator", "Exam load", "Teaching duties"]} rows={loadRows(current)} /></> : null}
         {report === "complete" || report === "students" ? <><h2>Student room lists</h2><PreviewTable label="Student room lists" columns={["Student ID", "Name", "Course", "CRN", "Day / time", "Room"]} rows={studentRows(current)} /></> : null}
         <footer>{model.includeAsd ? asdReferenceNote : "ASD exams are excluded."} Teaching-time duties do not add extra invigilation load. {report === "complete" || report === "students" ? "Contains student personal data." : ""}</footer>
       </section>;
@@ -329,7 +329,7 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
           <p>{ready ? "Select at least one exam week above." : "Return to Resources to resolve the assignments before exporting."}</p></div> : <>
           <header className="export-paper-heading"><span className="export-kicker">Department exams / {previewLabel}</span><h3>{view.label}</h3>
             <p>{formatReportDate(reportDate(startDate, overall ? selectedWeeks[0] : activeWeek, "Monday"), true) + " - " + formatReportDate(reportDate(startDate, overall ? selectedWeeks.at(-1) : activeWeek, "Friday"), true)}</p>
-            <small>{report === "envelopes" ? "One cover per confirmed room / no student names or IDs" : report === "overview" ? "Shareable timetable / no student names or IDs" : report === "seating" ? "Student IDs and rooms / one sheet per CRN" : report === "students" ? "Room check-in register / personal data" : report === "staff" ? "Exam duties, slot backups and teaching-time load" : "Confirmed allocations / linked weekly Excel sheets"}</small>
+            <small>{report === "envelopes" ? "One cover per confirmed room / no student names or IDs" : report === "overview" ? "Shareable timetable / no student names or IDs" : report === "seating" ? "Student IDs and rooms / one sheet per CRN" : report === "students" ? "Room check-in register / personal data" : report === "staff" ? "Exam duties and teaching-time load / no backups" : "Confirmed allocations / linked Excel sheets"}</small>
           </header>
           {report === "seating" ? <SeatingPreview exams={seatingExams} exam={seatingExam} sheet={seatingSheet} search={search} limit={limit} disabled={disabled}
             onExamChange={(id) => { setPreviewExam(id); setPreviewCrn(null); setSearch(""); setLimit(50); }}
@@ -346,8 +346,8 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
             {report === "complete" ? <WorkbookMap model={packaging === "combined" ? selected : current} week={activeWeek} packaging={packaging} /> : null}
             {report === "staff" ? <details className="export-workloads" open><summary>Workload balance / {previewLabel}</summary>
               {overall ? <p>Totals across included weeks: {selectedWeeks.map((week) => "Week " + week).join(", ")}. Include every week to match the Resource Review Pool. Invigilators with no assignments are shown too.</p> : null}
-              <PreviewTable label="Workload balance" columns={["Invigilator", "Exam load", "Backup load", "Teaching duties", "Extra duties"]} rows={loadRows(current, overall)} />
-              <p>Teaching duties count as zero extra load. Backup load is balanced separately.</p></details> : null}
+              <PreviewTable label="Workload balance" columns={["Invigilator", "Exam load", "Teaching duties"]} rows={loadRows(current, overall)} />
+              <p>Exam duties fully within listed lab or tutorial hours count as zero extra load. Lecture hours do not qualify. Backups are excluded from duties and workload.</p></details> : null}
             <label className="export-search"><span>Search this preview</span><input type="search" value={search} placeholder={report === "students" ? "Student, course or room..." : report === "staff" ? "Invigilator, course or room..." : "Course, room or invigilator..."}
               onChange={(event) => { setSearch(event.target.value); setLimit(50); }} /><small>Search affects the preview only, not the download or print.</small></label>
             <PreviewTable label={view.label + " preview"} limit={limit}

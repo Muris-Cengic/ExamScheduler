@@ -1,4 +1,4 @@
-import { defaultHasExam, labExamEndMinutes, roomIdentity } from "./department.js";
+import { defaultHasExam, isTutorialType, labExamEndMinutes, roomIdentity } from "./department.js";
 import { examRoomLayout, roomConsolidationOptions } from "./examRooms.js";
 import { FRIDAY_EXAM_NOTICE, isFridayExamTimeAllowed } from "./examWindows.js";
 
@@ -21,13 +21,13 @@ export function parseResourceCatalog(selection) {
       const id = roomIdentity(meeting.campus, meeting.building, meeting.room);
       rooms.set(id, { id, name: [meeting.campus, meeting.building, meeting.room].filter(Boolean).join(" / "), enabled: true, busy: [] });
     }
-    meeting.instructors.forEach((person) => invigilators.set(person.id, { ...person, enabled: true, busy: [] }));
+    meeting.instructors.forEach((person) => invigilators.set(person.id, { ...person, enabled: true, busy: [], teachingSchedule: [] }));
   }));
   const records = new Map();
   selection.courses.forEach((course) => course.meetings.forEach((meeting) => {
     if (!meeting.days.length) return;
     const unknownTime = !Number.isFinite(meeting.startMinutes);
-    const entry = { code: course.code, crn: meeting.crn, isLab: meeting.isLab, days: meeting.days, start: unknownTime ? 0 : meeting.startMinutes, end: unknownTime ? 1440 : meeting.endMinutes, unknownTime };
+    const entry = { code: course.code, crn: meeting.crn, type: meeting.type, isLab: meeting.isLab, days: meeting.days, start: unknownTime ? 0 : meeting.startMinutes, end: unknownTime ? 1440 : meeting.endMinutes, unknownTime };
     const key = JSON.stringify([entry, meeting.campus, meeting.building, meeting.room, [...meeting.teachingInstructorIds].sort()]);
     records.set(key, { entry, meeting });
   }));
@@ -36,7 +36,8 @@ export function parseResourceCatalog(selection) {
     if (room) room.busy.push(entry);
     meeting.teachingInstructorIds.forEach((id) => {
       const staff = invigilators.get(id);
-      if (staff) staff.busy.push(entry);
+      if (staff) staff.teachingSchedule.push(entry);
+      if (staff && !isTutorialType(meeting.type)) staff.busy.push(entry);
     });
   });
   const sort = (values) => [...values].sort((a, b) => a.name.localeCompare(b.name));
@@ -46,10 +47,27 @@ export function parseResourceCatalog(selection) {
 export function scopeInvigilatorAvailability(catalog, courses, examChoices) {
   const excluded = new Set(courses.filter((course) => !(examChoices[course.id] ?? defaultHasExam(course)))
     .map((course) => normalise(course.code)));
-  if (!excluded.size) return catalog;
+  const commitmentKey = (entry) => JSON.stringify([normalise(entry.code), entry.crn, [...entry.days].sort(), entry.start, entry.end]);
+  const tutorials = new Set(courses.flatMap((course) => (course.meetings || []).filter((meeting) => isTutorialType(meeting.type))
+    .map((meeting) => commitmentKey({ code: course.code, crn: meeting.crn, days: meeting.days,
+      start: meeting.startMinutes ?? 0, end: meeting.endMinutes ?? 1440 }))));
+  const teaching = new Map();
+  courses.forEach((course) => (course.meetings || []).forEach((meeting) => {
+    if (!meeting.days.length) return;
+    const unknownTime = !Number.isFinite(meeting.startMinutes);
+    const entry = { code: course.code, crn: meeting.crn, type: meeting.type, isLab: meeting.isLab, days: meeting.days,
+      start: unknownTime ? 0 : meeting.startMinutes, end: unknownTime ? 1440 : meeting.endMinutes, unknownTime };
+    (meeting.teachingInstructorIds || []).forEach((id) => {
+      if (!teaching.has(id)) teaching.set(id, []);
+      teaching.get(id).push(entry);
+    });
+  }));
   // Keep the original catalog for saving and restoring commitments when a course is rechecked.
   return { ...catalog, invigilators: catalog.invigilators.map((person) => ({ ...person,
-    busy: person.busy.filter((entry) => !excluded.has(normalise(entry.code))),
+    teachingSchedule: [...new Map([...(person.teachingSchedule || person.busy), ...(teaching.get(person.id) || [])]
+      .map((entry) => [commitmentKey(entry), entry])).values()],
+    busy: person.busy.filter((entry) => !excluded.has(normalise(entry.code)) && !isTutorialType(entry.type) &&
+      (entry.type || !tutorials.has(commitmentKey(entry)))),
   })) };
 }
 
@@ -60,11 +78,12 @@ export function readResourceCatalog(value) {
     const ids = new Set();
     for (const resource of resources) {
       if (typeof resource.id !== "string" || !resource.id || ids.has(resource.id) || typeof resource.name !== "string" || !resource.name ||
-        typeof resource.enabled !== "boolean" || !Array.isArray(resource.busy)) {
+        typeof resource.enabled !== "boolean" || !Array.isArray(resource.busy) ||
+        (resource.teachingSchedule !== undefined && !Array.isArray(resource.teachingSchedule))) {
         throw new Error("Invalid resource in snapshot.");
       }
       ids.add(resource.id);
-      for (const entry of resource.busy) {
+      for (const entry of [...resource.busy, ...(resource.teachingSchedule || [])]) {
         if (!Array.isArray(entry.days) || entry.days.some((day) => !DAYS.includes(day)) || typeof entry.code !== "string" || typeof entry.crn !== "string" ||
           typeof entry.isLab !== "boolean" || !Number.isFinite(entry.start) || !Number.isFinite(entry.end) || entry.start < 0 || entry.end > 1440 || entry.end <= entry.start) {
           throw new Error("Invalid resource availability in snapshot.");
@@ -175,10 +194,19 @@ function isReplacedLab(entry, session, sessions) {
     normalise(lab.code) === normalise(entry.code) && lab.crn === entry.crn && lab.start === entry.start && lab.end === entry.end));
 }
 
-export function isTeachingTimeDuty(person, session, sessions) {
-  return Boolean(person?.busy.some((entry) => entry.days.includes(session.day) && !entry.unknownTime &&
-    entry.start <= session.start && isReplacedLab(entry, session, sessions) &&
-    labExamEndMinutes({ startMinutes: entry.start, endMinutes: entry.end }) >= session.end));
+export function isTeachingTimeDuty(person, session) {
+  // Credit lab/tutorial hours without changing which classes block availability.
+  const intervals = (person?.teachingSchedule || person?.busy || []).filter((entry) => entry.days.includes(session.day) &&
+    !entry.unknownTime && (entry.isLab || isTutorialType(entry.type)))
+    .map((entry) => ({ start: entry.start, end: entry.end % 60 === 50 ? entry.end + 10 : entry.end }))
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+  let coveredUntil = session.start;
+  for (const interval of intervals) {
+    if (interval.start > coveredUntil) break;
+    if (interval.end > coveredUntil) coveredUntil = interval.end;
+    if (coveredUntil >= session.end) return true;
+  }
+  return false;
 }
 
 function availabilityConflict(resource, session, sessions) {
@@ -326,61 +354,56 @@ export function validateResourcePlan(sessions, catalog, plan) {
 export function invigilatorWorkloads(catalog, sessions, plan) {
   return catalog.invigilators.map((person) => {
     let exam = 0;
-    let backup = 0;
     let teaching = 0;
     const bySlot = {};
-    const backupBySlot = {};
     sessions.forEach((session) => {
       const count = session.rooms.reduce((sum, room) => sum + (plan?.allocations?.[room.id]?.invigilatorIds || []).filter((id) => id === person.id).length, 0);
-      const backupCount = (plan?.backups?.[session.id] || []).filter((id) => id === person.id).length;
-      if (isTeachingTimeDuty(person, session, sessions)) {
-        teaching += count + backupCount;
+      if (isTeachingTimeDuty(person, session)) {
+        teaching += count;
         return;
       }
       exam += count;
       if (count) bySlot[session.slotId] = (bySlot[session.slotId] || 0) + count;
-      backup += backupCount;
-      if (backupCount) backupBySlot[session.slotId] = (backupBySlot[session.slotId] || 0) + backupCount;
     });
-    return { ...person, exam, backup, teaching, bySlot, backupBySlot };
+    return { ...person, exam, teaching, bySlot };
   });
 }
 
 function invigilatorDayOverrun(person, session, sessions, bookings) {
   const commitments = [session,
-    ...person.busy.filter((entry) => entry.days.includes(session.day) && !entry.unknownTime && !isReplacedLab(entry, session, sessions)),
-    ...bookings.filter((booking) => booking.resourceId === person.id),
+    ...person.busy.filter((entry) => entry.days.includes(session.day) && !entry.unknownTime && !isTutorialType(entry.type) && !isReplacedLab(entry, session, sessions)),
+    ...bookings.filter((booking) => booking.resourceId === person.id && booking.courseCode),
   ];
   const start = Math.min(...commitments.map((entry) => entry.start));
   const end = Math.max(...commitments.map((entry) => entry.end));
   return Math.max(0, end - start - PREFERRED_INVIGILATOR_DAY_MINUTES);
 }
 
-export function assignResources(sessions, catalog) {
+export function assignResources(sessions, catalog, { balance = true, previousPlan } = {}) {
   const plan = emptyResourcePlan(sessions, catalog);
   const staff = catalog.invigilators.filter((person) => person.enabled);
-  const workloads = new Map(staff.map((person) => [person.id, { exam: 0, backup: 0, examSlots: {}, backupSlots: {} }]));
+  const workloads = new Map(staff.map((person) => [person.id, { exam: 0, examSlots: {} }]));
   const roomUse = new Map();
-  const selectStaff = (session, owner, role) => {
+  const selectStaff = (session, owner) => {
     const candidates = staff.filter((person) => !resourceChoiceReason(person, "invigilator", session, sessions, plan, owner));
     const bookings = planBookings(sessions, plan).filter((booking) => booking.kind === "invigilator" && sameDay(booking, session));
     const overruns = new Map(candidates.map((person) => [person.id, invigilatorDayOverrun(person, session, sessions, bookings)]));
     return candidates.sort((a, b) => {
       const loadA = workloads.get(a.id);
       const loadB = workloads.get(b.id);
-      const extraA = isTeachingTimeDuty(a, session, sessions) ? 0 : 1;
-      const extraB = isTeachingTimeDuty(b, session, sessions) ? 0 : 1;
+      const extraA = isTeachingTimeDuty(a, session) ? 0 : 1;
+      const extraB = isTeachingTimeDuty(b, session) ? 0 : 1;
       // Prefer an eight-hour presence window; if unavoidable, minimize the excess before balancing loads.
-      return overruns.get(a.id) - overruns.get(b.id) || (loadA[role] + extraA) - (loadB[role] + extraB) ||
-        ((loadA[`${role}Slots`][session.slotId] || 0) + extraA) - ((loadB[`${role}Slots`][session.slotId] || 0) + extraB) ||
+      return overruns.get(a.id) - overruns.get(b.id) || (loadA.exam + extraA) - (loadB.exam + extraB) ||
+        ((loadA.examSlots[session.slotId] || 0) + extraA) - ((loadB.examSlots[session.slotId] || 0) + extraB) ||
         extraA - extraB || a.name.localeCompare(b.name);
     })[0];
   };
-  const record = (person, role, session) => {
-    if (isTeachingTimeDuty(person, session, sessions)) return;
+  const record = (person, session) => {
+    if (isTeachingTimeDuty(person, session)) return;
     const load = workloads.get(person.id);
-    load[role] += 1;
-    load[`${role}Slots`][session.slotId] = (load[`${role}Slots`][session.slotId] || 0) + 1;
+    load.exam += 1;
+    load.examSlots[session.slotId] = (load.examSlots[session.slotId] || 0) + 1;
   };
   // Reserve fixed lab resources before flexible exams, including overlapping start times.
   sessions.forEach((session) => session.rooms.forEach((room) => {
@@ -391,7 +414,15 @@ export function assignResources(sessions, catalog) {
     const lead = staff.find((entry) => entry.id === room.fixedInvigilatorId);
     if (lead && !resourceChoiceReason(lead, "invigilator", session, sessions, plan, `${room.id}/invigilator/0`)) {
       allocation.invigilatorIds[0] = lead.id;
-      record(lead, "exam", session);
+      record(lead, session);
+    }
+  }));
+  // Preserve reviewed rooms when reassigning people, but recheck every current constraint.
+  sessions.forEach((session) => session.rooms.forEach((room) => {
+    if (room.fixedRoomId) return;
+    const previousRoom = catalog.rooms.find((entry) => entry.id === previousPlan?.allocations?.[room.id]?.roomId);
+    if (previousRoom && !resourceChoiceReason(previousRoom, "room", session, sessions, plan, room.id)) {
+      plan.allocations[room.id].roomId = previousRoom.id;
     }
   }));
   const ordered = [...sessions].sort((a, b) => {
@@ -408,17 +439,114 @@ export function assignResources(sessions, catalog) {
     if (allocation.roomId) roomUse.set(allocation.roomId, (roomUse.get(allocation.roomId) || 0) + 1);
     for (let index = 0; index < room.requiredInvigilators; index += 1) {
       if (allocation.invigilatorIds[index] || (index === 0 && room.fixedInvigilatorId)) continue;
-      const person = selectStaff(session, `${room.id}/invigilator/${index}`, "exam");
-      if (person) { allocation.invigilatorIds[index] = person.id; record(person, "exam", session); }
+      const person = selectStaff(session, `${room.id}/invigilator/${index}`);
+      if (person) { allocation.invigilatorIds[index] = person.id; record(person, session); }
     }
   }));
-  // Backups use their own balancing counters and cannot reuse room invigilators.
+  // Standby names are recorded, but never contribute to workload or day-span scoring.
   ordered.forEach((session) => {
     plan.backups[session.id] = [];
     for (let index = 0; index < backupTarget(session.rooms.length); index += 1) {
-      const person = selectStaff(session, `${session.id}/backup/${index}`, "backup");
-      if (person) { plan.backups[session.id].push(person.id); record(person, "backup", session); }
+      const person = staff.find((person) => !resourceChoiceReason(person, "invigilator", session, sessions, plan, `${session.id}/backup/${index}`));
+      if (person) plan.backups[session.id].push(person.id);
     }
   });
+  return balance ? balanceInvigilatorPlan(sessions, catalog, plan) : plan;
+}
+
+export function balanceInvigilatorPlan(sessions, catalog, original) {
+  if (!validateResourcePlan(sessions, catalog, original).complete) return original;
+  const plan = { ...original,
+    allocations: Object.fromEntries(Object.entries(original.allocations).map(([id, allocation]) => [id, { ...allocation, invigilatorIds: [...allocation.invigilatorIds] }])),
+    backups: Object.fromEntries(Object.entries(original.backups).map(([id, ids]) => [id, [...ids]])),
+  };
+  const staff = catalog.invigilators.filter((person) => person.enabled);
+  const people = new Map(staff.map((person) => [person.id, person]));
+  const positions = sessions.flatMap((session) => session.rooms.flatMap((room) =>
+    Array.from({ length: room.requiredInvigilators }, (_, index) => ({ session, room, index, owner: `${room.id}/invigilator/${index}` }))));
+  const flexible = positions.filter((position) => !(position.index === 0 && position.room.fixedInvigilatorId));
+  const get = (position) => plan.allocations[position.room.id].invigilatorIds[position.index];
+  const set = (position, id) => { plan.allocations[position.room.id].invigilatorIds[position.index] = id; };
+  const allowed = new Map(sessions.map((session) => [session.id, new Set(staff.filter((person) => !resourceBusyReason(person, session, sessions)).map((person) => person.id))]));
+  const cost = new Map(sessions.map((session) => [session.id, new Map(staff.map((person) => [person.id, Number(!isTeachingTimeDuty(person, session))]))]));
+  const dayKey = (session) => `${session.week}/${session.day}`;
+  const dayPositions = new Map(sessions.map((session) => [dayKey(session), positions.filter((position) => sameDay(position.session, session))]));
+  const overrun = (id, session) => {
+    const commitments = [...people.get(id).busy.filter((entry) => entry.days.includes(session.day) && !entry.unknownTime &&
+      !isTutorialType(entry.type) && !isReplacedLab(entry, session, sessions)),
+    ...dayPositions.get(dayKey(session)).filter((position) => get(position) === id).map((position) => position.session)];
+    return commitments.length ? Math.max(0, Math.max(...commitments.map((entry) => entry.end)) - Math.min(...commitments.map((entry) => entry.start)) - PREFERRED_INVIGILATOR_DAY_MINUTES) : 0;
+  };
+  const compare = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+  // Strict improvements and a bounded pass keep generation predictable on large timetables.
+  for (let pass = 0; pass < Math.min(64, positions.length * 2); pass += 1) {
+    const loads = new Map(staff.map((person) => [person.id, 0]));
+    const slots = new Map();
+    positions.forEach((position) => {
+      const id = get(position), extra = cost.get(position.session.id).get(id), key = `${id}/${position.session.slotId}`;
+      loads.set(id, loads.get(id) + extra);
+      slots.set(key, (slots.get(key) || 0) + extra);
+    });
+    const presence = new Map();
+    const beforeOverrun = (id, session) => {
+      const key = `${id}/${dayKey(session)}`;
+      if (!presence.has(key)) presence.set(key, overrun(id, session));
+      return presence.get(key);
+    };
+    const standby = new Map(sessions.map((session) => [session.id, Math.min(PREFERRED_STANDBY_COUNT, standbyAvailability(session, sessions, catalog, plan).count)]));
+    let best;
+    const backupChangesFor = (position, from, to) => {
+      const index = plan.backups[position.session.id]?.indexOf(to) ?? -1;
+      return index < 0 ? [] : [{ session: position.session, sessionId: position.session.id, index, from: to, to: from }];
+    };
+    const trial = (changes, backupChanges = []) => {
+      const loadDelta = new Map(), slotDelta = new Map(), affected = new Map();
+      changes.forEach(({ position, from, to }) => {
+        for (const [id, sign] of [[from, -1], [to, 1]]) {
+          const extra = cost.get(position.session.id).get(id), key = `${id}/${position.session.slotId}`;
+          loadDelta.set(id, (loadDelta.get(id) || 0) + sign * extra);
+          slotDelta.set(key, (slotDelta.get(key) || 0) + sign * extra);
+          affected.set(`${id}/${dayKey(position.session)}`, { id, session: position.session });
+        }
+      });
+      const squareDelta = (deltas, totals) => [...deltas].reduce((sum, [id, delta]) => sum + 2 * (totals.get(id) || 0) * delta + delta * delta, 0);
+      const overall = squareDelta(loadDelta, loads), timing = squareDelta(slotDelta, slots);
+      const days = [...affected.values()].map((day) => ({ ...day, before: beforeOverrun(day.id, day.session) }));
+      if (days.every((day) => !day.before) && (overall > 0 || overall === 0 && timing >= 0)) return;
+      changes.forEach(({ position, to }) => set(position, to));
+      backupChanges.forEach((change) => { plan.backups[change.sessionId][change.index] = change.to; });
+      const restore = () => {
+        changes.forEach(({ position, from }) => set(position, from));
+        backupChanges.forEach((change) => { plan.backups[change.sessionId][change.index] = change.from; });
+      };
+      const after = days.map((day) => overrun(day.id, day.session));
+      const score = [after.reduce((sum, value, index) => sum + value - days[index].before, 0), overall, timing];
+      if (after.some((value, index) => value > days[index].before) || compare(score, best?.score || [0, 0, 0]) >= 0) { restore(); return; }
+      if (changes.some(({ position, to }) => resourceChoiceReason(people.get(to), "invigilator", position.session, sessions, plan, position.owner))) { restore(); return; }
+      if (backupChanges.some((change) => resourceChoiceReason(people.get(change.to), "invigilator", change.session, sessions, plan,
+        `${change.sessionId}/backup/${change.index}`))) { restore(); return; }
+      const affectedDays = new Set(days.map((day) => dayKey(day.session)));
+      if (sessions.some((session) => affectedDays.has(dayKey(session)) && standbyAvailability(session, sessions, catalog, plan).count < standby.get(session.id))) { restore(); return; }
+      best = { score, changes, backupChanges };
+      restore();
+    };
+    flexible.forEach((position) => {
+      const from = get(position);
+      staff.forEach((person) => {
+        if (person.id === from || !allowed.get(position.session.id).has(person.id)) return;
+        trial([{ position, from, to: person.id }], backupChangesFor(position, from, person.id));
+      });
+    });
+    for (let a = 0; a < flexible.length; a += 1) for (let b = a + 1; b < flexible.length; b += 1) {
+      const first = flexible[a], second = flexible[b], from = get(first), to = get(second);
+      if (from !== to && allowed.get(first.session.id).has(to) && allowed.get(second.session.id).has(from)) {
+        trial([{ position: first, from, to }, { position: second, from: to, to: from }],
+          [...backupChangesFor(first, from, to), ...backupChangesFor(second, to, from)]);
+      }
+    }
+    if (!best) break;
+    best.changes.forEach(({ position, to }) => set(position, to));
+    best.backupChanges.forEach((change) => { plan.backups[change.sessionId][change.index] = change.to; });
+  }
   return plan;
 }

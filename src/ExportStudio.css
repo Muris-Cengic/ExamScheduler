@@ -125,7 +125,6 @@
 .export-course strong { color: var(--export-ink); font-size: 12px; }
 .export-course small { color: var(--export-muted); font-size: 10px; }
 .export-duty { display: inline-block; background: #eaf1ff; color: #2b5190; border-radius: 4px; padding: 3px 7px; font-size: 10px; }
-.export-duty--backup { background: #fff3dd; color: #856017; }
 .export-teaching { color: #28765d; font-size: 11px; }
 .export-exception { color: #8a581e; font-size: 10px; }
 .export-preview__footer { padding: 16px 26px; font-size: 11px; color: var(--export-muted); border-top: 1px solid var(--export-line); background: #f7f9fc; }

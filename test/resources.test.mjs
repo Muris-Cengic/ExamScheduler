@@ -101,8 +101,11 @@ test("unchecked CRN Info courses filter only invigilator commitments and can be 
   assert.equal(active.rooms, resources.rooms, "Unchecked courses do not free their teaching rooms");
   assert.equal(JSON.stringify(resources), before, "Retain original commitments for saving and rechecking");
   const rechecked = scopeInvigilatorAvailability(resources, courses, Object.fromEntries(courses.map((course) => [course.id, true])));
-  assert.equal(rechecked, resources);
-  assert.equal(scopeInvigilatorAvailability(resources, [], {}), resources, "Commitments outside CRN Info are not implicitly ignored");
+  assert.deepEqual(rechecked.invigilators.map((person) => person.busy), resources.invigilators.map((person) => person.busy));
+  assert.deepEqual(active.invigilators.map((person) => person.teachingSchedule), resources.invigilators.map((person) => person.busy),
+    "Keep the original teaching hours for load credit even when commitments no longer block availability");
+  assert.deepEqual(scopeInvigilatorAvailability(resources, [], {}).invigilators.map((person) => person.busy),
+    resources.invigilators.map((person) => person.busy), "Commitments outside CRN Info are not implicitly ignored");
 });
 
 test("unchecked course hours do not block exam or backup assignment or inflate the eight-hour day", () => {
@@ -413,7 +416,7 @@ test("backups are slot-level, separate from room duties, and may be fewer than t
   assert.ok(validateResourcePlan(sessions, resources, plan).issues.some((issue) => /Already assigned/.test(issue.message)));
 });
 
-test("exam and backup workloads are balanced independently over the whole timetable", () => {
+test("exam workloads are balanced overall and by time slot without backup counters", () => {
   const c = course("EXAM", 10);
   const assignments = {};
   for (let week = 1; week <= 3; week += 1) {
@@ -425,9 +428,9 @@ test("exam and backup workloads are balanced independently over the whole timeta
   const plan = assignResources(sessions, resources);
   assert.equal(validateResourcePlan(sessions, resources, plan).complete, true);
   const loads = invigilatorWorkloads(resources, sessions, plan);
-  for (const role of ["exam", "backup"]) assert.ok(Math.max(...loads.map((load) => load[role])) - Math.min(...loads.map((load) => load[role])) <= 1);
+  assert.ok(Math.max(...loads.map((load) => load.exam)) - Math.min(...loads.map((load) => load.exam)) <= 1);
   for (const slot of ["09:00", "10:30", "12:00"]) assert.ok(Math.max(...loads.map((load) => load.bySlot[slot] || 0)) - Math.min(...loads.map((load) => load.bySlot[slot] || 0)) <= 1);
-  for (const slot of ["09:00", "10:30", "12:00"]) assert.ok(Math.max(...loads.map((load) => load.backupBySlot[slot] || 0)) - Math.min(...loads.map((load) => load.backupBySlot[slot] || 0)) <= 1);
+  assert.ok(loads.every((load) => !("backup" in load) && !("backupBySlot" in load)));
 });
 
 test("staff selection prefers an eight-hour first-to-last day, including gaps before or after teaching", () => {
@@ -439,19 +442,20 @@ test("staff selection prefers an eight-hour first-to-last day, including gaps be
     });
     const plan = assignResources(sessions, resources);
     assert.deepEqual(plan.allocations[sessions[0].rooms[0].id].invigilatorIds, ["I2"], "Exactly eight hours is allowed; shorter days retain normal load balancing");
-    assert.deepEqual(plan.backups[sessions[0].id], ["I3"], "The same day-span preference applies to backups");
+    assert.deepEqual(plan.backups[sessions[0].id], ["I0"], "Backup names are not ranked by workload or day span");
     assert.equal(validateResourcePlan(sessions, resources, plan).complete, true);
   }
 });
 
-test("room and backup duties are considered together when avoiding split ten-hour days", () => {
+test("backup standby does not extend the exam-duty day", () => {
   const sessions = buildExamSessions({ 1: { Monday: { "08:00": ["EXAM"], "17:00": ["EXAM"] } } }, { EXAM: course("EXAM", 10) }, 60);
   const resources = catalog(1, 4);
   const plan = assignResources(sessions, resources);
   assert.equal(validateResourcePlan(sessions, resources, plan).complete, true);
   const morning = [...plan.allocations[sessions[0].rooms[0].id].invigilatorIds, ...plan.backups[sessions[0].id]];
   const evening = [...plan.allocations[sessions[1].rooms[0].id].invigilatorIds, ...plan.backups[sessions[1].id]];
-  assert.equal(new Set([...morning, ...evening]).size, 4, "A morning backup must not be reused in the evening, even for a different duty role");
+  assert.equal(new Set([...morning, ...evening]).size, 2, "Backup standby is not a counted split duty");
+  assert.notEqual(plan.allocations[sessions[0].rooms[0].id].invigilatorIds[0], plan.allocations[sessions[1].rooms[0].id].invigilatorIds[0]);
 });
 
 test("zero-load fixed lab duties still contribute to the instructor's daily presence", () => {
@@ -498,7 +502,7 @@ test("when eight hours is unavoidable staff selection minimizes excess without b
   });
   const plan = assignResources(sessions, resources);
   assert.deepEqual(plan.allocations[sessions[0].rooms[0].id].invigilatorIds, ["I2"], "Choose a nine-hour day before a ten- or eleven-hour day");
-  assert.deepEqual(plan.backups[sessions[0].id], ["I1"]);
+  assert.deepEqual(plan.backups[sessions[0].id], ["I0"]);
   assert.equal(validateResourcePlan(sessions, resources, plan).complete, true, "Eight hours is a preference, not an export-blocking limit");
   const lab = { days: ["Monday"], crn: "101", startMinutes: 1020, endMinutes: 1080,
     room: "Lab", building: "Building", campus: "Campus", labInstructorId: "I0" };
@@ -527,26 +531,36 @@ test("replaced lab duties do not disadvantage the instructor when balancing extr
   assert.deepEqual(load.bySlot, { "12:00": 1 });
 });
 
-test("teaching-hour exemption needs the same week's replaced class and the entire exam within its hours", () => {
+test("zero-load duties need full lab or tutorial coverage, independently of availability", () => {
   const lab = { days: ["Monday"], crn: "101", startMinutes: 480, endMinutes: 590, room: "Lab", building: "Building", campus: "Campus", labInstructorId: "I0" };
   const sessions = sessionsFor(course("LAB", 10, { labSessions: [lab] }), "08:00");
   const teacher = catalog().invigilators[0];
   teacher.busy = [classTime("LAB", 480, 590, { isLab: true })];
-  assert.equal(isTeachingTimeDuty(teacher, sessions[0], sessions), true);
-  assert.equal(isTeachingTimeDuty(teacher, { ...sessions[0], start: 540, end: 590 }, sessions), true);
-  assert.equal(isTeachingTimeDuty(teacher, { ...sessions[0], start: 540, end: 600 }, sessions), true, "The morning lab's 09:50 ending includes its exam allowance through 10:00");
-  assert.equal(isTeachingTimeDuty(teacher, { ...sessions[0], start: 540, end: 610 }, sessions), false);
-  assert.equal(isTeachingTimeDuty(teacher, { ...sessions[0], week: 2 }, sessions), false);
-  assert.equal(isTeachingTimeDuty(teacher, { ...sessions[0], day: "Tuesday" }, sessions), false);
+  assert.equal(isTeachingTimeDuty(teacher, sessions[0]), true);
+  assert.equal(isTeachingTimeDuty(teacher, { ...sessions[0], start: 540, end: 590 }), true);
+  assert.equal(isTeachingTimeDuty(teacher, { ...sessions[0], start: 540, end: 600 }), true, "A listed 09:50 ending includes the teaching hour through 10:00");
+  assert.equal(isTeachingTimeDuty(teacher, { ...sessions[0], start: 540, end: 610 }), false);
+  assert.equal(isTeachingTimeDuty(teacher, { ...sessions[0], week: 2 }), true, "Listed teaching hours recur each week");
+  assert.match(resourceBusyReason(teacher, { ...sessions[0], week: 2 }, sessions), /Class LAB/, "Credit cannot cancel a non-replaced lab in another week");
+  assert.equal(isTeachingTimeDuty(teacher, { ...sessions[0], day: "Tuesday" }), false);
   teacher.busy = [classTime("LAB", 480, 590)];
-  assert.equal(isTeachingTimeDuty(teacher, sessions[0], sessions), false, "An uncancelled lecture is not a teaching-hour exam duty");
+  assert.equal(isTeachingTimeDuty(teacher, sessions[0]), false, "Lecture hours never qualify for load credit");
   teacher.busy = [classTime("OTHER", 480, 590, { isLab: true })];
-  assert.equal(isTeachingTimeDuty(teacher, sessions[0], sessions), false);
+  assert.equal(isTeachingTimeDuty(teacher, sessions[0]), true);
+  assert.match(resourceBusyReason(teacher, sessions[0], sessions), /Class OTHER/, "Other active labs still block assignment");
   teacher.busy = [classTime("LAB", 0, 1440, { isLab: true, unknownTime: true })];
-  assert.equal(isTeachingTimeDuty(teacher, sessions[0], sessions), false);
+  assert.equal(isTeachingTimeDuty(teacher, sessions[0]), false, "Unspecified teaching times cannot grant credit");
+  teacher.busy = [classTime("TUTORIAL", 480, 530, { type: "T" })];
+  assert.equal(isTeachingTimeDuty(teacher, sessions[0]), true, "Tutorial :50 endings count through the next hour");
+  teacher.busy = [classTime("TUTORIAL", 480, 510, { type: "T" }), classTime("LAB", 510, 540, { isLab: true })];
+  assert.equal(isTeachingTimeDuty(teacher, sessions[0]), true, "Adjacent eligible duties can cover one exam");
+  teacher.busy[1].start = 511;
+  assert.equal(isTeachingTimeDuty(teacher, sessions[0]), false, "A gap in teaching hours is not full coverage");
+  teacher.busy = [classTime("TUTORIAL", 480, 510, { type: "T" }), classTime("LECTURE", 510, 540)];
+  assert.equal(isTeachingTimeDuty(teacher, sessions[0]), false, "A lecture cannot fill missing eligible coverage");
 });
 
-test("teaching-hour backup duties do not add backup load but still prevent double booking", () => {
+test("backups add no counted duties but still prevent double booking", () => {
   const labRoom = roomIdentity("Campus", "Building", "Lab");
   const lab = { days: ["Monday"], crn: "101", startMinutes: 480, endMinutes: 600, room: "Lab", building: "Building", campus: "Campus", labInstructorId: "I0" };
   const courses = { LAB: course("LAB", 10, { labSessions: [lab] }), EXTRA: course("EXTRA", 10) };
@@ -559,10 +573,10 @@ test("teaching-hour backup duties do not add backup load but still prevent doubl
   plan.backups[sessions[1].id] = ["I0"];
   assert.equal(validateResourcePlan(sessions, resources, plan).complete, true);
   const load = invigilatorWorkloads(resources, sessions, plan).find((person) => person.id === "I0");
-  assert.equal(load.teaching, 2);
+  assert.equal(load.teaching, 1);
   assert.equal(load.exam, 0);
-  assert.equal(load.backup, 0);
-  assert.deepEqual(load.backupBySlot, {});
+  assert.equal("backup" in load, false);
+  assert.equal("backupBySlot" in load, false);
   plan.backups[sessions[0].id] = ["I0"];
   assert.ok(validateResourcePlan(sessions, resources, plan).issues.some((issue) => /Already assigned/.test(issue.message)));
 });
@@ -629,27 +643,27 @@ test("reports exclude teaching-hour duties from cached loads and recalculation f
   assert.equal(inv.J1.v, "Invigilator 2");
   assert.equal(inv.L2.v, 0, "The lab instructor has no extra load");
   assert.equal(inv.M2.v, 1, "The additional instructor carries extra load");
-  assert.equal(inv.N3.v, 0, "A backup within replaced teaching hours is also exempt");
+  assert.equal(inv.N1.v, "Room allocation decision", "No backup-load flag is generated");
   assert.equal(inv.L4.v, 1, "The same instructor's later exam adds load");
-  assert.deepEqual([pool.B2.v, pool.C2.v, pool.D2.v, pool.E2.v], [1, 0, 2, 1]);
+  assert.deepEqual([pool.B2.v, pool.C2.v, pool.D2.v], [1, 1, "Yes"]);
   assert.match(pool.B2.f, /SUMIF.*L:L.*SUMIF.*M:M/);
-  assert.match(pool.C2.f, /SUMIF.*N:N/);
-  assert.ok(inv["!cols"].slice(11, 14).every((column) => column.hidden));
-  assert.ok(!inv["!cols"][14].hidden);
+  assert.equal(pool.C2.f, "COUNTIF('Week 1 Invigilators'!I:I,A2)+COUNTIF('Week 1 Invigilators'!J:J,A2)-B2");
+  assert.ok(inv["!cols"].slice(11, 13).every((column) => column.hidden));
+  assert.ok(!inv["!cols"][13].hidden);
   const rows = XLSX.utils.sheet_to_json(inv, { header: 1 }).slice(1);
   for (let index = 0; index < resources.invigilators.length; index += 1) {
     const row = index + 2;
     const name = pool[`A${row}`].v;
     const examLoad = rows.reduce((sum, entry) => sum + (entry[8] === name ? entry[11] : 0) + (entry[9] === name ? entry[12] : 0), 0);
-    const backupLoad = rows.reduce((sum, entry) => sum + (entry[10] === name ? entry[13] : 0), 0);
+    const teaching = rows.reduce((sum, entry) => sum + (entry[8] === name ? 1 : 0) + (entry[9] === name ? 1 : 0), 0) - examLoad;
     assert.equal(pool[`B${row}`].v, examLoad);
-    assert.equal(pool[`C${row}`].v, backupLoad);
+    assert.equal(pool[`C${row}`].v, teaching);
   }
   const saved = XLSX.read(XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }), { type: "buffer", cellStyles: true });
   assert.equal(saved.Sheets["Week 1 Invigilators"].L2.v, 0);
-  assert.equal(saved.Sheets["Week 1 Invigilator Pool"].D2.v, 2);
+  assert.equal(saved.Sheets["Week 1 Invigilator Pool"].C2.v, 1);
   assert.equal(saved.Sheets["Week 1 Invigilator Pool"].B2.f, pool.B2.f);
-  assert.ok(saved.Sheets["Week 1 Invigilators"]["!cols"].slice(11, 14).every((column) => column.hidden));
+  assert.ok(saved.Sheets["Week 1 Invigilators"]["!cols"].slice(11, 13).every((column) => column.hidden));
 });
 
 test("approving consolidation preserves the remaining physical rooms, staff, backups and unrelated exams", () => {
@@ -715,7 +729,7 @@ test("capacity exceptions are recorded in reports and unapproved or excessive ro
   const inv = workbook.Sheets["Week 1 Invigilators"];
   assert.deepEqual([inv.D2.v, inv.D3.v], [26, 26]);
   assert.ok(inv.I2.v && inv.J2.v && inv.I3.v && inv.J3.v);
-  assert.match(inv.O2.v, /Approved up to 27.*staffing-aware distribution/);
+  assert.match(inv.N2.v, /Approved up to 27.*staffing-aware distribution/);
   assert.equal(workbook.Sheets["Week 1 Room Pool"].C2.v, 25);
   assert.equal(workbook.Sheets["Week 1 Room Pool"].D2.v, 27);
   assert.equal(workbook.Sheets["Week 1 Monday"].F28.f, "'Week 1 Invigilators'!H3");

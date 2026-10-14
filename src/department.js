@@ -17,6 +17,8 @@ export function roomIdentity(campus, building, room) {
   return `room:${[campus, building, room].map(normalise).join(":")}`;
 }
 
+export const isTutorialType = (type) => ["T", "TUT", "TUTORIAL"].includes(text(type).toUpperCase());
+
 export function labExamEndMinutes(lab) {
   // Listed :50 lab endings include the final ten minutes of that exam hour.
   return lab.endMinutes % 60 === 50 ? lab.endMinutes + 10 : lab.endMinutes;

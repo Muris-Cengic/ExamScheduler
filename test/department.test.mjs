@@ -518,7 +518,7 @@ test("staffing reserves two invigilators above 15 students plus slot backups; AS
   assert.equal(enough.placed.length, 1);
 });
 
-test("resource-aware auto-scheduling applies the eight-hour staff-day preference to exam and backup assignments", () => {
+test("resource-aware auto-scheduling applies the eight-hour preference to exams only", () => {
   const c = course("MAIN", [student("S1")], ["101", "102"]);
   const catalog = resourceFixture([c], 4, 1);
   catalog.invigilators.forEach((person, index) => {
@@ -530,7 +530,7 @@ test("resource-aware auto-scheduling applies the eight-hour staff-day preference
   assert.equal(result.placed[0].slotId, "17:00");
   const sessions = buildExamSessions(result.assignments, { MAIN: c }, 60);
   assert.deepEqual(result.resourcePlan.allocations[sessions[0].rooms[0].id].invigilatorIds, ["I2"]);
-  assert.deepEqual(result.resourcePlan.backups[sessions[0].id], ["I3"]);
+  assert.deepEqual(result.resourcePlan.backups[sessions[0].id], ["I0"]);
   assert.equal(validateResourcePlan(sessions, catalog, result.resourcePlan).complete, true);
 });
 

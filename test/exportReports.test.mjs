@@ -134,7 +134,7 @@ test("ASD opt-in extends only the overview model, including ASD-only weeks and c
   assert.deepEqual(week3.summary, { exams: 0, roomSessions: 0, students: 0, sittings: 0 });
   assert.equal(week3.overviewExams[0].date, "2026-11-04");
   assert.equal(week3.overviewExams[0].end, 720);
-  assert.ok(week3.workloads.every((person) => person.exam + person.backup + person.teaching === 0));
+  assert.ok(week3.workloads.every((person) => person.exam + person.teaching === 0));
   assert.throws(() => buildExportModel({ ...options, weeks: [3] }), /Only weeks with scheduled/);
   assert.throws(() => buildExportModel({ ...options, includeAsd: true, weeks: [4] }), /Only weeks with scheduled/);
   assert.throws(() => buildExportModel({ ...options, includeAsd: true, weeks: [3], plan: emptyResourcePlan(options.sessions, options.catalog) }), /Complete valid resource/);
@@ -300,8 +300,7 @@ test("export model uses confirmed resources, excludes empty weeks and counts sit
   const teaching = model.duties.find((duty) => duty.invigilatorId === "I0" && duty.week === 1);
   assert.equal(teaching.extraLoad, 0);
   assert.equal(teaching.teaching, true);
-  assert.ok(model.duties.filter((duty) => duty.role === "Backup").every((duty) => duty.roomName === "Slot standby"));
-  assert.equal(model.duties.filter((duty) => duty.role === "Backup").length, 2, "Backups appear once per slot, not once per room");
+  assert.ok(model.duties.every((duty) => duty.role === "Exam"), "Backup names appear only in the complete report, not staff duties");
   const week2 = buildExportModel({ ...options, weeks: [2, 2] });
   assert.deepEqual(week2.selectedWeeks, [2]);
   assert.equal(week2.students.length, 26);
@@ -337,14 +336,12 @@ test("combined complete report shares duties and pools with correct daily refere
   }
   const workload = buildExportModel(options).workloads[0];
   assert.equal(restored.Sheets["Invigilator Pool"].B2.v, workload.exam);
-  assert.equal(restored.Sheets["Invigilator Pool"].C2.v, workload.backup);
-  assert.equal(restored.Sheets["Invigilator Pool"].D2.v, workload.teaching);
+  assert.equal(restored.Sheets["Invigilator Pool"].C2.v, workload.teaching);
   const dutyRows = rows(restored, "Invigilator Duties").slice(1);
-  rows(restored, "Invigilator Pool").slice(1).forEach(([name, exam, backup, teaching, total]) => {
+  rows(restored, "Invigilator Pool").slice(1).forEach(([name, exam, teaching]) => {
     const expectedExam = dutyRows.reduce((sum, row) => sum + (row[8] === name ? row[11] : 0) + (row[9] === name ? row[12] : 0), 0);
-    const expectedBackup = dutyRows.reduce((sum, row) => sum + (row[10] === name ? row[13] : 0), 0);
-    const count = dutyRows.reduce((sum, row) => sum + row.slice(8, 11).filter((value) => value === name).length, 0);
-    assert.deepEqual([exam, backup, teaching, total], [expectedExam, expectedBackup, count - expectedExam - expectedBackup, expectedExam + expectedBackup]);
+    const count = dutyRows.reduce((sum, row) => sum + row.slice(8, 10).filter((value) => value === name).length, 0);
+    assert.deepEqual([exam, teaching], [expectedExam, count - expectedExam]);
   });
   rows(restored, "Room Pool").slice(1).forEach(([name, count]) => {
     assert.equal(count, dutyRows.filter((row) => row[7] === name).length);
@@ -364,8 +361,8 @@ test("shared duties and pool totals include only selected non-contiguous weeks a
   assert.equal(workbook.Sheets["Schedule Index"].F3.l.Target, "#'Invigilator Duties'!A3");
   assert.equal(workbook.Sheets["Week 3 Monday"].F2.f, "'Invigilator Duties'!H3");
   const expected = buildExportModel(scoped);
-  assert.deepEqual(rows(workbook, "Invigilator Pool").slice(1).map((row) => row.slice(0, 5)),
-    expected.workloads.map((person) => [person.name, person.exam, person.backup, person.teaching, person.exam + person.backup]));
+  assert.deepEqual(rows(workbook, "Invigilator Pool").slice(1).map((row) => row.slice(0, 3)),
+    expected.workloads.map((person) => [person.name, person.exam, person.teaching]));
   assert.equal(rows(workbook, "Room Pool").slice(1).reduce((sum, row) => sum + row[1], 0), 2);
   assert.equal(JSON.stringify(scoped), before);
 });
@@ -401,8 +398,8 @@ test("focused workbooks contain the right audience's data and staff has a separa
   const staff = read(buildExportFiles({ ...options, report: "staff", weeks: [1] })[0]);
   assert.deepEqual(staff.SheetNames, ["Staff duties", "Workload Summary"]);
   const load = rows(staff, "Workload Summary").find((row) => row[0] === "Invigilator 0");
-  assert.deepEqual(load.slice(1, 5), [0, 0, 1, 0]);
-  assert.equal(rows(staff, "Staff duties").filter((row) => row[6] === "Backup").length, 1);
+  assert.deepEqual(load.slice(1), [0, 1, "Yes"]);
+  assert.equal(rows(staff, "Staff duties").filter((row) => row[6] === "Backup").length, 0);
   const students = read(buildExportFiles({ ...options, report: "students", weeks: [2] })[0]);
   const roster = rows(students, "Student room lists");
   assert.equal(roster.length, 27);
@@ -657,7 +654,7 @@ test("overview primary requirements follow staffing-aware rooms and approved con
     assert.deepEqual(sessions[0].rooms.map((room) => room.students.length), expectedSizes);
     assert.equal(model.exams[0].primaryInvigilatorsNeeded, needed, count + " students / " + choice);
     assert.equal(model.duties.filter((duty) => duty.role === "Exam").length, needed);
-    assert.equal(model.duties.filter((duty) => duty.role === "Backup").length, 1, "A backup is not part of the exam's primary requirement");
+    assert.equal(model.duties.filter((duty) => duty.role === "Backup").length, 0, "Backups are excluded from staff duties");
   }
   const labModel = buildExportModel(fixture());
   assert.equal(labModel.exams[0].primaryInvigilatorsNeeded, 2, "A zero-load lab instructor still covers a required room duty");
@@ -695,7 +692,7 @@ test("CSV exports include selected weeks, preserve Unicode and quotes, and neutr
   const overview = buildExportFiles({ ...options, report: "overview", format: "csv" })[0];
   assert.equal(overview.data.split("\r\n").filter(Boolean).length, 3);
   assert.ok(!overview.data.includes("HYPERLINK"));
-  assert.equal(reportTable("staff", buildExportModel(options)).rows.filter((row) => row[6] === "Backup").length, 2);
+  assert.equal(reportTable("staff", buildExportModel(options)).rows.filter((row) => row[6] === "Backup").length, 0);
 });
 
 test("all export paths reject incomplete resources and invalid or empty selections", () => {
