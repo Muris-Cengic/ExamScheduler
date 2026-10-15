@@ -19,6 +19,7 @@ import { inferAcademicTerm } from "./examSetup.js";
 import ImportPrompt from "./ImportPrompt.jsx";
 import CyberSkillsPanel from "./CyberSkillsPanel.jsx";
 import { parseCyberSkillsWorkbook, readCyberSkillsSchedule, resolveCyberSkillsLinks, withCyberSkillsAvailability } from "./cyberSkills.js";
+import { chooseExportDestination } from "./fileExports.js";
 
 const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 
@@ -37,17 +38,6 @@ const DEFAULT_EXAM_DURATION_MINUTES = 60;
 
 const TIMETABLE_MANIFEST_VERSION = 5;
 const ASD_TIMETABLE_MANIFEST_VERSION = 1;
-
-function downloadBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  URL.revokeObjectURL(url);
-}
 
 function isPlainObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -1458,6 +1448,21 @@ function App() {
     return templateHeadersRef.current;
   };
 
+  const saveSnapshot = async (blob, filename) => {
+    if (isExporting) return;
+    setExportError("");
+    setIsExporting(true);
+    try {
+      const destination = await chooseExportDestination();
+      if (destination) await destination.save(blob, filename);
+    } catch (error) {
+      console.error("Failed to save timetable", error);
+      setExportError(error.message || "Failed to save the timetable. Please try again.");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const handleSaveTimetable = () => {
     if (!courses.length) {
       return;
@@ -1493,7 +1498,7 @@ function App() {
     const datePart = now.toISOString().slice(0, 10);
     const filename = `Main_Exam_Timetable_${datePart}.json`;
 
-    downloadBlob(blob, filename);
+    return saveSnapshot(blob, filename);
   };
 
   const handleCreateSchedule = () => {
@@ -1931,7 +1936,7 @@ function App() {
     const datePart = now.toISOString().slice(0, 10);
     const filename = `ASD_Exam_Timetable_${datePart}.json`;
 
-    downloadBlob(blob, filename);
+    return saveSnapshot(blob, filename);
   };
 
   const handleTriggerLoadAsdTimetable = () => {
@@ -2217,6 +2222,8 @@ function App() {
     setIsExporting(true);
 
     try {
+      const destination = await chooseExportDestination();
+      if (!destination) return;
       const templateHeaders = (options.report || "complete") === "complete" ? await getTemplateHeaders() : undefined;
       const exportFiles = options.report === "envelopes" && options.format === "pdf" ? buildEnvelopeCoverFiles : buildExportFiles;
       const exportedFiles = await exportFiles({
@@ -2228,7 +2235,7 @@ function App() {
       if (exportedFiles.length === 1) {
         const { filename, data, mimeType } = exportedFiles[0];
         const blob = new Blob([data], { type: mimeType });
-        downloadBlob(blob, filename);
+        await destination.save(blob, filename);
         return;
       }
 
@@ -2247,7 +2254,7 @@ function App() {
       const zipFilename = reportFileName({ ...options, startDate, format: "zip",
         includeAsd: options.includeAsd && asdOverviewExams.some((exam) => !options.weeks || options.weeks.includes(exam.week)) });
 
-      downloadBlob(zipBlob, zipFilename);
+      await destination.save(zipBlob, zipFilename);
     } catch (error) {
       console.error("Failed to export schedule", error);
 

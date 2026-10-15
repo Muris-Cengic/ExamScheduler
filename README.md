@@ -447,6 +447,17 @@ lab-time badges. Each week starts on a new page; busy weeks continue onto furthe
 pages with repeated day headers rather than clipping exam cards. With **Week board**
 selected, Excel and CSV use the detailed table; **Chronological list** exports the
 compact six-column table matching its preview.
+Every file export and timetable JSON save asks for a destination folder before
+generating the file. Generated filenames are preserved; multi-file exports still
+save as one ZIP. Cancelling saves nothing. Replacing an existing file requires
+confirmation. The folder is requested each time, not reused automatically.
+This uses the browser's
+[File System Access API](https://developer.chrome.com/docs/capabilities/web-apis/file-system-access).
+On browsers without a folder picker, the app asks before using a normal download.
+Enable **Ask where to save each file before downloading** in that browser's
+download settings to get its destination dialog. Print/PDF continues to use the
+browser's print and PDF-save dialogs.
+
 All export formats require complete, valid resource assignments. Share reports
 containing student names and IDs only with authorised recipients.
 

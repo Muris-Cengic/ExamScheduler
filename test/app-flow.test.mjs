@@ -43,12 +43,16 @@ const cyberSkillsSource = readFileSync(new URL("../src/CyberSkillsPanel.jsx", im
   .replace(/^import .*;\r?$/gm, "")
   .replace("export default function CyberSkillsPanel", "function CyberSkillsPanel") + "\nglobalThis.CyberSkillsPanel = CyberSkillsPanel;";
 const { code: cyberSkillsComponentCode } = await transformWithEsbuild(cyberSkillsSource, "CyberSkillsPanel.jsx", { loader: "jsx", jsxFactory: "h", jsxFragment: "Fragment" });
+const fileExportsSource = readFileSync(new URL("../src/fileExports.js", import.meta.url), "utf8").replace(/^export /gm, "");
 
 function harness(component = "App", props) {
   const hooks = [];
   const downloads = [];
   const downloadNames = [];
   const printedTitles = [];
+  const destinationRequests = [];
+  const saveEvents = [];
+  let destinationError;
   let printCount = 0;
   let printFailure;
   let index = 0;
@@ -93,10 +97,26 @@ function harness(component = "App", props) {
         hooks[current] = { dependencies };
       }
     },
-    window: { addEventListener() {}, removeEventListener() {}, print() { printCount += 1; printedTitles.push(context.document.title); if (printFailure) throw printFailure; } },
+    window: {
+      addEventListener() {}, removeEventListener() {}, confirm: () => true,
+      async showDirectoryPicker(options) {
+        destinationRequests.push(options);
+        saveEvents.push("destination");
+        if (destinationError) throw destinationError;
+        return { name: "Test exports", async getFileHandle(filename, options) {
+          if (!options?.create) throw Object.assign(new Error("No existing file"), { name: "NotFoundError" });
+          return { async createWritable() {
+            let blob;
+            return { async write(data) { blob = data; }, async close() { downloads.push(blob); downloadNames.push(filename); saveEvents.push("saved"); }, async abort() {} };
+          } };
+        } };
+      },
+      print() { printCount += 1; printedTitles.push(context.document.title); if (printFailure) throw printFailure; },
+    },
     document: { title: "Midterm Exam Scheduling Helper", body: { appendChild() {}, removeChild() {} }, createElement: () => ({ click() { downloadNames.push(this.download); } }) },
-    fetch: async () => ({ ok: true, arrayBuffer: async () => buffer("data/ReportReference/Report Template.xlsx") }),
+    fetch: async () => { saveEvents.push("template"); return { ok: true, arrayBuffer: async () => buffer("data/ReportReference/Report Template.xlsx") }; },
   });
+  runInContext(fileExportsSource, context);
   runInContext(importPromptCode, context);
   runInContext(poolComponentCode, context);
   runInContext(resourceComponentCode, context);
@@ -107,6 +127,9 @@ function harness(component = "App", props) {
     downloads,
     downloadNames,
     printedTitles,
+    destinationRequests,
+    saveEvents,
+    setDestinationError: (error) => { destinationError = error; },
     documentTitle: () => context.document.title,
     setPrintFailure: (error) => { printFailure = error; },
     prints: () => printCount,
@@ -503,8 +526,9 @@ test("CyberSkills import in step 3 applies to assignments, matching, resource re
   assert.equal(workloads.find((person) => person.id === "A").exam, 0);
   assert.equal(workloads.reduce((sum, person) => sum + person.exam, 0), 1);
   assert.match(text(tree), /CyberSkills/);
-  button(tree, "Save Timetable").props.onClick();
+  await button(tree, "Save Timetable").props.onClick();
   const saved = JSON.parse(await app.downloads.at(-1).text());
+  assert.equal(app.destinationRequests.length, 1, "Timetable JSON saves also ask for a destination");
   assert.equal(saved.cyberSkillsSchedule.sessions.length, 1);
   const reloaded = harness();
   tree = reloaded.render();
@@ -616,7 +640,7 @@ test("Exam Setup derives metadata from the entered date and restores it after sa
   assert.ok(!nodes(tree).some((node) => node.props.className === "overview" || node.type?.name === "CourseSelection"));
   step(tree, "main").props.onClick();
   tree = app.render();
-  button(tree, "Save Timetable").props.onClick();
+  await button(tree, "Save Timetable").props.onClick();
   const saved = JSON.parse(await app.downloads.at(-1).text());
   assert.equal(saved.startDate, "2027-01-12");
   assert.equal("semester" in saved, false, "Derived values must not duplicate the authoritative date");
@@ -873,7 +897,7 @@ test("resource selection precedes generation and stays editable after the resour
   tree = app.render();
   button(tree, "Auto-Assign Resources").props.onClick();
   tree = app.render();
-  button(tree, "Save Timetable").props.onClick();
+  await button(tree, "Save Timetable").props.onClick();
   const saved = JSON.parse(await app.downloads.at(-1).text());
   assert.equal(saved.resourceCatalog.rooms.find((room) => room.name === roomNames[0]).enabled, false);
   assert.ok(saved.resourcePlan.fingerprint);
@@ -882,7 +906,7 @@ test("resource selection precedes generation and stays editable after the resour
     step(tree, id).props.onClick();
     tree = app.render();
   }
-  button(tree, "Save Timetable").props.onClick();
+  await button(tree, "Save Timetable").props.onClick();
   const afterNavigation = JSON.parse(await app.downloads.at(-1).text());
   const withoutTimestamp = ({ savedAt: _savedAt, ...snapshot }) => snapshot;
   assert.deepEqual(withoutTimestamp(afterNavigation), withoutTimestamp(saved), "Step navigation must not change schedule data or resource selections");
@@ -899,7 +923,7 @@ test("resource selection precedes generation and stays editable after the resour
     assert.match(fridayCell(time).props.title, /Friday exams must use 09:00-10:00 or 10:30-11:30/);
     fridayCell(time).props.onDrop(drag);
     tree = app.render();
-    button(tree, "Save Timetable").props.onClick();
+    await button(tree, "Save Timetable").props.onClick();
     assert.deepEqual(JSON.parse(await app.downloads.at(-1).text()).assignments, saved.assignments,
       "An invalid Friday drop must not remove or move an existing exam");
   }
@@ -910,7 +934,7 @@ test("resource selection precedes generation and stays editable after the resour
     assert.equal(fridayCell(time).props["aria-disabled"], undefined);
     fridayCell(time).props.onDrop(drag);
     tree = app.render();
-    button(tree, "Save Timetable").props.onClick();
+    await button(tree, "Save Timetable").props.onClick();
     const moved = JSON.parse(await app.downloads.at(-1).text());
     assert.deepEqual(moved.assignments[1].Friday[time], [mainId]);
     assert.equal(department.assignmentIds(moved.assignments).size, 1);
@@ -928,12 +952,12 @@ test("resource selection precedes generation and stays editable after the resour
   assert.equal(fridayCell("12:00").props["aria-disabled"], undefined, "ASD is not restricted by the main timetable rule");
   fridayCell("12:00").props.onDrop(drag);
   tree = app.render();
-  button(tree, "Save ASD Timetable").props.onClick();
+  await button(tree, "Save ASD Timetable").props.onClick();
   const asd = JSON.parse(await app.downloads.at(-1).text());
   assert.deepEqual(asd.assignments[1].Friday["12:00"], [mainId]);
   step(tree, "main").props.onClick();
   tree = app.render();
-  button(tree, "Save Timetable").props.onClick();
+  await button(tree, "Save Timetable").props.onClick();
   const afterAsd = JSON.parse(await app.downloads.at(-1).text());
   assert.equal(department.assignmentIds(afterAsd.assignments).has(mainId), false,
     "Placing an ASD exam removes its duplicate main placement without requiring a Continue button");
@@ -984,7 +1008,7 @@ test("wizard imports, exam toggles, draft, saved-state round trip and report exc
   assert.match(text(tree), /25 exams added. 0 remain unplaced/);
   const conflicts = find(tree, (node) => node.props.className === "conflicts conflicts--full");
   assert.match(text(conflicts), /No conflicts detected/);
-  button(tree, "Save Timetable").props.onClick();
+  await button(tree, "Save Timetable").props.onClick();
   const snapshot = JSON.parse(await app.downloads.at(-1).text());
   assert.equal(snapshot.version, 5);
   assert.deepEqual(snapshot.roomDistributionChoices, {});
@@ -1021,7 +1045,7 @@ test("wizard imports, exam toggles, draft, saved-state round trip and report exc
   loadedTree = reloaded.render();
   step(loadedTree, "main").props.onClick();
   loadedTree = reloaded.render();
-  button(loadedTree, "Save Timetable").props.onClick();
+  await button(loadedTree, "Save Timetable").props.onClick();
   const afterToggle = JSON.parse(await reloaded.downloads.at(-1).text());
   assert.equal(department.assignmentIds(afterToggle.assignments).size, 24);
   assert.equal(department.assignmentIds(afterToggle.assignments).has(assignedId), false);
@@ -1089,7 +1113,7 @@ test("wizard imports, exam toggles, draft, saved-state round trip and report exc
       assert.deepEqual(sizes, examRooms.examRoomSizes(total, afterToggle.settings.studentsPerRoom));
     });
   });
-  button(loadedTree, "Save Timetable").props.onClick();
+  await button(loadedTree, "Save Timetable").props.onClick();
   const savedResources = JSON.parse(await reloaded.downloads.at(-1).text());
   assert.ok(savedResources.resourcePlan.fingerprint);
   await find(loadedTree, (node) => node.type === "input" && node.props.accept === "application/json").props.onChange(jsonEvent(savedResources));
@@ -1198,7 +1222,7 @@ test("CRN Info choices control invigilator availability across scheduling, revie
   assert.equal(panel().validation.complete, true);
   assert.deepEqual(Array.from(panel().plan.allocations[panel().sessions[0].rooms[0].id].invigilatorIds), ["staff:10"]);
   assert.deepEqual(Array.from(panel().plan.backups[panel().sessions[0].id]), ["staff:20"]);
-  button(tree, "Save Timetable").props.onClick();
+  await button(tree, "Save Timetable").props.onClick();
   const saved = JSON.parse(await app.downloads.at(-1).text());
   assert.ok(saved.resourceCatalog.invigilators.find((person) => person.name === "Alice").busy.some((entry) => entry.code === "NOEXAM-1000"));
   assert.equal(saved.examChoices[other.id], false);
@@ -1275,7 +1299,7 @@ test("manually moving a single-CRN exam to the final lab hour stays valid throug
   assert.equal(allocation.roomId, labRoomId);
   assert.equal(allocation.invigilatorIds[0], "I0");
   assert.equal(resources.invigilatorWorkloads(panel.catalog, panel.sessions, panel.plan).find((person) => person.id === "I0").exam, 0);
-  button(tree, "Save Timetable").props.onClick();
+  await button(tree, "Save Timetable").props.onClick();
   const saved = JSON.parse(await app.downloads.at(-1).text());
   assert.deepEqual(saved.assignments[1].Monday["13:00"], []);
   assert.deepEqual(saved.assignments[1].Monday["14:00"], [exam.id]);
@@ -1336,7 +1360,7 @@ test("room consolidation choices require a click, preserve other exams, survive 
   tree = app.render();
   assert.deepEqual(examRooms().map((room) => room.students.length), [26, 26]);
   assert.ok(examRooms().every((room) => room.requiredInvigilators === 2));
-  button(tree, "Save Timetable").props.onClick();
+  await button(tree, "Save Timetable").props.onClick();
   const saved = JSON.parse(await app.downloads.at(-1).text());
   assert.equal(saved.roomDistributionChoices[exam.id], "distribute");
   const reloaded = harness();
@@ -1423,7 +1447,15 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   find(preview(), (node) => node.type === "input" && node.props.type === "search").props.onChange({ target: { value: "Staff 0" } });
   tree = app.render();
   assert.ok(!text(preview()).includes("No matching records"), "The room ledger can be searched by an assigned invigilator");
+  app.setDestinationError(Object.assign(new Error("Cancelled"), { name: "AbortError" }));
   await button(tree, "Export Timetable").props.onClick();
+  tree = app.render();
+  assert.equal(app.downloads.length, 0, "Cancelling the destination must not save or download a file");
+  assert.equal(button(tree, "Export Timetable").props.disabled, false, "Cancellation must release the exporting state");
+  assert.deepEqual(app.saveEvents, ["destination"], "Ask for the folder before fetching the template or generating the report");
+  app.setDestinationError(undefined);
+  await button(tree, "Export Timetable").props.onClick();
+  assert.deepEqual(app.saveEvents.slice(0, 3), ["destination", "destination", "template"]);
   const combined = XLSX.read(await app.downloads.at(-1).arrayBuffer(), { type: "array" });
   assert.ok(combined.Sheets["Schedule Index"]);
   assert.deepEqual(combined.SheetNames, ["Schedule Index", "Invigilator Duties", "Invigilator Pool", "Room Pool", "Week 1 Monday", "Week 2 Tuesday"]);
@@ -1796,6 +1828,8 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   tree = app.render();
   assert.equal(button(tree, "Download Excel").props.disabled, true);
   assert.equal(button(tree, "Print / Save PDF").props.disabled, true);
+  assert.equal(app.destinationRequests.length, app.downloads.length + 1,
+    "Each Excel, CSV, PDF or ZIP export asks once; the cancelled request saves nothing and print uses its own dialog");
 });
 
 test("envelope preview switches courses and rooms without restricting downloads or print to that preview", () => {
