@@ -1,4 +1,5 @@
-import { backupTarget, isTeachingTimeDuty, PREFERRED_STANDBY_COUNT, resourceAssignmentAnchor, resourceChoiceReason, resourceChoiceSummary, resourceSessionLabel, standbyAvailability } from "./resources.js";
+import { backupTarget, isTeachingTimeDuty, PREFERRED_STANDBY_COUNT, resourceAssignmentAnchor, resourceChoiceReason, resourceChoiceSummary, standbyAvailability } from "./resources.js";
+import { formatReportDate, reportDate, reportTimeRange } from "./exportReports.js";
 import ResourcePool from "./ResourcePool.jsx";
 
 function InvigilatorOptions({ people, session, sessions, plan, owner, fixedId = "", placeholder }) {
@@ -22,7 +23,7 @@ function InvigilatorOptions({ people, session, sessions, plan, owner, fixedId = 
   </>;
 }
 
-export default function ResourceAssignment({ sessions, catalog, plan, validation, onAssign, onPoolChange, onAllocationChange, onBackupChange, onDistributionChange }) {
+export default function ResourceAssignment({ sessions, catalog, plan, validation, startDate, onAssign, onPoolChange, onAllocationChange, onBackupChange, onDistributionChange }) {
   const roomOptions = (session, owner, fixedId = "") => catalog.rooms.map((resource) => {
     const reason = fixedId && resource.id !== fixedId ? "Original lab resource required" : resourceChoiceReason(resource, "room", session, sessions, plan, owner);
     return <option key={resource.id} value={resource.id} disabled={Boolean(reason)}>{resource.name}{reason ? " - " + reason : ""}</option>;
@@ -62,7 +63,7 @@ export default function ResourceAssignment({ sessions, catalog, plan, validation
         {sessions.map((session) => {
           const standby = validation.complete ? standbyAvailability(session, sessions, catalog, plan) : null;
           return <section className="resource-session" key={session.id} id={resourceAssignmentAnchor(session.id)}>
-            <h3>{resourceSessionLabel(session)}</h3>
+            <h3>{`Week ${session.week} / ${formatReportDate(reportDate(startDate, session.week, session.day))} / ${session.day} / ${reportTimeRange(session.start, session.end)}`}</h3>
             <p className={standby && standby.count < PREFERRED_STANDBY_COUNT ? "resource-standby resource-standby--short" : "resource-standby"}>
               {standby ? "Available standby capacity: " + standby.count + " (target " + PREFERRED_STANDBY_COUNT + "), including this slot's assigned backups."
                 : "Confirm valid room and staff assignments to assess standby capacity."} Other standby people remain unassigned; only assigned duties appear in reports.

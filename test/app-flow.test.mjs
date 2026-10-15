@@ -254,7 +254,7 @@ test("invigilator and backup selectors show available people first and update af
   plan.allocations[other.rooms[0].id] = { roomId: "", invigilatorIds: ["EXAM"] };
   plan.backups[current.id] = ["BACKUP"];
   plan.backups[other.id] = ["OTHERBACKUP"];
-  const props = { sessions, catalog, plan, validation: { complete: false, issues: [] },
+  const props = { sessions, catalog, plan, validation: { complete: false, issues: [] }, startDate: "2026-10-19",
     onAssign() {}, onPoolChange() {}, onDistributionChange() {},
     onAllocationChange(id, allocation) { props.plan = { ...props.plan, allocations: { ...props.plan.allocations, [id]: allocation } }; },
     onBackupChange(id, ids) { props.plan = { ...props.plan, backups: { ...props.plan.backups, [id]: ids } }; },
@@ -326,7 +326,7 @@ test("grouped lab selectors retain the required instructor and teaching-hour lab
   plan.allocations[sessions[0].rooms[0].id] = { roomId: labRoom, invigilatorIds: ["I0", "I1"] };
   plan.allocations[sessions[0].rooms[1].id] = { roomId: "R1", invigilatorIds: ["I5"] };
   plan.backups[sessions[0].id] = ["I4"];
-  const app = harness("ResourceAssignment", { sessions, catalog, plan, validation: { complete: true, issues: [] },
+  const app = harness("ResourceAssignment", { sessions, catalog, plan, validation: { complete: true, issues: [] }, startDate: "2026-10-19",
     onAssign() {}, onPoolChange() {}, onAllocationChange() {}, onBackupChange() {}, onDistributionChange() {} });
   let tree = app.render();
   const control = (index) => find(tree, (node) => node.type === "select" && node.props["aria-label"] === "Invigilator " + index + " for " + sessions[0].rooms[0].id);
@@ -352,6 +352,20 @@ const jsonEvent = (value) => ({ target: { files: [{ name: "snapshot.json", text:
 const text = (node) => typeof node === "string" || typeof node === "number" ? String(node) : node?.children?.map(text).join("") || "";
 const nodes = (node) => node && typeof node === "object" ? [node, ...(node.children || []).flatMap(nodes)] : [];
 
+test("assignment slot headings show week, short calendar date, day and full time range across weeks and years", () => {
+  const exam = { id: "EXAM", code: "EXAM", title: "Exam", crns: ["101", "102"], labSessions: [], students: [{ id: "S1", name: "Student", crn: "101" }] };
+  const sessions = resources.buildExamSessions({ 1: { Monday: { "12:00": ["EXAM"] } }, 2: { Friday: { "10:30": ["EXAM"] } } }, { EXAM: exam }, 60);
+  const catalog = { rooms: [{ id: "R", name: "Room", enabled: true, busy: [] }], invigilators: Array.from({ length: 3 }, (_, i) => ({ id: "I" + i, name: "Staff " + i, enabled: true, busy: [] })) };
+  const plan = resources.assignResources(sessions, catalog);
+  for (const [startDate, dates] of [["2026-10-19", ["19 Oct", "30 Oct"]], ["2026-12-28", ["28 Dec", "8 Jan"]]]) {
+    const app = harness("ResourceAssignment", { sessions, catalog, plan, startDate, validation: resources.validateResourcePlan(sessions, catalog, plan),
+      onAssign() {}, onPoolChange() {}, onAllocationChange() {}, onBackupChange() {}, onDistributionChange() {} });
+    const tree = app.render();
+    const headings = nodes(tree).filter((node) => node.props.className === "resource-session").map((node) => text(find(node, (child) => child.type === "h3")));
+    assert.deepEqual(headings, [`Week 1 / ${dates[0]} / Monday / 12:00-13:00`, `Week 2 / ${dates[1]} / Friday / 10:30-11:30`]);
+  }
+});
+
 test("CyberSkills import in step 3 applies to assignments, matching, resource review and main save/load without exam load", async () => {
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([
@@ -368,7 +382,7 @@ test("CyberSkills import in step 3 applies to assignments, matching, resource re
   const scope = department.scopeDepartmentCourses(enrollment.courses, selection.courses).courses;
   const sessions = resources.buildExamSessions(assignments, Object.fromEntries(scope.map((course) => [course.id, course])), 60);
   const active = resources.scopeInvigilatorAvailability(catalog, scope, {});
-  const snapshot = { type: "main", version: 5, startDate: "2026-10-19", weeks: [1], selectedWeek: 1,
+  const snapshot = { type: "main", version: 5, startDate: "2026-10-20", weeks: [1], selectedWeek: 1,
     settings: { slotIntervalMinutes: 30, startHour: 8, endHour: 18, studentsPerRoom: 25, examDurationMinutes: 60 },
     assignments, asdAssignments: {}, asdExamDurations: {}, hasAsdStep: false, courses: enrollment.courses, studentDirectory: enrollment.studentDirectory,
     departmentSelection: selection, examChoices: { [exam.id]: true }, roomDistributionChoices: {}, resourceCatalog: catalog,
@@ -381,6 +395,8 @@ test("CyberSkills import in step 3 applies to assignments, matching, resource re
   step(tree, "resources").props.onClick(); tree = app.render();
   const panel = () => find(tree, (node) => node.type?.name === "ResourceAssignment").props;
   assert.equal(panel().validation.complete, true);
+  assert.equal(panel().startDate, "2026-10-19", "Assignments use the timetable's Monday anchor, not the raw Tuesday setup date");
+  assert.match(text(tree), /Week 1 \/ 19 Oct \/ Monday \/ 12:00-13:00/);
   step(tree, "asd").props.onClick(); tree = app.render();
   const cyberPanel = () => find(tree, (node) => node.type?.name === "CyberSkillsPanel");
   assert.match(text(cyberPanel()), /Load CyberSkills Schedule/);

@@ -2710,7 +2710,7 @@ function App() {
       </section> : null}
 
       {wizardStep === "resources" && !stepNotice ? (
-        <ResourceAssignment sessions={examSessions} catalog={activeResourceCatalog} plan={resourcePlan} validation={resourceValidation}
+        <ResourceAssignment sessions={examSessions} catalog={activeResourceCatalog} plan={resourcePlan} validation={resourceValidation} startDate={exportStartDate}
           onAssign={handleAssignResources} onPoolChange={handleResourcePoolChange}
           onAllocationChange={handleResourceAllocationChange} onBackupChange={handleResourceBackupChange}
           onDistributionChange={handleRoomDistributionChange} />
