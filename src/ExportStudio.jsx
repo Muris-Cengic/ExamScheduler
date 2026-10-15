@@ -328,7 +328,14 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
   const filtered = current ? { ...current, roomRows: current.roomRows.filter(matches), duties: current.duties.filter(matches), students: current.students.filter(matches) } : null;
   const records = report === "students" ? filtered?.students.length : report === "staff" ? filtered?.duties.length : filtered?.roomRows.length;
   const disabled = isExporting || !ready || !selectedWeeks.length;
-  const chooseReport = (id) => { setReport(id); if (id === "envelopes") setFormat("pdf"); else if (id === "complete" || id === "seating" || format === "pdf") setFormat("xlsx"); setSearch(""); setLimit(50); };
+  const chooseReport = (id) => {
+    setReport(id);
+    if (id === "staff" && report !== "staff") setPreviewWeek("overall");
+    if (id === "envelopes") setFormat("pdf");
+    else if (id === "complete" || id === "seating" || format === "pdf") setFormat("xlsx");
+    setSearch("");
+    setLimit(50);
+  };
   const coursePdfs = report === "envelopes" && format === "pdf";
   const exportOptions = { report, format, packaging: report === "seating" || coursePdfs ? "course" : packaging, weeks: selectedWeeks, includeAsd: withAsd,
     ...(report === "overview" ? { overviewMode: mode } : {}) };

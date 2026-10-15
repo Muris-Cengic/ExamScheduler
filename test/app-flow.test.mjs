@@ -150,9 +150,11 @@ test("staff distribution shows enabled staff, daily teaching/exam spans and sele
   const preview = () => find(tree, (node) => node.props["aria-label"] === "Report preview");
   const print = () => find(tree, (node) => node.props.className === "export-print");
   const distribution = () => find(preview(), (node) => node.type?.name === "StaffDistribution");
+  assert.equal(button(preview(), "Overall").props["aria-pressed"], true);
   button(preview(), "Session distribution").props.onClick();
   tree = app.render();
   assert.equal(button(preview(), "Session distribution").props["aria-pressed"], true);
+  assert.deepEqual(Array.from(distribution().props.model.selectedWeeks), [1, 2], "Staff subviews default to all included weeks");
   assert.ok(!nodes(preview()).some((node) => node.type?.name === "PreviewTable" && node.props.label === "Staff duties preview"));
   assert.match(text(distribution()), /Alice/);
   assert.match(text(distribution()), /Bob/);
@@ -1505,7 +1507,10 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   assert.ok(!text(printView()).includes("ASD-"));
   assert.match(text(preview()), /Workload balance/);
   assert.ok(!text(preview()).includes("Backup load"));
-  assert.ok(!text(preview()).includes("Bob"));
+  assert.equal(button(preview(), "Overall").props["aria-pressed"], true);
+  assert.equal(button(preview(), "Week 2").props["aria-pressed"], false);
+  assert.ok(!text(find(preview(), (node) => node.type?.name === "PreviewTable" && node.props.label === "Staff duties preview")).includes("Bob"),
+    "Backup-only staff may appear in Overall workload totals but not in the duty list");
   radio("Excel (.xlsx)").props.onChange();
   tree = app.render();
   await button(tree, "Download Excel").props.onClick();
@@ -1558,6 +1563,19 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
     .filter((person) => person.exam + person.teaching > 0)
     .map((person) => [person.name, person.exam, person.teaching]));
   assert.deepEqual(workloadRows(), weeklyExpected, "Weekly tabs retain weekly-only totals");
+  button(preview(), "Session distribution").props.onClick();
+  tree = app.render();
+  assert.equal(button(preview(), "Week 2").props["aria-pressed"], true, "Changing staff subviews preserves the chosen week");
+  reportButton("Staff duties").props.onClick();
+  tree = app.render();
+  assert.equal(button(preview(), "Week 2").props["aria-pressed"], true, "Reselecting the active report preserves the chosen week");
+  reportButton("Complete report").props.onClick();
+  tree = app.render();
+  reportButton("Staff duties").props.onClick();
+  tree = app.render();
+  assert.equal(button(preview(), "Overall").props["aria-pressed"], true, "Returning to Staff duties defaults to Overall again");
+  button(preview(), "Duty list").props.onClick();
+  tree = app.render();
 
   reportButton("Student room lists").props.onClick();
   tree = app.render();
