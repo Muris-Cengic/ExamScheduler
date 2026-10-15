@@ -1,6 +1,8 @@
 import * as XLSX from "xlsx/xlsx.mjs";
 import StyledXLSX from "xlsx-js-style";
-import { clock, invigilatorDaySpan, invigilatorWorkloads, isTeachingTimeDuty, validateResourcePlan } from "./resources.js";
+import { clock, invigilatorDaySpan, invigilatorWorkloads, isReplacedLab, isTeachingTimeDuty, validateResourcePlan } from "./resources.js";
+import { isTutorialType } from "./department.js";
+import { buildInvigilatorCalendar } from "./invigilatorCalendar.js";
 import { buildResourceWorkbookForWeek, buildSharedResourceWorkbook } from "./reports.js";
 import { inferAcademicTerm } from "./examSetup.js";
 
@@ -15,7 +17,7 @@ export const REPORT_VIEWS = [
 export const REPORT_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-export function reportFileName({ report = "complete", startDate, format = "xlsx", overviewMode = "board", includeAsd = false, week }) {
+export function reportFileName({ report = "complete", startDate, format = "xlsx", overviewMode = "board", includeAsd = false, week, staffView, includeCalendars = false }) {
   const view = REPORT_VIEWS.find((item) => item.id === report);
   const term = inferAcademicTerm(startDate);
   if (!view || !term || !["xlsx", "csv", "pdf", "zip"].includes(format)
@@ -24,10 +26,11 @@ export function reportFileName({ report = "complete", startDate, format = "xlsx"
   const year = term.academicYear.split("-").map((part) => part.slice(-2)).join("-");
   const layout = report === "overview"
     ? overviewMode === "table" ? "Chronological" : format === "pdf" ? "Overview Board" : "Detailed Overview"
-    : view.filename;
+    : report === "staff" && staffView === "schedules" ? "Staff Schedules" : view.filename;
   return ["Midterm Exam Schedule", term.semester, year,
     report === "overview" && includeAsd ? "ASD Included" : "", layout,
-    week !== undefined ? "Week " + week : "", format === "zip" && !["seating", "envelopes"].includes(report) ? "Weekly Files" : "",
+    week !== undefined ? "Week " + week : "", format === "zip" && report === "staff" && includeCalendars ? "With Calendars"
+      : format === "zip" && !["seating", "envelopes"].includes(report) ? "Weekly Files" : "",
   ].filter(Boolean).join(" ") + "." + format;
 }
 
@@ -105,7 +108,7 @@ export function buildExportModel({ sessions, catalog, plan, startDate, weeks, as
       courses.set(room.courseId, exam);
       allocation.invigilatorIds.forEach((id) => {
         const teaching = isTeachingTimeDuty(staff.get(id), session);
-        duties.push({ ...timing, id: room.id + "/" + id, invigilatorId: id, name: staff.get(id).name, role: "Exam", code: room.code,
+        duties.push({ ...timing, id: room.id + "/" + id, invigilatorId: id, name: staff.get(id).name, role: "Exam", code: room.code, title: room.title,
           roomName, teaching, extraLoad: teaching ? 0 : 1 });
       });
       room.students.forEach((student) => students.push({ ...timing, examId: exam.id, id: student.id, name: student.name, crn: student.crn || "",
@@ -175,6 +178,37 @@ export function buildStaffDistribution(model) {
   }).sort((a, b) => a.name.localeCompare(b.name));
   return { weeks, rows };
 }
+
+export function buildStaffSchedules(model, { includeTeaching = false, includeCyberSkills = false } = {}) {
+  return model.workloads.filter((person) => person.enabled).map((person) => {
+    const duties = model.duties.filter((duty) => duty.invigilatorId === person.id);
+    const weeks = model.selectedWeeks.map((week) => ({ week, days: REPORT_DAYS.map((day) => {
+      const date = reportDate(model.startDate, week, day);
+      const exams = duties.filter((duty) => duty.week === week && duty.day === day)
+        .map((duty) => ({ ...duty, kind: "exam", label: "Invigilation", roomName: formatRoomDisplayName(duty.roomName) }));
+      const classes = includeTeaching ? (person.teachingSchedule || person.busy).filter((entry) => entry.days.includes(day) &&
+        !isReplacedLab(entry, { week, day }, model.sessions)).map((entry, index) => ({ ...entry, id: "class/" + index, kind: "teaching", date,
+          label: entry.isLab ? "Lab" : isTutorialType(entry.type) ? "Tutorial" : "Class", roomName: formatRoomDisplayName(entry.roomName), extraLoad: null })) : [];
+      const external = includeCyberSkills ? (person.externalDuties || []).filter((entry) => entry.week === week && entry.day === day && entry.date === date)
+        .map((entry, index) => ({ ...entry, id: "cyber/" + index, kind: "cyber", label: "CyberSkills", title: entry.label, code: "", roomName: "", extraLoad: null })) : [];
+      const entries = [...exams, ...classes, ...external].sort((a, b) => Number(Boolean(a.unknownTime)) - Number(Boolean(b.unknownTime)) ||
+        a.start - b.start || a.end - b.end || a.kind.localeCompare(b.kind));
+      const timed = entries.filter((entry) => !entry.unknownTime);
+      return { day, date, entries, start: timed.length ? Math.min(...timed.map((entry) => entry.start)) : null,
+        end: timed.length ? Math.max(...timed.map((entry) => entry.end)) : null, unknownTime: entries.some((entry) => entry.unknownTime) };
+    }) }));
+    return { id: person.id, name: person.name, exam: person.exam, teaching: person.teaching, duties, weeks };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function staffScheduleSlots(week) {
+  return [...new Map(week.days.flatMap((day) => day.entries).map((entry) => [entry.unknownTime ? "unknown" : entry.start + "/" + entry.end,
+    { key: entry.unknownTime ? "unknown" : entry.start + "/" + entry.end, start: entry.start, end: entry.end, unknownTime: Boolean(entry.unknownTime) }])).values()]
+    .sort((a, b) => Number(a.unknownTime) - Number(b.unknownTime) || a.start - b.start || a.end - b.end);
+}
+
+export const staffSlotEntries = (day, slot) => day.entries.filter((entry) => slot.unknownTime
+  ? entry.unknownTime : !entry.unknownTime && entry.start === slot.start && entry.end === slot.end);
 
 export function buildCourseSeating(model) {
   return model.exams.map((exam) => {
@@ -485,16 +519,81 @@ function csvValue(value) {
   return '"' + text.replace(/"/g, '""') + '"';
 }
 
-export function buildExportFiles({ report = "complete", format = "xlsx", packaging = report === "seating" ? "course" : "combined", overviewMode = "board", examStartDate, examIds, ...options }) {
+const safeStaffName = (name) => name.replace(/[<>:"/\\|?*\p{Cc}]/gu, "_").trim().replace(/[. ]+$/g, "") || "Invigilator";
+
+function selectedStaffSchedules(model, options, staffIds) {
+  const people = buildStaffSchedules(model, options);
+  if (staffIds !== undefined && (!Array.isArray(staffIds) || !staffIds.length || staffIds.some((id) => !people.some((person) => person.id === id)))) {
+    throw new Error("Choose an included invigilator for the staff schedule export.");
+  }
+  return people.filter((person) => staffIds === undefined || staffIds.includes(person.id));
+}
+
+function staffScheduleTable(people) {
+  return { columns: ["Invigilator", "Week", "Date", "Day", "Start", "End", "Activity", "Course", "CRN", "Room", "Extra exam load"],
+    rows: people.flatMap((person) => person.weeks.flatMap((week) => week.days.flatMap((day) => day.entries.map((entry) => [
+      person.name, week.week, day.date, day.day, entry.unknownTime ? "" : clock(entry.start), entry.unknownTime ? "" : clock(entry.end),
+      entry.label + (entry.unknownTime ? " (time not listed)" : ""), entry.code || entry.title || "", entry.crn || "", entry.roomName, entry.extraLoad,
+    ])))) };
+}
+
+function staffScheduleWorkbook(people, layers) {
+  const workbook = XLSX.utils.book_new();
+  const names = new Set();
+  people.forEach((person) => person.weeks.forEach((week) => {
+    const slots = staffScheduleSlots(week);
+    const rows = [[person.name + " / Week " + week.week],
+      ["Invigilation" + (layers.includeTeaching ? " + Teaching" : "") + (layers.includeCyberSkills ? " + CyberSkills" : "") + " / No backups"], [],
+      ["Time", ...week.days.map((day) => day.day + " / " + formatReportDate(day.date, true))],
+      ...slots.map((slot) => [slot.unknownTime ? "Time not listed" : reportTimeRange(slot.start, slot.end), ...week.days.map((day) =>
+        staffSlotEntries(day, slot).map((entry) => [entry.label, entry.code || entry.title, entry.crn ? "CRN " + entry.crn : "", entry.roomName,
+          entry.kind === "exam" ? entry.teaching ? "Zero extra load" : "1 extra duty" : ""].filter(Boolean).join("\n")).join("\n\n"))]),
+      ...(slots.length ? [] : [["No scheduled duties"]])];
+    const sheet = XLSX.utils.aoa_to_sheet(rows);
+    sheet["!cols"] = [{ wch: 19 }, ...REPORT_DAYS.map(() => ({ wch: 32 }))];
+    sheet["!merges"] = [0, 1].map((r) => ({ s: { r, c: 0 }, e: { r, c: 5 } }));
+    sheet["!rows"] = rows.map((values, row) => ({ hpt: row === 0 ? 28 : row === 1 ? 24 : row === 2 ? 8
+      : Math.max(28, ...values.map((value) => String(value).split("\n").reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / 30)), 0) * 14 + 8)) }));
+    rows.forEach((values, row) => values.forEach((_, column) => {
+      const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
+      const entries = row >= 4 && column > 0 && slots[row - 4] ? staffSlotEntries(week.days[column - 1], slots[row - 4]) : [];
+      cell.s = { font: { name: "Calibri", sz: row === 0 ? 15 : 10, bold: row === 0 || row === 3 || column === 0,
+        color: { rgb: row === 0 || row === 3 ? "FFFFFFFF" : "FF24374B" } }, alignment: { vertical: "top", wrapText: true },
+        fill: { patternType: "solid", fgColor: { rgb: row === 0 || row === 3 ? "FF244761" : entries.some((entry) => entry.kind === "exam")
+          ? "FFE9F2FF" : entries.some((entry) => entry.kind === "cyber") ? "FFFFF2DB" : entries.length ? "FFF0F3F5" : "FFFFFFFF" } } };
+    }));
+    const base = (person.name + " W" + week.week).replace(/[\\/?*[\]:\p{Cc}]/gu, "_").replace(/^'+|'+$/g, "") || "Staff";
+    XLSX.utils.book_append_sheet(workbook, sheet, uniqueExportName(base, names, 31));
+  }));
+  return workbook;
+}
+
+export function buildStaffCalendarFiles(model, { examStartDate = model.startDate, staffIds } = {}) {
+  const names = new Set();
+  const prefix = reportFileName({ report: "staff", startDate: examStartDate,
+    week: model.selectedWeeks.length === 1 ? model.selectedWeeks[0] : undefined }).slice(0, -5);
+  return selectedStaffSchedules(model, {}, staffIds).filter((person) => person.duties.length).map((person) => ({
+    filename: uniqueExportName(prefix + " - " + safeStaffName(person.name), names, 180) + ".ics",
+    mimeType: "text/calendar;charset=utf-8", data: buildInvigilatorCalendar(person, person.duties),
+  }));
+}
+
+export function buildExportFiles({ report = "complete", format = "xlsx", packaging = report === "seating" ? "course" : "combined", overviewMode = "board", examStartDate, examIds,
+  staffView = "duties", includeTeaching = false, includeCyberSkills = false, includeCalendars = false, staffIds, ...options }) {
   const view = REPORT_VIEWS.find((item) => item.id === report);
   if (!view || !["xlsx", "csv"].includes(format) || !(report === "seating" ? packaging === "course" : ["combined", "weekly"].includes(packaging))) throw new Error("Invalid export options.");
   if (report === "complete" && format !== "xlsx") throw new Error("The complete multi-sheet report is available as Excel.");
   if (report === "seating" && format !== "xlsx") throw new Error("Course seating uses Excel files with one sheet per CRN.");
   if (report === "envelopes" && format !== "xlsx") throw new Error("The envelope packing list uses Excel. Use course PDF export for covers.");
   if (examIds !== undefined && report !== "seating") throw new Error("Exam selection is only available for course seating.");
+  if ((includeCalendars || staffIds !== undefined) && report !== "staff") throw new Error("Invigilator calendars and selection are only available for Staff duties.");
+  if (staffIds !== undefined && staffView !== "schedules") throw new Error("Invigilator selection is only available in Staff schedules.");
+  if (report === "staff" && !["duties", "distribution", "sessions", "schedules"].includes(staffView)) throw new Error("Choose a supported staff view.");
   if (report === "overview" && !["board", "table"].includes(overviewMode)) throw new Error("Choose a supported exam overview layout.");
   options = { ...options, includeAsd: report === "overview" && Boolean(options.includeAsd) };
   const model = buildExportModel(options);
+  const layers = { includeTeaching, includeCyberSkills };
+  const schedules = report === "staff" && staffView === "schedules";
   if (report === "seating") {
     const exams = buildCourseSeating(model);
     if (examIds !== undefined && (!Array.isArray(examIds) || !examIds.length || examIds.some((id) => !exams.some((exam) => exam.id === id)))) {
@@ -508,21 +607,24 @@ export function buildExportFiles({ report = "complete", format = "xlsx", packagi
     });
   }
   const groups = packaging === "weekly" ? model.selectedWeeks.map((week) => [week]) : [model.selectedWeeks];
-  return groups.map((weeks) => {
+  const files = groups.map((weeks) => {
     const scoped = buildExportModel({ ...options, weeks });
-    const filename = reportFileName({ report, format, overviewMode, startDate: examStartDate ?? options.startDate,
+    let filename = reportFileName({ report, format, overviewMode, staffView, startDate: examStartDate ?? options.startDate,
       includeAsd: scoped.overviewExams.some((exam) => exam.isAsd), week: weeks.length === 1 ? weeks[0] : undefined });
+    const people = schedules ? selectedStaffSchedules(scoped, layers, staffIds) : null;
+    if (staffIds?.length === 1) filename = filename.slice(0, -(format.length + 1)) + " - " + safeStaffName(people[0].name).slice(0, 80) + "." + format;
     if (format === "csv") {
-      const table = reportTable(report, scoped, overviewMode);
+      const table = schedules ? staffScheduleTable(people) : reportTable(report, scoped, overviewMode);
       const rows = report === "overview" && overviewMode === "table"
         ? table.rows.map((row) => row.map((value, column) => column === 1 ? formatChronologicalDate(value) : value)) : table.rows;
       return { filename, mimeType: "text/csv;charset=utf-8", data: "\uFEFF" + [table.columns, ...rows].map((row) => row.map(csvValue).join(",")).join("\r\n") + "\r\n" };
     }
     const workbook = report === "complete"
       ? packaging === "weekly" ? buildResourceWorkbookForWeek({ ...options, week: weeks[0] }) : buildCombinedResourceWorkbook({ ...options, weeks })
-      : report === "envelopes" ? envelopeWorkbook(scoped) : focusedWorkbook(report, scoped, overviewMode);
+      : report === "envelopes" ? envelopeWorkbook(scoped) : schedules ? staffScheduleWorkbook(people, layers) : focusedWorkbook(report, scoped, overviewMode);
     workbook.Props = { Title: filename.slice(0, -5), Subject: "Confirmed department exam schedule" };
-    const writer = report === "envelopes" || report === "overview" && overviewMode === "table" ? StyledXLSX : XLSX;
+    const writer = schedules || report === "envelopes" || report === "overview" && overviewMode === "table" ? StyledXLSX : XLSX;
     return { filename, mimeType: XLSX_MIME, data: writer.write(workbook, { bookType: "xlsx", type: "array", compression: true }) };
   });
+  return includeCalendars ? [...files, ...buildStaffCalendarFiles(model, { examStartDate: examStartDate ?? options.startDate, staffIds })] : files;
 }

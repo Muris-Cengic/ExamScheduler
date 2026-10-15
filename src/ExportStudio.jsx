@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { buildCourseSeating, buildEnvelopeCourses, buildExportModel, buildStaffDistribution, buildStaffSessionRosters, courseSeatingInfo, envelopeCoverRows, envelopeSessionInfo, formatChronologicalDate, formatReportDate, reportDate, reportFileName, reportTable, REPORT_DAYS, REPORT_VIEWS, reportTimeRange } from "./exportReports.js";
+import { buildCourseSeating, buildEnvelopeCourses, buildExportModel, buildStaffDistribution, buildStaffSchedules, buildStaffSessionRosters, courseSeatingInfo, envelopeCoverRows, envelopeSessionInfo, formatChronologicalDate, formatReportDate, reportDate, reportFileName, reportTable, REPORT_DAYS, REPORT_VIEWS, reportTimeRange, staffScheduleSlots, staffSlotEntries } from "./exportReports.js";
 import { clock } from "./resources.js";
 import "./ExportStudio.css";
 
@@ -261,7 +261,64 @@ function StaffSessionRosters({ model, query = "" }) {
   </section>;
 }
 
-function PrintReport({ report, overviewMode, staffView = "duties", model, startDate, sessions, catalog, plan, asdExams }) {
+function StaffTimetable({ person, week }) {
+  const slots = staffScheduleSlots(week);
+  const duties = week.days.flatMap((day) => day.entries).filter((entry) => entry.kind === "exam");
+  return <article className="staff-timetable" aria-label={person.name + " / Week " + week.week + " schedule"}>
+    <header><div><span className="export-kicker">{"Week " + week.week}</span><h4>{person.name}</h4></div>
+      <small>{duties.reduce((sum, duty) => sum + duty.extraLoad, 0)} extra exam load / {duties.filter((duty) => duty.teaching).length} lab/tutorial duties</small></header>
+    <div className="staff-timetable__scroll" tabIndex="0" aria-label={person.name + " weekly timetable"}>
+      <table className="staff-timetable__table">
+        <caption className="sr-only">{person.name + " / Week " + week.week + " commitments"}</caption>
+        <thead><tr><th scope="col">Time</th>{week.days.map((day) => <th key={day.day} scope="col">
+          {day.day.slice(0, 3)}<small>{formatReportDate(day.date)}</small></th>)}</tr></thead>
+        <tbody>{slots.map((slot) => <tr key={slot.key}><th scope="row">{slot.unknownTime ? "Time not listed" : reportTimeRange(slot.start, slot.end)}</th>
+          {week.days.map((day) => <td key={day.day}>{staffSlotEntries(day, slot).map((entry) => <div key={entry.id}
+            className={"staff-timetable__entry staff-timetable__entry--" + entry.kind}>
+            <span>{entry.label}</span><strong>{entry.code || entry.title}</strong>
+            {entry.kind === "exam" && entry.title ? <small>{entry.title}</small> : null}
+            {entry.crn ? <small>CRN {entry.crn}</small> : null}
+            {entry.roomName ? <small>{entry.roomName}</small> : null}
+            {entry.kind === "exam" ? <small>{entry.teaching ? "Lab/tutorial hours / 0 load" : "1 extra duty"}</small> : null}
+          </div>)}</td>)}
+        </tr>)}{!slots.length ? <tr><td colSpan={6} className="staff-timetable__empty">No scheduled duties this week.</td></tr> : null}</tbody>
+        <tfoot><tr><th scope="row">Shown hours</th>{week.days.map((day) => <td key={day.day}>
+          {day.start !== null ? reportTimeRange(day.start, day.end) : "-"}{day.unknownTime ? <small>Class time not listed</small> : null}
+        </td>)}</tr></tfoot>
+      </table>
+    </div>
+  </article>;
+}
+
+function StaffSchedules({ people, selectedId, query, onSelect, onDownload, disabled }) {
+  const search = query.trim().toLowerCase();
+  const filteredPeople = people.filter((person) => !search || [person.name, ...person.weeks.flatMap((week) => week.days.flatMap((day) =>
+    day.entries.flatMap((entry) => [entry.code, entry.title, entry.roomName, entry.label])))].join(" ").toLowerCase().includes(search));
+  const selected = filteredPeople.find((person) => person.id === selectedId) || filteredPeople[0];
+  const displayed = selectedId === "all" ? filteredPeople : selected ? [selected] : [];
+  return <section className="staff-schedule-browser" aria-label="Staff schedules">
+    <nav className="staff-schedule-browser__list" aria-label="Browse invigilators">
+      <button type="button" aria-pressed={selectedId === "all"} onClick={() => onSelect("all")}>All staff <small>{people.length} invigilators</small></button>
+      {filteredPeople.map((person) => <button type="button" key={person.id} aria-pressed={selectedId !== "all" && selected?.id === person.id}
+        onClick={() => onSelect(person.id)}><strong>{person.name}</strong><small>{person.duties.length} exam {person.duties.length === 1 ? "duty" : "duties"}</small></button>)}
+    </nav>
+    <div className="staff-schedule-browser__detail">
+      {displayed.length && selectedId !== "all" ? <div className="staff-schedule-browser__actions"><button type="button" disabled={disabled}
+        onClick={() => onDownload(selected.id)}>Download This Invigilator</button><small>All included weeks, not just the preview.</small></div> : null}
+      {displayed.flatMap((person) => person.weeks.map((week) => <StaffTimetable key={person.id + "/" + week.week} person={person} week={week} />))}
+      {!displayed.length ? <p className="export-empty">No matching invigilators.</p> : null}
+    </div>
+  </section>;
+}
+
+function PrintReport({ report, overviewMode, staffView = "duties", includeTeaching, includeCyberSkills, model, startDate, sessions, catalog, plan, asdExams }) {
+  if (report === "staff" && staffView === "schedules") return <div className="export-print" data-report="staff-schedules">
+    {buildStaffSchedules(model, { includeTeaching, includeCyberSkills }).flatMap((person) => person.weeks.map((week) => <section
+      className="export-print__staff" key={person.id + "/" + week.week}>
+      <header><span>Staff schedules / {includeTeaching ? "Teaching included / " : ""}{includeCyberSkills ? "CyberSkills included / " : ""}No backups</span></header>
+      <StaffTimetable person={person} week={week} />
+    </section>))}
+  </div>;
   if (report === "envelopes") return <div className="export-print" data-report="envelopes">
     {buildEnvelopeCourses(model).flatMap((course) => course.pages.map((page) => <section className="export-print__envelope" key={page.id}>
       <EnvelopeCover page={page} />
@@ -303,6 +360,10 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
   const [mode, setMode] = useState("board");
   const [staffView, setStaffView] = useState("duties");
   const [staffSort, setStaffSort] = useState("name");
+  const [previewStaff, setPreviewStaff] = useState("");
+  const [includeTeaching, setIncludeTeaching] = useState(false);
+  const [includeCyberSkills, setIncludeCyberSkills] = useState(false);
+  const [includeCalendars, setIncludeCalendars] = useState(false);
   const [includeAsd, setIncludeAsd] = useState(false);
   const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(50);
@@ -316,6 +377,8 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
   const overall = report === "staff" && previewWeek === "overall";
   const activeWeek = selectedWeeks.includes(previewWeek) ? previewWeek : selectedWeeks[0];
   const current = useMemo(() => overall ? selected : activeWeek ? buildExportModel({ sessions, catalog, plan, startDate, weeks: [activeWeek], asdExams, includeAsd: withAsd }) : null, [sessions, catalog, plan, startDate, activeWeek, overall, selected, asdExams, withAsd]);
+  const staffSchedules = useMemo(() => report === "staff" && staffView === "schedules" && current
+    ? buildStaffSchedules(current, { includeTeaching, includeCyberSkills }) : [], [report, staffView, current, includeTeaching, includeCyberSkills]);
   const seatingExams = useMemo(() => report === "seating" && current ? buildCourseSeating(current) : [], [report, current]);
   const seatingExam = seatingExams.find((exam) => exam.id === previewExam) || seatingExams[0];
   const seatingSheet = seatingExam?.crnSheets.find((sheet) => sheet.crn === previewCrn) || seatingExam?.crnSheets[0];
@@ -338,8 +401,10 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
   };
   const coursePdfs = report === "envelopes" && format === "pdf";
   const exportOptions = { report, format, packaging: report === "seating" || coursePdfs ? "course" : packaging, weeks: selectedWeeks, includeAsd: withAsd,
+    ...(report === "staff" && staffView === "schedules" ? { staffView, includeTeaching, includeCyberSkills } : {}),
+    ...(report === "staff" && includeCalendars ? { includeCalendars: true } : {}),
     ...(report === "overview" ? { overviewMode: mode } : {}) };
-  const pdfFilename = reportFileName({ report, startDate: examStartDate, format: "pdf", overviewMode: mode,
+  const pdfFilename = reportFileName({ report, staffView, startDate: examStartDate, format: "pdf", overviewMode: mode,
     includeAsd: selected?.overviewExams.some((exam) => exam.isAsd), week: selectedWeeks.length === 1 ? selectedWeeks[0] : undefined });
   const handlePrint = () => {
     const previousTitle = document.title;
@@ -390,8 +455,15 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
           <label><input type="radio" name="export-format" checked={format === "xlsx"} disabled={isExporting} onChange={() => setFormat("xlsx")} />Excel (.xlsx)</label>
           {report !== "envelopes" ? <label><input type="radio" name="export-format" checked={format === "csv"} disabled={isExporting || report === "complete"} onChange={() => setFormat("csv")} />CSV (.csv)</label> : null}
           {report === "envelopes" ? <small>PDF: one A4 page per room, grouped by course. Excel: packing list with one sheet per session.</small> : null}
-          {report === "complete" ? <small>The complete report keeps its linked Excel sheets.</small> : report === "staff" ? <small>Excel includes duties, workload, session distribution and daily start/end times. CSV contains exam duties only.</small> : null}
+          {report === "complete" ? <small>The complete report keeps its linked Excel sheets.</small> : report === "staff" ? <small>{staffView === "schedules"
+            ? "Excel: a weekly timetable per invigilator. CSV: the selected schedule layers."
+            : "Excel includes duties, workload, session distribution and daily start/end times. CSV contains exam duties only."}</small> : null}
         </fieldset>
+        {report === "staff" ? <fieldset className="export-calendar-option"><legend>Calendar files</legend>
+          <label><input type="checkbox" checked={includeCalendars} disabled={isExporting}
+            onChange={(event) => setIncludeCalendars(event.target.checked)} />Include calendar files (.ics)</label>
+          <small>Adds one file per assigned invigilator to the ZIP. Exam invigilation only, including zero-load duties. No teaching, CyberSkills or backups. Times use Asia/Dubai (UTC+4). Import into your calendar; no invitations are sent.</small>
+        </fieldset> : null}
         {coursePdfs ? <div className="export-seating-package"><h3>PDF files by course</h3>
           <p>Each course PDF contains its room covers for the included weeks.</p><small>Multiple courses download as a ZIP. Instructor Name is left blank; Department is omitted.</small>
         </div> : <fieldset className="export-packaging"><legend>Package your files</legend>
@@ -404,7 +476,8 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
         <div className="export-download">
           <p>{coursePdfs ? selected ? buildEnvelopeCourses(selected).length + " course PDFs / " + selected.roomRows.length + " room covers" : "Select a week to export."
             : report === "seating" ? selected?.exams.length ? selected.exams.length + (selected.exams.length === 1 ? " exam workbook" : " exam workbooks / ZIP download") : "Select a week to export."
-            : selectedWeeks.length ? packaging === "weekly" && selectedWeeks.length > 1 ? selectedWeeks.length + " weekly files / ZIP download" : "1 " + (format === "xlsx" ? "Excel workbook" : "CSV file") : "Select a week to export."}</p>
+            : selectedWeeks.length ? report === "staff" && includeCalendars ? "Report + invigilator calendars / ZIP download"
+            : packaging === "weekly" && selectedWeeks.length > 1 ? selectedWeeks.length + " weekly files / ZIP download" : "1 " + (format === "xlsx" ? "Excel workbook" : "CSV file") : "Select a week to export."}</p>
           <button type="button" className="export-download__primary" disabled={disabled}
             onClick={() => onExport(exportOptions)}>{isExporting ? "Exporting..." : coursePdfs ? "Download Envelope PDFs" : report === "seating" ? "Download Course Files" : report === "complete" ? "Export Timetable" : format === "xlsx" ? "Download Excel" : "Download CSV"}</button>
           <button type="button" disabled={disabled} onClick={handlePrint}>Print / Save PDF</button>
@@ -412,7 +485,7 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
           {report === "seating" ? <small>Prints every CRN in the included weeks, starting each sheet on a new portrait page.</small> : null}
           {report === "envelopes" ? <small>Print/PDF includes every room cover in the included weeks, not just the preview.</small> : null}
           {report === "overview" ? <small className="export-print-layout" role="status">Print layout: {mode === "board" ? "Week board" : "Chronological list"}. All included weeks are printed. {mode === "board" ? "Excel and CSV use the detailed table." : "Excel and CSV match the six-column chronological list."}</small> : null}
-          {report === "staff" ? <small>Print layout: {staffView === "distribution" ? "Session distribution with daily start/end times" : staffView === "sessions" ? "Invigilators by session" : "Duty list and workload summary"}. All included weeks are printed.</small> : null}
+          {report === "staff" ? <small>Print layout: {staffView === "schedules" ? "Staff schedules with selected layers" : staffView === "distribution" ? "Session distribution with daily start/end times" : staffView === "sessions" ? "Invigilators by session" : "Duty list and workload summary"}. All included weeks are printed.</small> : null}
           <small>{report === "seating" ? "Contains student IDs. Share only with authorised recipients." : report === "complete" || report === "students" ? "Contains student names and IDs. Share only with authorised recipients." : "Only the selected report and included weeks are exported."}</small>
         </div>
       </aside>
@@ -448,14 +521,24 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
               <button type="button" aria-pressed={staffView === "duties"} onClick={() => { setStaffView("duties"); setSearch(""); setLimit(50); }}>Duty list</button>
               <button type="button" aria-pressed={staffView === "distribution"} onClick={() => { setStaffView("distribution"); setSearch(""); }}>Session distribution</button>
               <button type="button" aria-pressed={staffView === "sessions"} onClick={() => { setStaffView("sessions"); setSearch(""); }}>Invigilators by session</button>
+              <button type="button" aria-pressed={staffView === "schedules"} onClick={() => { setStaffView("schedules"); setSearch(""); }}>Staff schedules</button>
             </div> : null}
+            {report === "staff" && staffView === "schedules" ? <fieldset className="staff-schedule-layers"><legend>Include other schedules</legend>
+              <label><input type="checkbox" checked={includeTeaching} disabled={isExporting}
+                onChange={(event) => setIncludeTeaching(event.target.checked)} />Teaching</label>
+              <label><input type="checkbox" checked={includeCyberSkills} disabled={isExporting}
+                onChange={(event) => setIncludeCyberSkills(event.target.checked)} />CyberSkills</label>
+              <small>Display and report layers only. Teaching includes tutorials and unchecked courses; replaced labs are omitted. Calendar files always contain exam duties only.</small>
+            </fieldset> : null}
             {report === "staff" && staffView === "duties" ? <details className="export-workloads" open><summary>Workload balance / {previewLabel}</summary>
               {overall ? <p>Totals across included weeks: {selectedWeeks.map((week) => "Week " + week).join(", ")}. Include every week to match the Resource Review Pool. Invigilators with no assignments are shown too.</p> : null}
               <PreviewTable label="Workload balance" columns={["Invigilator", "Exam load", "Teaching duties"]} rows={loadRows(current, overall)} />
               <p>Exam duties fully within listed lab or tutorial hours count as zero extra load. Lecture hours do not qualify. Backups are excluded from duties and workload.</p></details> : null}
             <label className="export-search"><span>Search this preview</span><input type="search" value={search} placeholder={report === "students" ? "Student, course or room..." : report === "staff" ? "Invigilator, course or room..." : "Course, room or invigilator..."}
               onChange={(event) => { setSearch(event.target.value); setLimit(50); }} /><small>Search affects the preview only, not the download or print.</small></label>
-            {report === "staff" && staffView === "distribution" ? <>
+            {report === "staff" && staffView === "schedules" ? <StaffSchedules people={staffSchedules} selectedId={previewStaff} query={search}
+              onSelect={setPreviewStaff} disabled={disabled} onDownload={(id) => onExport({ ...exportOptions, staffIds: [id] })} />
+            : report === "staff" && staffView === "distribution" ? <>
               <label className="staff-distribution__sort">Sort invigilators<select value={staffSort} onChange={(event) => setStaffSort(event.target.value)}>
                 <option value="name">Name</option><option value="exam">Extra exam load (highest first)</option><option value="total">Exam-room duties (highest first)</option>
               </select></label><StaffDistribution model={current} query={search} sort={staffSort} />
@@ -468,6 +551,7 @@ export default function ExportStudio({ sessions, catalog, plan, startDate, examS
         </>}
       </main>
     </div>
-    {selected ? <PrintReport report={report} overviewMode={mode} staffView={staffView} model={selected} sessions={sessions} catalog={catalog} plan={plan} startDate={startDate} asdExams={asdExams} /> : null}
+    {selected ? <PrintReport report={report} overviewMode={mode} staffView={staffView} includeTeaching={includeTeaching} includeCyberSkills={includeCyberSkills}
+      model={selected} sessions={sessions} catalog={catalog} plan={plan} startDate={startDate} asdExams={asdExams} /> : null}
   </section>;
 }

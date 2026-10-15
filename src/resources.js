@@ -27,7 +27,8 @@ export function parseResourceCatalog(selection) {
   selection.courses.forEach((course) => course.meetings.forEach((meeting) => {
     if (!meeting.days.length) return;
     const unknownTime = !Number.isFinite(meeting.startMinutes);
-    const entry = { code: course.code, crn: meeting.crn, type: meeting.type, isLab: meeting.isLab, days: meeting.days, start: unknownTime ? 0 : meeting.startMinutes, end: unknownTime ? 1440 : meeting.endMinutes, unknownTime };
+    const entry = { code: course.code, crn: meeting.crn, type: meeting.type, isLab: meeting.isLab, days: meeting.days, start: unknownTime ? 0 : meeting.startMinutes, end: unknownTime ? 1440 : meeting.endMinutes, unknownTime,
+      roomName: [meeting.campus, meeting.building, meeting.room].filter(Boolean).join(" / ") };
     const key = JSON.stringify([entry, meeting.campus, meeting.building, meeting.room, [...meeting.teachingInstructorIds].sort()]);
     records.set(key, { entry, meeting });
   }));
@@ -56,7 +57,8 @@ export function scopeInvigilatorAvailability(catalog, courses, examChoices) {
     if (!meeting.days.length) return;
     const unknownTime = !Number.isFinite(meeting.startMinutes);
     const entry = { code: course.code, crn: meeting.crn, type: meeting.type, isLab: meeting.isLab, days: meeting.days,
-      start: unknownTime ? 0 : meeting.startMinutes, end: unknownTime ? 1440 : meeting.endMinutes, unknownTime };
+      start: unknownTime ? 0 : meeting.startMinutes, end: unknownTime ? 1440 : meeting.endMinutes, unknownTime,
+      roomName: [meeting.campus, meeting.building, meeting.room].filter(Boolean).join(" / ") };
     (meeting.teachingInstructorIds || []).forEach((id) => {
       if (!teaching.has(id)) teaching.set(id, []);
       teaching.get(id).push(entry);
@@ -189,7 +191,7 @@ export function reconcileRoomDistribution(previousSessions, sessions, catalog, p
   return plan;
 }
 
-function isReplacedLab(entry, session, sessions) {
+export function isReplacedLab(entry, session, sessions) {
   return entry.isLab && sessions.some((exam) => sameDay(exam, session) && exam.replacedLabs.some((lab) =>
     normalise(lab.code) === normalise(entry.code) && lab.crn === entry.crn && lab.start === entry.start && lab.end === entry.end));
 }

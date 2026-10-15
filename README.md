@@ -329,7 +329,7 @@ previews:
   class times are marked as incomplete. Tutorials, unchecked courses, canceled
   lab classes and backups do not extend these spans, matching scheduling rules.
   Week tabs and **Overall** follow the included-week selection. Print/PDF uses the
-  chosen staff view; Excel includes **Session Distribution** and **Daily Duty Hours**
+  chosen staff view; duty-list Excel includes **Session Distribution** and **Daily Duty Hours**
   sheets alongside the duty list and workload summary. CSV remains exam duties only.
   **Invigilators by session** groups the assigned staff by date and exam time,
   with their course, room, start/end times and extra-load status. Session headers
@@ -338,6 +338,26 @@ previews:
   for all included weeks. Backup-only and unassigned staff are excluded from these
   rosters. Excel and CSV retain the existing detailed duty list rather than adding
   another duplicate worksheet.
+  **Staff schedules** adds a searchable staff browser with individual weekly
+  timetables and an **All staff** option, including idle staff in the enabled pool.
+  Exam duties are always shown. Optionally include **Teaching** (including
+  tutorials and unchecked courses) and **CyberSkills**. Replaced labs are omitted
+  in their exam week. These layers are for display and export only; they do not
+  change availability or workload rules. **Shown hours** covers the displayed
+  commitments, not the eight-hour scheduling target. Missing class times are
+  shown separately rather than as all-day duties.
+  In this view, Excel exports a styled weekly timetable per invigilator and CSV
+  exports the selected layers. **Download This Invigilator** includes only that
+  person, across all included weeks. The main download and print/PDF include all
+  enabled staff, unaffected by preview selection, search or the preview week.
+  **Include calendar files (.ics)** is available in every Staff duties view.
+  It adds one calendar per assigned invigilator to the report ZIP, covering all
+  included weeks even when the workbooks are split by week. Calendars contain
+  only exam-room invigilations, including zero-extra-load duties; teaching,
+  CyberSkills, backups, ASD exams and student data are excluded. Times use
+  **Asia/Dubai (UTC+4)** regardless of the device timezone. The
+  [iCalendar files](https://www.rfc-editor.org/rfc/rfc5545) can be imported into
+  Outlook, Google Calendar or other calendar apps; no email invitations are sent.
 - **Student room lists**: a searchable check-in register of student sittings,
   courses, times and confirmed rooms. Contains student personal data.
 - **Course seating**: one Excel workbook per exam, with one worksheet per CRN.
@@ -403,8 +423,9 @@ tabular rather than a board. Individual course-seating workbooks keep their
 Names use the date entered in Exam Setup, not its Monday-aligned timetable date.
 
 The three focused reports also support UTF-8 **CSV** as one file or weekly files.
-Staff CSV contains the duties only; choose Excel for its additional workload
-summary. Formula-like text is neutralised in CSV to avoid accidental spreadsheet
+Staff duty-list CSV contains exam duties only; choose Excel for its additional
+workload summary. Staff schedules CSV includes its selected layers instead.
+Formula-like text is neutralised in CSV to avoid accidental spreadsheet
 formula execution.
 
 **Print / Save PDF** opens the browser's print dialog with a clean, landscape

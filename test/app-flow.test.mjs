@@ -231,6 +231,89 @@ test("staff distribution shows enabled staff, daily teaching/exam spans and sele
   assert.ok(!nodes(preview()).some((node) => node.props["aria-label"] === "Staff duty views"));
 });
 
+test("staff schedules browse all staff with optional layers, independent print output and individual calendar export options", () => {
+  const course = { id: "EXAM", code: "EXAM", title: "Exam title", crns: ["101", "102"], labSessions: [],
+    students: [{ id: "PRIVATE-ID", name: "PRIVATE-NAME", crn: "101" }] };
+  const sessions = resources.buildExamSessions({ 1: { Monday: { "12:00": ["EXAM"] } }, 2: { Tuesday: { "12:00": ["EXAM"] } } }, { EXAM: course }, 60);
+  const catalog = { rooms: [{ id: "R", name: "PAD / P-B-4F / 13", enabled: true, busy: [] }], invigilators: [
+    { id: "A", name: "Alice", enabled: true, busy: [{ code: "LECTURE", crn: "101", days: ["Monday"], start: 480, end: 530, isLab: false }],
+      externalDuties: [{ week: 1, day: "Wednesday", date: "2026-10-21", start: 600, end: 720, label: "Training topic" }] },
+    { id: "B", name: "Bob", enabled: true, busy: [] }, { id: "C", name: "Idle", enabled: true, busy: [] },
+  ] };
+  const plan = resources.emptyResourcePlan(sessions, catalog);
+  sessions.forEach((session, index) => {
+    plan.allocations[session.rooms[0].id] = { roomId: "R", invigilatorIds: [index === 0 ? "A" : "B"] };
+    plan.backups[session.id] = ["C"];
+  });
+  const exports = [];
+  const app = harness("ExportStudio", { sessions, catalog, plan, startDate: "2026-10-19", ready: true, isExporting: false,
+    onExport: (options) => exports.push(JSON.parse(JSON.stringify(options))) });
+  let tree = app.render();
+  button(tree, "Staff duties").props.onClick();
+  tree = app.render();
+  const preview = () => find(tree, (node) => node.props["aria-label"] === "Report preview");
+  const printed = () => find(tree, (node) => node.props.className === "export-print");
+  const browser = () => find(preview(), (node) => node.props.className === "staff-schedule-browser");
+  const checkbox = (label) => find(find(tree, (node) => node.type === "label" && text(node) === label), (node) => node.type === "input");
+  const search = () => find(preview(), (node) => node.type === "input" && node.props.type === "search");
+  button(preview(), "Staff schedules").props.onClick();
+  tree = app.render();
+  assert.equal(button(preview(), "Overall").props["aria-pressed"], true);
+  assert.equal(nodes(browser()).filter((node) => node.type?.name === "StaffTimetable").length, 2);
+  assert.match(text(browser()), /P-B-4F\/13/);
+  assert.ok(!/LECTURE|Training topic|PRIVATE-ID|PRIVATE-NAME/.test(text(browser())));
+  assert.equal(nodes(printed()).filter((node) => node.type?.name === "StaffTimetable").length, 6);
+  checkbox("Teaching").props.onChange({ target: { checked: true } });
+  checkbox("CyberSkills").props.onChange({ target: { checked: true } });
+  tree = app.render();
+  assert.match(text(browser()), /LECTURE/);
+  assert.match(text(browser()), /Training topic/);
+  assert.match(text(browser()), /Shown hours08:00-13:00/);
+  const nav = () => find(browser(), (node) => node.props["aria-label"] === "Browse invigilators");
+  find(nav(), (node) => node.type === "button" && text(node).startsWith("All staff")).props.onClick();
+  tree = app.render();
+  assert.equal(nodes(browser()).filter((node) => node.type?.name === "StaffTimetable").length, 6);
+  search().props.onChange({ target: { value: "NO-MATCH" } });
+  tree = app.render();
+  assert.match(text(browser()), /No matching invigilators/);
+  assert.match(text(printed()), /Training topic/);
+  assert.equal(nodes(printed()).filter((node) => node.type?.name === "StaffTimetable").length, 6);
+  search().props.onChange({ target: { value: "Alice" } });
+  tree = app.render();
+  find(nav(), (node) => node.type === "button" && text(node).startsWith("Alice")).props.onClick();
+  tree = app.render();
+  checkbox("Include calendar files (.ics)").props.onChange({ target: { checked: true } });
+  tree = app.render();
+  button(browser(), "Download This Invigilator").props.onClick();
+  assert.deepEqual(exports.at(-1), { report: "staff", format: "xlsx", packaging: "combined", weeks: [1, 2], includeAsd: false,
+    staffView: "schedules", includeTeaching: true, includeCyberSkills: true, includeCalendars: true, staffIds: ["A"] });
+  button(tree, "Download Excel").props.onClick();
+  assert.equal(exports.at(-1).staffIds, undefined, "The main download must not be restricted by preview selection or search");
+  button(tree, "Print / Save PDF").props.onClick();
+  assert.equal(app.printedTitles.at(-1), "Midterm Exam Schedule Fall 26-27 Staff Schedules");
+  button(preview(), "Week 2").props.onClick();
+  tree = app.render();
+  assert.ok(!text(browser()).includes("Training topic"));
+  assert.equal(nodes(browser()).filter((node) => node.type?.name === "StaffTimetable").length, 1);
+  assert.equal(nodes(printed()).filter((node) => node.type?.name === "StaffTimetable").length, 6);
+  find(tree, (node) => node.type === "input" && node.props["aria-label"] === "Include Week 1").props.onChange();
+  tree = app.render();
+  assert.equal(nodes(printed()).filter((node) => node.type?.name === "StaffTimetable").length, 3);
+  button(browser(), "Download This Invigilator").props.onClick();
+  assert.deepEqual(exports.at(-1).weeks, [2]);
+  button(preview(), "Duty list").props.onClick();
+  tree = app.render();
+  button(tree, "Download Excel").props.onClick();
+  assert.equal(exports.at(-1).staffView, undefined);
+  assert.equal(exports.at(-1).includeTeaching, undefined);
+  assert.equal(exports.at(-1).includeCalendars, true);
+  button(tree, "Student room lists").props.onClick();
+  tree = app.render();
+  assert.ok(!nodes(tree).some((node) => node.props.className === "export-calendar-option"));
+  button(tree, "Download Excel").props.onClick();
+  assert.equal(exports.at(-1).includeCalendars, undefined);
+});
+
 test("invigilator and backup selectors show available people first and update after assignments", () => {
   const makeCourse = (id, count) => ({ id, code: id, title: id, crns: ["101"], labSessions: [],
     students: Array.from({ length: count }, (_, i) => ({ id: id + i, name: "Student " + i, crn: "101" })) });
@@ -1575,6 +1658,25 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   tree = app.render();
   assert.equal(button(preview(), "Overall").props["aria-pressed"], true, "Returning to Staff duties defaults to Overall again");
   button(preview(), "Duty list").props.onClick();
+  tree = app.render();
+
+  const calendarInput = () => find(find(panel(), (node) => node.props.className === "export-calendar-option"), (node) => node.type === "input");
+  calendarInput().props.onChange({ target: { checked: true } });
+  tree = app.render();
+  await button(tree, "Download Excel").props.onClick();
+  assert.equal(app.downloadNames.at(-1), "Midterm Exam Schedule Fall 26-27 Staff Duties With Calendars.zip");
+  const staffZip = await JSZip.loadAsync(await app.downloads.at(-1).arrayBuffer());
+  const calendars = Object.keys(staffZip.files).filter((name) => name.endsWith(".ics"));
+  const assigned = new Set(exportProps.sessions.filter((session) => session.week === 2)
+    .flatMap((session) => session.rooms.flatMap((room) => exportProps.plan.allocations[room.id].invigilatorIds)));
+  assert.equal(calendars.length, assigned.size);
+  assert.equal(Object.keys(staffZip.files).filter((name) => name.endsWith(".xlsx")).length, 1);
+  for (const name of calendars) {
+    const data = (await staffZip.file(name).async("string")).replace(/\r\n[ \t]/g, "");
+    assert.match(data, /DTSTART:20261027T080000Z/);
+    assert.ok(!/ASD-|PRIVATE|First Exam/.test(data));
+  }
+  calendarInput().props.onChange({ target: { checked: false } });
   tree = app.render();
 
   reportButton("Student room lists").props.onClick();

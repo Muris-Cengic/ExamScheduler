@@ -278,6 +278,53 @@
   .export-board__day > header { font-size: 13px; }
   .export-board__exam { padding: 14px; }
 }
+.export-calendar-option { border: 1px solid var(--export-line); border-radius: 8px; padding: 14px; margin: 16px 0; }
+.export-calendar-option legend, .staff-schedule-layers legend { font-size: 12px; font-weight: 700; }
+.export-calendar-option label, .staff-schedule-layers label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.export-calendar-option small { display: block; margin-top: 10px; font-size: 11px; line-height: 1.5; color: var(--export-muted); }
+.staff-schedule-layers { display: flex; flex-wrap: wrap; gap: 12px 20px; margin: 20px 26px; padding: 12px 16px; border: 1px solid var(--export-line); border-radius: 8px; background: #f8fafc; }
+.staff-schedule-layers small { flex-basis: 100%; color: var(--export-muted); font-size: 11px; line-height: 1.5; }
+.export-preview { container: report-preview / inline-size; }
+.staff-schedule-browser { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; padding: 0 26px 26px; }
+.staff-schedule-browser__list { display: flex; align-self: start; gap: 6px; overflow-x: auto; padding: 3px; }
+.staff-schedule-browser__list button { flex-shrink: 0; min-width: 135px; max-width: 220px; }
+.staff-schedule-browser__list button { text-align: left; display: grid; gap: 5px; overflow-wrap: anywhere; }
+.staff-schedule-browser__list button[aria-pressed="true"] { border-color: #9eb8e4; color: var(--export-blue); background: #eff5ff; }
+.staff-schedule-browser__list small { color: var(--export-muted); font-size: 10px; }
+.staff-schedule-browser__detail { min-width: 0; }
+.staff-schedule-browser__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 16px; }
+.staff-schedule-browser__actions small { color: var(--export-muted); font-size: 11px; }
+.staff-timetable { border: 1px solid var(--export-line); border-radius: 10px; overflow: hidden; margin-bottom: 18px; background: #fff; }
+.staff-timetable > header { padding: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; background: linear-gradient(110deg, #f0f5fb, #fff); }
+.staff-timetable h4 { font-family: Georgia, "Times New Roman", serif; font-size: 23px; font-weight: 400; margin: 5px 0 0; }
+.staff-timetable > header > small { font-size: 11px; color: var(--export-muted); }
+.staff-timetable__scroll { overflow: auto; max-height: 640px; }
+.staff-timetable__table { border-collapse: separate; border-spacing: 0; table-layout: fixed; width: 100%; min-width: 710px; font-size: 11px; }
+.staff-timetable__table th, .staff-timetable__table td { padding: 8px; border-right: 1px solid var(--export-line); border-bottom: 1px solid var(--export-line); vertical-align: top; text-align: left; }
+.staff-timetable__table tr > :first-child { width: 100px; position: sticky; left: 0; background: #f4f7fb; z-index: 1; font-variant-numeric: tabular-nums; }
+.staff-timetable__table thead th { position: sticky; top: 0; background: #eef3f9; z-index: 2; padding: 12px 8px; }
+.staff-timetable__table thead th:first-child { z-index: 3; }
+.staff-timetable__table th small, .staff-timetable__table tfoot small { display: block; margin-top: 4px; font-weight: 400; color: var(--export-muted); }
+.staff-timetable__entry { display: grid; gap: 5px; padding: 10px 8px; border-left: 3px solid #326cc1; background: #edf4ff; border-radius: 4px; overflow-wrap: anywhere; }
+.staff-timetable__entry + .staff-timetable__entry { margin-top: 8px; }
+.staff-timetable__entry > span { font-size: 9px; text-transform: uppercase; letter-spacing: 0.07em; color: #335c94; }
+.staff-timetable__entry > strong { font-size: 12px; }
+.staff-timetable__entry > small { font-size: 10px; line-height: 1.4; }
+.staff-timetable__entry--teaching { border-color: #a1acb7; background: #f4f6f8; color: #596776; }
+.staff-timetable__entry--teaching > span { color: #64717f; }
+.staff-timetable__entry--cyber { border-color: #c99a4b; background: #fff7e9; color: #795822; }
+.staff-timetable__entry--cyber > span { color: #866125; }
+.staff-timetable__table tfoot { font-size: 10px; font-variant-numeric: tabular-nums; }
+.staff-timetable__empty { text-align: center !important; color: var(--export-muted); padding: 24px !important; }
+@container report-preview (min-width: 1000px) {
+  .staff-schedule-browser { grid-template-columns: 170px minmax(0, 1fr); }
+  .staff-schedule-browser__list { flex-direction: column; overflow-y: auto; max-height: 650px; }
+  .staff-schedule-browser__list button { min-width: 0; max-width: none; }
+}
+@media (max-width: 720px) {
+  .staff-schedule-layers { margin: 16px; }
+  .staff-schedule-browser { padding: 0 16px 16px; }
+}
 @media (prefers-reduced-motion: reduce) { .export-hero { animation: none; } }
 @media (max-width: 420px) { .export-report-choices { grid-template-columns: minmax(0, 1fr); } }
 @media print {
@@ -290,6 +337,21 @@
   .export-print { display: block; color: #111; page: exam-report; }
   .export-print__week { break-before: page; }
   .export-print__week:first-child { break-before: auto; }
+  .export-print__staff { break-before: page; }
+  .export-print__staff:first-child { break-before: auto; }
+  .export-print .staff-timetable { border-radius: 0; overflow: visible; margin: 0; }
+  .export-print .staff-timetable > header { padding: 3mm; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .export-print .staff-timetable h4 { font-size: 18pt; }
+  .export-print .staff-timetable__scroll { max-height: none; overflow: visible; }
+  .export-print .staff-timetable__table { min-width: 0; font-size: 8pt; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .export-print .staff-timetable__table thead { display: table-header-group; }
+  .export-print .staff-timetable__table tfoot { display: table-row-group; }
+  .export-print .staff-timetable__table tr { break-inside: avoid; }
+  .export-print .staff-timetable__table th, .export-print .staff-timetable__table td { position: static; padding: 2mm; }
+  .export-print .staff-timetable__table tr > :first-child { width: 24mm; }
+  .export-print .staff-timetable__entry { padding: 2mm; border-left-width: 0.6mm; }
+  .export-print .staff-timetable__entry > strong { font-size: 9pt; }
+  .export-print .staff-timetable__entry > span, .export-print .staff-timetable__entry > small { font-size: 7pt; }
   .export-print[data-report="seating"] { page: exam-seating; }
   .export-print[data-report="envelopes"] { page: exam-seating; }
   .export-print__envelope { break-before: page; break-inside: avoid; }
