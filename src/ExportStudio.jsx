@@ -188,7 +188,7 @@ function StaffDistribution({ model, query = "", sort = "name" }) {
       <span><i className="staff-distribution__dot staff-distribution__dot--none" aria-hidden="true" />No exam duty</span>
       <span><i className="staff-distribution__dot staff-distribution__dot--off" aria-hidden="true" />No exam session</span>
     </div>
-    <p className="staff-distribution__note">Daily start/end includes remaining teaching and exam duties, including gaps. Tutorials, unchecked courses, replaced lab classes and backups do not extend the span. Days over eight hours are highlighted.</p>
+    <p className="staff-distribution__note">Daily start/end includes remaining teaching, CyberSkills and exam duties, including gaps. Tutorials, unchecked courses, replaced lab classes and backups do not extend the span. Days over eight hours are highlighted. CyberSkills adds no invigilation load.</p>
     <div className="staff-distribution__scroll" tabIndex="0" aria-label="Session distribution table">
       <table className="staff-distribution__table">
         <caption className="sr-only">Exam session distribution and daily duty hours for included invigilators</caption>

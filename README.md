@@ -249,9 +249,27 @@ is highlighted without changing existing backup report rules.
   totals or day-span hours. They still must be available and cannot cover an exam
   room or another overlapping backup slot at the same time. Backup names may be
   exchanged to allow a better-balanced exam assignment.
+- Step **3. ASD Schedule** also offers an optional **CyberSkills Schedule** import.
+  Load the dated weekly CyberSkills grid or a flat Excel/CSV table with **Date**,
+  **Time**, **Instructor** and optional **Session** columns. Only duties within ten
+  weeks from Exam Setup are imported; old sheets, summaries and break rows are
+  ignored. Actual dates are used, not training week numbers: CyberSkills Week 5
+  dated 19 October can correspond to exam Week 1.
+  Trainer names match the CRN pool only when unambiguous (titles and omitted
+  middle names are allowed). Review unmatched names in step 3, selecting a person
+  or explicitly marking the trainer as not in the pool. Unresolved matches block
+  scheduling/export rather than silently dropping constraints.
+  CyberSkills sessions block overlapping invigilation and backup assignments and
+  count toward daily start/end spans. They add **no invigilation load** and grant
+  no teaching-hour load credit. They do not alter student conflicts, room bookings
+  or exam duty lists. The Resource Pool lists these dated commitments separately;
+  Staff Duties daily hours include them. Importing, replacing, matching or removing
+  the schedule requires resource review/reassignment when the constraints change.
+  The schedule and matches are saved with the main timetable JSON. CRN reimport
+  retains the CyberSkills schedule; replacing enrollment clears it for a fresh start.
 - Automatic room-invigilator assignments prefer a daily presence span
   of **at most eight hours**, from the first non-tutorial class/exam duty to the last, including gaps.
-  The span includes remaining non-tutorial classes on that weekday and assigned exam
+  The span includes remaining non-tutorial classes, dated CyberSkills sessions and assigned exam
   duties in the same week/day, even duties that add no extra invigilation load.
   A replaced lab's canceled class hours do not extend the day; its actual exam
   duties still count. Within the eight-hour target, normal overall/time-slot load

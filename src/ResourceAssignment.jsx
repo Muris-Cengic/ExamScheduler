@@ -37,6 +37,7 @@ export default function ResourceAssignment({ sessions, catalog, plan, validation
         <p>Students are balanced, keeping the last room at 15 when that saves an invigilator. Up to 27 per room requires approval for that exam.</p>
         <p>The first CRN sheet supplies resources and class commitments. Tutorials and unchecked CRN Info courses do not block invigilators or extend their daily span; room commitments are unchanged. Single-CRN lab exams keep their lab room and instructor; listed :50 lab endings count through the next hour. Availability outside listed classes is assumed.</p>
         <p>An exam fully within the invigilator's listed lab or tutorial hours adds no extra load, even for unchecked courses. Lecture hours do not qualify. For load credit, :50 endings count through the next hour. Other class and exam conflicts still block assignment.</p>
+        <p>Imported CyberSkills sessions block overlapping exam and backup assignments on their actual dates and extend daily start/end spans. They never add invigilation load or grant teaching-hour load credit.</p>
         <p>Auto-assignment balances exam duties overall and by time slot, preferring at most eight hours from the first class or exam duty to the last, including gaps. Backups do not add workload or extend this span. Longer days are allowed when needed; fixed lab instructors remain required.</p>
       </details>
       <div className="resource-panel__summary" role="status">

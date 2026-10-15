@@ -212,6 +212,8 @@ export function isTeachingTimeDuty(person, session) {
 function availabilityConflict(resource, session, sessions) {
   if (!resource) return { type: "missing", message: "Not found in the resource pool." };
   if (!resource.enabled) return { type: "excluded", message: "Not in the active resource pool (excluded in Review Resource Pool)." };
+  const external = resource.externalDuties?.find((entry) => sameDay(entry, session) && overlaps(entry, session));
+  if (external) return { type: "external", entry: external, message: `CyberSkills: ${external.label} on ${external.date}, ${clock(external.start)}-${clock(external.end)}.` };
   const busy = resource.busy.find((entry) => {
     if (!entry.days.includes(session.day) || !overlaps(session, entry)) return false;
     return !isReplacedLab(entry, session, sessions);
@@ -255,6 +257,7 @@ export function resourceChoiceSummary(resource, kind, session, sessions, plan, o
   const conflict = choiceConflict(resource, kind, session, sessions, plan, owner);
   if (!conflict) return "";
   if (conflict.type === "excluded") return "Excluded from pool";
+  if (conflict.type === "external") return "CyberSkills " + clock(conflict.entry.start) + "-" + clock(conflict.entry.end);
   if (conflict.type === "class") {
     const entry = conflict.entry;
     return "Class " + entry.code + (entry.unknownTime ? " (time unknown; day blocked)" : " " + clock(entry.start) + "-" + clock(entry.end));
@@ -287,6 +290,7 @@ export function validateResourcePlan(sessions, catalog, plan) {
     });
   };
   if (!sessions.length) add(null, null, "No exams to resource", "No main exams scheduled.", "Return to scheduling and place your department exams first.");
+  (catalog.availabilityIssues || []).forEach((message) => add(null, null, "CyberSkills trainer needs matching", message, "Open step 3 and review the CyberSkills trainer matches."));
   if (!plan || plan.fingerprint !== resourceFingerprint(sessions, catalog)) add(null, null, "Resources need reassignment", "Resource assignments are missing or outdated because the timetable or resource pool changed.", "Click Auto-Assign Resources, then review the proposed assignments before export.");
   const rooms = new Map(catalog.rooms.map((room) => [room.id, room]));
   const staff = new Map(catalog.invigilators.map((person) => [person.id, person]));
@@ -308,6 +312,7 @@ export function validateResourcePlan(sessions, catalog, plan) {
       let action;
       if (conflict.type === "excluded") action = `Include ${name} in Review Resource Pool, then reassign resources.`;
       else if (conflict.type === "missing") action = `Check the lab ${kind} in the CRN list and reimport the corrected file.`;
+      else if (conflict.type === "external") action = "Review the CyberSkills commitment in step 3. Choose another listed lab time, or correct and reimport the external schedule if needed. Lab replacement does not cancel CyberSkills duties.";
       else if (conflict.type === "booking") action = `Remove the overlapping exam or backup assignment for ${name}. This lab exam must retain its original ${kind}.`;
       else action = `Check the overlapping commitments in the CRN list and resolve or correct them before reimporting. Alternatively, choose another listed lab time if available. Only this exam's lab is replaced; other classes remain blocked.`;
       add(session, room, `${label} unavailable`, `${name} is required for this exam's original lab room. ${conflict.message}`, action);
@@ -372,7 +377,7 @@ export function invigilatorWorkloads(catalog, sessions, plan) {
 export function invigilatorDaySpan(person, session, sessions, duties) {
   const classes = person.busy.filter((entry) => entry.days.includes(session.day) && !isTutorialType(entry.type) && !isReplacedLab(entry, session, sessions));
   const unknownTime = classes.some((entry) => entry.unknownTime);
-  const commitments = [...classes.filter((entry) => !entry.unknownTime), ...duties];
+  const commitments = [...classes.filter((entry) => !entry.unknownTime), ...(person.externalDuties || []).filter((entry) => sameDay(entry, session)), ...duties];
   if (!commitments.length) return unknownTime ? { start: null, end: null, minutes: null, overrun: 0, unknownTime } : null;
   const start = Math.min(...commitments.map((entry) => entry.start));
   const end = Math.max(...commitments.map((entry) => entry.end));

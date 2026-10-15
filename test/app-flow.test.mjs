@@ -15,6 +15,7 @@ import { buildResourceWorkbookForWeek } from "../src/reports.js";
 import * as exportReports from "../src/exportReports.js";
 import * as examSetup from "../src/examSetup.js";
 import * as importExamples from "../src/importExamples.js";
+import * as cyberSkills from "../src/cyberSkills.js";
 
 // Exercise the real App event handlers/render tree without a browser or new test dependencies.
 const appSource = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8")
@@ -38,6 +39,10 @@ const exportSource = readFileSync(new URL("../src/ExportStudio.jsx", import.meta
   .replace(/^import .*;\r?$/gm, "")
   .replace("export default function ExportStudio", "function ExportStudio") + "\nglobalThis.ExportStudio = ExportStudio;";
 const { code: exportComponentCode } = await transformWithEsbuild(exportSource, "ExportStudio.jsx", { loader: "jsx", jsxFactory: "h", jsxFragment: "Fragment" });
+const cyberSkillsSource = readFileSync(new URL("../src/CyberSkillsPanel.jsx", import.meta.url), "utf8")
+  .replace(/^import .*;\r?$/gm, "")
+  .replace("export default function CyberSkillsPanel", "function CyberSkillsPanel") + "\nglobalThis.CyberSkillsPanel = CyberSkillsPanel;";
+const { code: cyberSkillsComponentCode } = await transformWithEsbuild(cyberSkillsSource, "CyberSkillsPanel.jsx", { loader: "jsx", jsxFactory: "h", jsxFragment: "Fragment" });
 
 function harness(component = "App", props) {
   const hooks = [];
@@ -54,7 +59,7 @@ function harness(component = "App", props) {
     static revokeObjectURL() {}
   }
   const context = createContext({
-    ...imports, ...department, ...resources, ...examRooms, ...examWindows, ...exportReports, ...examSetup, ...importExamples, buildResourceWorkbookForWeek, autoSchedule, XLSX, JSZip, Blob, URL: TestURL, console,
+    ...imports, ...department, ...resources, ...examRooms, ...examWindows, ...exportReports, ...examSetup, ...importExamples, ...cyberSkills, buildResourceWorkbookForWeek, autoSchedule, XLSX, JSZip, Blob, URL: TestURL, console,
     CourseSelection: function CourseSelection() {}, Fragment: "fragment",
     ResourceAssignment: function ResourceAssignment() {},
     h: (type, props, ...children) => ({ type, props: props || {}, children: typeof type === "function" && type.name !== "CourseSelection" ? [type({ ...props, children: children.flat(Infinity) })] : children.flat(Infinity) }),
@@ -96,6 +101,7 @@ function harness(component = "App", props) {
   runInContext(poolComponentCode, context);
   runInContext(resourceComponentCode, context);
   runInContext(exportComponentCode, context);
+  runInContext(cyberSkillsComponentCode, context);
   runInContext(code, context);
   return {
     downloads,
@@ -345,6 +351,86 @@ const fileEvent = (path) => ({ target: { files: [{ name: path.split("/").pop(), 
 const jsonEvent = (value) => ({ target: { files: [{ name: "snapshot.json", text: async () => JSON.stringify(value) }], value: "snapshot.json" } });
 const text = (node) => typeof node === "string" || typeof node === "number" ? String(node) : node?.children?.map(text).join("") || "";
 const nodes = (node) => node && typeof node === "object" ? [node, ...(node.children || []).flatMap(nodes)] : [];
+
+test("CyberSkills import in step 3 applies to assignments, matching, resource review and main save/load without exam load", async () => {
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([
+    ["Student ID", "Student Name", "Course Code", "Course Title", "CRN"],
+    ["S1", "Student One", "EXAM-1000", "Exam", "101"], ["S2", "Student Two", "EXAM-1000", "Exam", "102"],
+  ]), "Enrollment");
+  const enrollment = imports.parseEnrolmentWorkbook(book), exam = enrollment.courses[0];
+  const selection = { sheetName: "CRN Info", courses: [{ code: exam.code, title: exam.title, crns: ["101", "102"], meetings: [] }] };
+  const catalog = { rooms: [{ id: "R", name: "Room", enabled: true, busy: [] }], invigilators: [
+    { id: "A", name: "Alex James Smith", enabled: true, busy: [] },
+    ...Array.from({ length: 3 }, (_, i) => ({ id: "B" + i, name: "Other " + i, enabled: true, busy: [] })),
+  ] };
+  const assignments = { 1: { Monday: { "12:00": [exam.id] } } };
+  const scope = department.scopeDepartmentCourses(enrollment.courses, selection.courses).courses;
+  const sessions = resources.buildExamSessions(assignments, Object.fromEntries(scope.map((course) => [course.id, course])), 60);
+  const active = resources.scopeInvigilatorAvailability(catalog, scope, {});
+  const snapshot = { type: "main", version: 5, startDate: "2026-10-19", weeks: [1], selectedWeek: 1,
+    settings: { slotIntervalMinutes: 30, startHour: 8, endHour: 18, studentsPerRoom: 25, examDurationMinutes: 60 },
+    assignments, asdAssignments: {}, asdExamDurations: {}, hasAsdStep: false, courses: enrollment.courses, studentDirectory: enrollment.studentDirectory,
+    departmentSelection: selection, examChoices: { [exam.id]: true }, roomDistributionChoices: {}, resourceCatalog: catalog,
+    resourcePlan: resources.assignResources(sessions, active),
+  };
+  const app = harness();
+  let tree = app.render();
+  await find(tree, (node) => node.type === "input" && node.props.accept === "application/json").props.onChange(jsonEvent(snapshot));
+  tree = app.render();
+  step(tree, "resources").props.onClick(); tree = app.render();
+  const panel = () => find(tree, (node) => node.type?.name === "ResourceAssignment").props;
+  assert.equal(panel().validation.complete, true);
+  step(tree, "asd").props.onClick(); tree = app.render();
+  const cyberPanel = () => find(tree, (node) => node.type?.name === "CyberSkillsPanel");
+  assert.match(text(cyberPanel()), /Load CyberSkills Schedule/);
+  const event = (name = "Dr. Alex Smith", time = "12:00 - 13:00") => ({ target: { files: [{ name: "CyberSkills.csv",
+    text: async () => `Date,Time,Instructor,Session\n2026-10-19,${time},${name},Computer Networks\n` }], value: "CyberSkills.csv" } });
+  await cyberPanel().props.onUpload(event()); tree = app.render();
+  assert.match(text(cyberPanel()), /All trainer matches resolved/);
+  assert.equal(cyberPanel().props.links["Dr. Alex Smith"], "A");
+  assert.equal(cyberPanel().props.schedule.sessions[0].start, 720);
+  step(tree, "resources").props.onClick(); tree = app.render();
+  assert.equal(panel().validation.complete, false);
+  assert.ok(panel().validation.issues.some((issue) => issue.message.includes("CyberSkills")));
+  assert.match(text(find(tree, (node) => node.type === "select" && node.props["aria-label"] === "Invigilator 1 for " + panel().sessions[0].rooms[0].id)), /CyberSkills 12:00-13:00/);
+  panel().onAssign(); tree = app.render();
+  assert.equal(panel().validation.complete, true);
+  assert.ok(!panel().plan.allocations[panel().sessions[0].rooms[0].id].invigilatorIds.includes("A"));
+  assert.ok(!panel().plan.backups[panel().sessions[0].id].includes("A"));
+  const workloads = resources.invigilatorWorkloads(panel().catalog, panel().sessions, panel().plan);
+  assert.equal(workloads.find((person) => person.id === "A").exam, 0);
+  assert.equal(workloads.reduce((sum, person) => sum + person.exam, 0), 1);
+  assert.match(text(tree), /CyberSkills/);
+  button(tree, "Save Timetable").props.onClick();
+  const saved = JSON.parse(await app.downloads.at(-1).text());
+  assert.equal(saved.cyberSkillsSchedule.sessions.length, 1);
+  const reloaded = harness();
+  tree = reloaded.render();
+  await find(tree, (node) => node.type === "input" && node.props.accept === "application/json").props.onChange(jsonEvent(saved)); tree = reloaded.render();
+  step(tree, "resources").props.onClick(); tree = reloaded.render();
+  assert.equal(panel().validation.complete, true, "CyberSkills constraints and the assignment fingerprint survive save/load");
+  assert.equal(panel().catalog.invigilators.find((person) => person.id === "A").externalDuties[0].date, "2026-10-19");
+  step(tree, "asd").props.onClick(); tree = reloaded.render();
+  cyberPanel().props.onMatch("Dr. Alex Smith", ""); tree = reloaded.render();
+  assert.match(text(cyberPanel()), /1 trainer\(s\) need matching/);
+  step(tree, "main").props.onClick(); tree = reloaded.render();
+  assert.equal(button(tree, "Auto-Schedule Remaining Exams").props.disabled, true);
+  button(tree, "Review CyberSkills in Step 3").props.onClick(); tree = reloaded.render();
+  cyberPanel().props.onMatch("Dr. Alex Smith", null); tree = reloaded.render();
+  assert.equal(cyberPanel().props.links["Dr. Alex Smith"], null);
+  const previous = JSON.stringify(cyberPanel().props.schedule);
+  await cyberPanel().props.onUpload(event("Dr. Alex Smith", "bad time")); tree = reloaded.render();
+  assert.equal(JSON.stringify(cyberPanel().props.schedule), previous, "A failed replacement preserves the existing schedule");
+  await cyberPanel().props.onUpload(event("Dr. Alex Smith", "08:00 - 09:00")); tree = reloaded.render();
+  assert.equal(cyberPanel().props.schedule.sessions[0].start, 480);
+  cyberPanel().props.onRemove(); tree = reloaded.render();
+  assert.equal(cyberPanel().props.schedule, null);
+  step(tree, "resources").props.onClick(); tree = reloaded.render();
+  panel().onAssign(); tree = reloaded.render();
+  assert.equal(panel().validation.complete, true);
+  assert.ok(panel().catalog.invigilators.every((person) => !person.externalDuties));
+});
 const find = (tree, predicate) => {
   const result = nodes(tree).find(predicate);
   assert.ok(result, "Expected control exists");

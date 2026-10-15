@@ -10,6 +10,7 @@ function ClassTimes({ meetings }) {
 
 export default function ResourcePool({ catalog, sessions = [], plan, onPoolChange, selectionOnly = false }) {
   const people = selectionOnly ? catalog.invigilators : invigilatorWorkloads(catalog, sessions, plan);
+  const hasExternal = people.some((person) => person.externalDuties?.length);
   return <details className="resource-pool" open={selectionOnly}>
     <summary>{selectionOnly ? "Choose Resource Pool" : "Review Resource Pool"}</summary>
     <p>{selectionOnly
@@ -18,13 +19,16 @@ export default function ResourcePool({ catalog, sessions = [], plan, onPoolChang
     <div className="resource-pool__tables">
       <div className="resource-table-wrap"><table><thead><tr><th>Include</th><th>Invigilator</th>
         {!selectionOnly ? <><th>Invigilation Load</th><th>During Teaching Hours</th></> : null}
-        <th>Class Times</th></tr></thead><tbody>
+        <th>Class Times</th>{hasExternal ? <th>CyberSkills</th> : null}</tr></thead><tbody>
         {people.map((person) => <tr key={person.id}>
           <td><input type="checkbox" aria-label={"Include " + person.name} checked={person.enabled}
             onChange={(event) => onPoolChange("invigilators", person.id, { enabled: event.target.checked })} /></td>
           <td>{person.name}</td>
           {!selectionOnly ? <><td>{person.exam}</td><td>{person.teaching}</td></> : null}
           <td><ClassTimes meetings={person.busy} /></td>
+          {hasExternal ? <td><details><summary>{person.externalDuties?.length || 0} sessions</summary>
+            {(person.externalDuties || []).map((entry, index) => <div key={index}>{entry.date} {clock(entry.start)}-{clock(entry.end)}: {entry.label}</div>)}
+          </details></td> : null}
         </tr>)}
       </tbody></table></div>
       <div className="resource-table-wrap"><table><thead><tr><th>Include</th><th>Room</th><th>Class Times</th></tr></thead><tbody>

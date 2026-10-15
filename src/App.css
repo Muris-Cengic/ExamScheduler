@@ -10,6 +10,24 @@
   box-sizing: border-box;
 }
 
+.cyber-skills-panel { max-width: 1100px; margin: 0 auto 20px; padding: 20px; border: 1px solid #d8e0e8; border-radius: 10px; background: #fff; min-width: 0; }
+.cyber-skills-panel > header { display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: 16px; }
+.cyber-skills-panel h2 { margin: 0; font-size: 17px; }
+.cyber-skills-panel h2 small { display: inline-block; margin-left: 8px; padding: 3px 6px; background: #eef3fa; border-radius: 4px; color: #52657a; font-size: 10px; font-weight: 500; vertical-align: middle; }
+.cyber-skills-panel p { margin: 8px 0; color: #52657a; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.cyber-skills-panel__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.cyber-skills-panel__actions button { padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #334e68; font: inherit; font-size: 12px; cursor: pointer; }
+.cyber-skills-panel__actions button:hover:not(:disabled) { border-color: #7098ce; background: #f3f7fc; }
+.cyber-skills-panel__actions button:disabled { opacity: 0.6; cursor: not-allowed; }
+.cyber-skills-panel details { margin-top: 12px; }
+.cyber-skills-panel summary { cursor: pointer; font-size: 12px; font-weight: 600; }
+.cyber-skills-panel .resource-table-wrap { max-height: 360px; margin-top: 12px; }
+.cyber-skills-panel .resource-table-wrap table { width: 100%; min-width: 0; font-size: 12px; border-collapse: collapse; text-align: left; }
+.cyber-skills-panel th, .cyber-skills-panel td { padding: 9px 12px; border-bottom: 1px solid #e8edf3; vertical-align: top; }
+.cyber-skills-panel th { position: sticky; top: 0; background: #edf2f8; color: #4b6078; font-size: 11px; }
+.cyber-skills-panel select { padding: 8px; max-width: 100%; min-width: 190px; border: 1px solid #d8e0e8; border-radius: 5px; font: inherit; background: #fff; }
+@media (max-width: 600px) { .cyber-skills-panel { padding: 16px; } .cyber-skills-panel__actions { width: 100%; } }
+
 .app--start {
   display: grid;
   place-items: center;

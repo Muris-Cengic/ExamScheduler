@@ -17,6 +17,8 @@ import { buildAsdOverviewExams, buildEnvelopeCoverFiles, buildExportFiles, repor
 import ExportStudio from "./ExportStudio.jsx";
 import { inferAcademicTerm } from "./examSetup.js";
 import ImportPrompt from "./ImportPrompt.jsx";
+import CyberSkillsPanel from "./CyberSkillsPanel.jsx";
+import { parseCyberSkillsWorkbook, readCyberSkillsSchedule, resolveCyberSkillsLinks, withCyberSkillsAvailability } from "./cyberSkills.js";
 
 const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 
@@ -685,6 +687,7 @@ function App() {
   );
   const [hasAsdStep, setHasAsdStep] = useState(false);
   const [asdExamDurations, setAsdExamDurations] = useState({});
+  const [cyberSkillsSchedule, setCyberSkillsSchedule] = useState(null);
   const [importNotice, setImportNotice] = useState("");
 
   const [selectedWeek, setSelectedWeek] = useState(1);
@@ -766,9 +769,11 @@ function App() {
   );
 
   const activeResourceCatalog = useMemo(
-    () => scopeInvigilatorAvailability(resourceCatalog, departmentScope.courses, examChoices),
-    [resourceCatalog, departmentScope, examChoices],
+    () => withCyberSkillsAvailability(scopeInvigilatorAvailability(resourceCatalog, departmentScope.courses, examChoices), cyberSkillsSchedule, startDate),
+    [resourceCatalog, departmentScope, examChoices, cyberSkillsSchedule, startDate],
   );
+  const cyberSkillsLinks = useMemo(() => resolveCyberSkillsLinks(cyberSkillsSchedule, resourceCatalog.invigilators), [cyberSkillsSchedule, resourceCatalog]);
+  const cyberSkillsUnmatched = Object.values(cyberSkillsLinks).filter((id) => id === "").length;
 
   const courseLookup = useMemo(() => {
     const lookup = {};
@@ -1119,6 +1124,7 @@ function App() {
 
       setSelectedWeek(initialWeeks[0]);
       setHasAsdStep(false);
+      setCyberSkillsSchedule(null);
       setAsdExamDurations({});
       setImportNotice("");
       setSchedulerPhase("setup");
@@ -1170,6 +1176,23 @@ function App() {
       setAssignments((previous) => retainAssignments(previous, new Set([...assignmentIds(previous)].filter((id) => id !== courseId))));
     }
     setAutoScheduleResult(null);
+  };
+
+  const handleCyberSkillsUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setUploadError("");
+    try {
+      const workbook = file.name.toLowerCase().endsWith(".csv")
+        ? XLSX.read(await file.text(), { type: "string" }) : XLSX.read(await file.arrayBuffer(), { type: "array" });
+      const schedule = { filename: file.name, sessions: parseCyberSkillsWorkbook(workbook, startDate, MAX_WEEKS), links: {} };
+      setCyberSkillsSchedule(schedule);
+      setAutoScheduleResult(null);
+    } catch (error) {
+      setUploadError(error.message || "Failed to read the CyberSkills schedule.");
+    } finally {
+      event.target.value = "";
+    }
   };
 
   const handleAutoSchedule = () => {
@@ -1452,6 +1475,7 @@ function App() {
       asdAssignments: cloneAssignments(asdAssignments, timeSlots),
       asdExamDurations,
       hasAsdStep,
+      cyberSkillsSchedule,
       selectedWeek,
       courses,
       departmentSelection,
@@ -1518,6 +1542,7 @@ function App() {
       const savedResourcePlan = readResourcePlan(parsed.resourcePlan);
       const savedRoomDistributionChoices = readRoomDistributionChoices(parsed.roomDistributionChoices);
       const savedAsdExamDurations = readAsdExamDurations(parsed.asdExamDurations);
+      const savedCyberSkillsSchedule = readCyberSkillsSchedule(parsed.cyberSkillsSchedule);
       const savedExamChoices = isPlainObject(parsed.examChoices) ? parsed.examChoices : {};
       if (Object.values(savedExamChoices).some((choice) => typeof choice !== "boolean")) {
         throw new Error("Invalid exam choices in snapshot.");
@@ -1855,6 +1880,7 @@ function App() {
       setAsdExamDurations(savedAsdExamDurations);
       setImportNotice("");
       setHasAsdStep(hasAsdStepSafe);
+      setCyberSkillsSchedule(savedCyberSkillsSchedule);
       setSelectedWeek(selectedWeekSafe);
       setCourses(() => normalisedCourses);
       setStudentDirectory(normalisedStudentDirectory);
@@ -2428,7 +2454,7 @@ function App() {
     : ["pool", "main", "resources", "export"].includes(wizardStep) && !departmentSelection
       ? "Load your CRN list in CRN Info to use this step."
       : "";
-  const canSchedule = Boolean(departmentSelection && availableCourses.length && resourceCatalog.rooms.some((room) => room.enabled) && totalInvigilatorCapacity >= 2);
+  const canSchedule = Boolean(departmentSelection && availableCourses.length && resourceCatalog.rooms.some((room) => room.enabled) && totalInvigilatorCapacity >= 2 && !cyberSkillsUnmatched);
 
   const settingsFields = (
     <div className="settings-panel__grid">
@@ -2608,6 +2634,16 @@ function App() {
       {importNotice ? (
         <div className="alert alert--info" role="status">{importNotice}</div>
       ) : null}
+
+      {cyberSkillsUnmatched > 0 && departmentSelection && wizardStep !== "asd" ? <div className="alert alert--error">
+        Match {cyberSkillsUnmatched} CyberSkills trainer(s) before scheduling or exporting.
+        <button type="button" onClick={() => navigateToStep("asd")}>Review CyberSkills in Step 3</button>
+      </div> : null}
+
+      {wizardStep === "asd" ? <CyberSkillsPanel schedule={cyberSkillsSchedule} links={cyberSkillsLinks} people={resourceCatalog.invigilators}
+        onUpload={handleCyberSkillsUpload} disabled={isExporting}
+        onRemove={() => { setCyberSkillsSchedule(null); setAutoScheduleResult(null); }}
+        onMatch={(name, id) => { setCyberSkillsSchedule((previous) => ({ ...previous, links: { ...previous.links, [name]: id } })); setAutoScheduleResult(null); }} /> : null}
 
       {wizardStep === "setup" ? <div className="exam-setup-page"><section className="exam-setup" aria-labelledby="exam-setup-title">
         <h2 id="exam-setup-title">Exam Setup</h2>
