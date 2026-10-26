@@ -46,7 +46,9 @@ const { code: cyberSkillsComponentCode } = await transformWithEsbuild(cyberSkill
 const fileExportsSource = readFileSync(new URL("../src/fileExports.js", import.meta.url), "utf8").replace(/^export /gm, "");
 
 function harness(component = "App", props) {
-  const hooks = [];
+  const hookStores = new Map();
+  let frame = { path: "", hooks: [], index: 0, children: new Map() };
+  let renderedComponents = new Set();
   const downloads = [];
   const downloadNames = [];
   const printedTitles = [];
@@ -55,9 +57,20 @@ function harness(component = "App", props) {
   let destinationError;
   let printCount = 0;
   let printFailure;
-  let index = 0;
   let dirty = false;
   let effects = [];
+  // Keep hook state with its component, not with another wizard step at the same hook index.
+  const renderComponent = (type, props) => {
+    const parent = frame;
+    const name = type.name + ":" + (props?.key ?? "");
+    const occurrence = parent.children.get(name) || 0;
+    parent.children.set(name, occurrence + 1);
+    const path = parent.path + "/" + name + ":" + occurrence;
+    if (!hookStores.has(path)) hookStores.set(path, []);
+    renderedComponents.add(path);
+    frame = { path, hooks: hookStores.get(path), index: 0, children: new Map() };
+    try { return type(props); } finally { frame = parent; }
+  };
   class TestURL extends URL {
     static createObjectURL(blob) { downloads.push(blob); return "blob:test"; }
     static revokeObjectURL() {}
@@ -66,9 +79,10 @@ function harness(component = "App", props) {
     ...imports, ...department, ...resources, ...examRooms, ...examWindows, ...exportReports, ...examSetup, ...importExamples, ...cyberSkills, buildResourceWorkbookForWeek, autoSchedule, XLSX, JSZip, Blob, URL: TestURL, console,
     CourseSelection: function CourseSelection() {}, Fragment: "fragment",
     ResourceAssignment: function ResourceAssignment() {},
-    h: (type, props, ...children) => ({ type, props: props || {}, children: typeof type === "function" && type.name !== "CourseSelection" ? [type({ ...props, children: children.flat(Infinity) })] : children.flat(Infinity) }),
+    h: (type, props, ...children) => ({ type, props: props || {}, children: typeof type === "function" && type.name !== "CourseSelection" ? [renderComponent(type, { ...props, children: children.flat(Infinity) })] : children.flat(Infinity) }),
     useState(initial) {
-      const current = index++;
+      const { hooks } = frame;
+      const current = frame.index++;
       hooks[current] ??= { value: typeof initial === "function" ? initial() : initial };
       return [hooks[current].value, (value) => {
         const previous = hooks[current].value;
@@ -77,12 +91,14 @@ function harness(component = "App", props) {
       }];
     },
     useRef(initial) {
-      const current = index++;
+      const { hooks } = frame;
+      const current = frame.index++;
       hooks[current] ??= { current: initial };
       return hooks[current];
     },
     useMemo(factory, dependencies) {
-      const current = index++;
+      const { hooks } = frame;
+      const current = frame.index++;
       const previous = hooks[current];
       if (!previous || dependencies.some((value, i) => !Object.is(value, previous.dependencies[i]))) {
         hooks[current] = { dependencies, value: factory() };
@@ -90,7 +106,8 @@ function harness(component = "App", props) {
       return hooks[current].value;
     },
     useEffect(effect, dependencies) {
-      const current = index++;
+      const { hooks } = frame;
+      const current = frame.index++;
       const previous = hooks[current];
       if (!previous || dependencies.some((value, i) => !Object.is(value, previous.dependencies[i]))) {
         effects.push(effect);
@@ -138,9 +155,11 @@ function harness(component = "App", props) {
       let attempts = 0;
       do {
         dirty = false;
-        index = 0;
+        frame = { path: "", hooks: [], index: 0, children: new Map() };
+        renderedComponents = new Set();
         effects = [];
-        tree = context[component](props);
+        tree = renderComponent(context[component], props);
+        for (const path of hookStores.keys()) if (!renderedComponents.has(path)) hookStores.delete(path);
         effects.forEach((effect) => effect());
         assert.ok(++attempts < 10, "Render must settle");
       } while (dirty);
@@ -472,6 +491,207 @@ test("assignment slot headings show week, short calendar date, day and full time
     const headings = nodes(tree).filter((node) => node.props.className === "resource-session").map((node) => text(find(node, (child) => child.type === "h3")));
     assert.deepEqual(headings, [`Week 1 / ${dates[0]} / Monday / 12:00-13:00`, `Week 2 / ${dates[1]} / Friday / 10:30-11:30`]);
   }
+});
+
+function assignmentFiltersFixture() {
+  const exam = { id: "EXAM", code: "EXAM", title: "Exam", crns: ["101", "102"], labSessions: [], students: [{ id: "S1", name: "Student", crn: "101" }] };
+  const sessions = resources.buildExamSessions({ 1: { Monday: { "09:00": ["EXAM"], "12:00": ["EXAM"], "17:00": ["EXAM"] }, Tuesday: { "12:00": ["EXAM"] } },
+    2: { Tuesday: { "09:00": ["EXAM"] }, Wednesday: { "12:00": ["EXAM"] }, Friday: { "10:30": ["EXAM"] } }, 10: { Monday: { "12:00": ["EXAM"] } } }, { EXAM: exam }, 60);
+  sessions.find((session) => session.week === 2 && session.day === "Tuesday").end = 630;
+  const catalog = { rooms: ["R", "OTHER"].map((id) => ({ id, name: id, enabled: true, busy: [] })),
+    invigilators: Array.from({ length: 4 }, (_, i) => ({ id: "I" + i, name: "Staff " + i, enabled: true, busy: [] })) };
+  const plan = resources.assignResources(sessions, catalog);
+  const validation = resources.validateResourcePlan(sessions, catalog, plan);
+  assert.equal(validation.complete, true);
+  let assignCount = 0;
+  const props = { sessions, catalog, plan, validation, startDate: "2026-10-19", onAssign: () => { assignCount += 1; }, onPoolChange() {},
+    onAllocationChange: (id, allocation) => { props.plan = { ...props.plan, allocations: { ...props.plan.allocations, [id]: allocation } }; },
+    onBackupChange() {}, onDistributionChange() {} };
+  return { props, assignCount: () => assignCount };
+}
+
+test("assignment filters combine weeks and exact session time ranges, reset cleanly and never change the resource scope", () => {
+  const fixture = assignmentFiltersFixture();
+  const { props } = fixture;
+  const original = JSON.stringify(props);
+  const app = harness("ResourceAssignment", props);
+  let tree = app.render();
+  const control = (label) => find(tree, (node) => node.type === "select" && node.props["aria-label"] === label);
+  const week = () => control("Filter assignment week");
+  const session = () => control("Filter assignment session");
+  const visible = () => nodes(tree).filter((node) => node.props.className === "resource-session");
+  const values = (select) => nodes(select).filter((node) => node.type === "option").map((node) => node.props.value);
+  const showing = () => text(find(tree, (node) => node.props.className === "resource-session-filters"));
+  assert.deepEqual(values(week()), ["", "1", "2", "10"], "Week choices must sort numerically");
+  assert.equal(week().props.value, "");
+  assert.equal(session().props.value, "");
+  assert.equal(visible().length, 8);
+  assert.equal(button(tree, "Clear filters").props.disabled, true);
+  assert.deepEqual(values(session()), ["", "540/600", "540/630", "630/690", "720/780", "1020/1080"], "Shared ranges appear once; different end times remain distinct");
+  session().props.onChange({ target: { value: "720/780" } });
+  tree = app.render();
+  assert.equal(visible().length, 4, "A time range can be filtered across every week and day");
+  assert.match(showing(), /Showing 4 of 8 sessions/);
+  week().props.onChange({ target: { value: "2" } });
+  tree = app.render();
+  assert.equal(session().props.value, "", "Changing week resets the session choice");
+  assert.equal(visible().length, 3);
+  assert.deepEqual(values(session()), ["", "540/630", "630/690", "720/780"]);
+  session().props.onChange({ target: { value: "720/780" } });
+  tree = app.render();
+  assert.equal(visible().length, 1);
+  assert.match(text(find(visible()[0], (node) => node.type === "h3")), /Week 2 \/ 28 Oct \/ Wednesday \/ 12:00-13:00/);
+  assert.equal(find(tree, (node) => node.type?.name === "ResourcePool").props.sessions, props.sessions);
+  assert.equal(find(tree, (node) => node.type?.name === "ResourcePool").props.plan, props.plan);
+  button(tree, "Auto-Assign Resources").props.onClick();
+  assert.equal(fixture.assignCount(), 1);
+  assert.equal(JSON.stringify(props), original, "Filtering and auto-assign dispatch must not truncate sessions or modify assignments");
+  const target = props.sessions.find((item) => item.week === 2 && item.day === "Wednesday").rooms[0];
+  control("Room for " + target.id).props.onChange({ target: { value: "OTHER" } });
+  tree = app.render();
+  assert.equal(session().props.value, "720/780");
+  assert.equal(control("Room for " + target.id).props.value, "OTHER");
+  assert.equal(Object.keys(props.plan.allocations).length, props.sessions.length, "Editing a filtered card retains every hidden assignment");
+  button(tree, "Clear filters").props.onClick();
+  tree = app.render();
+  assert.equal(visible().length, 8);
+  assert.equal(control("Room for " + target.id).props.value, "OTHER");
+  session().props.onChange({ target: { value: "540/600" } });
+  tree = app.render();
+  assert.equal(visible().length, 1, "The 09:00-10:00 filter excludes 09:00-10:30 exams");
+});
+
+test("assignment day filter combines with week and session filters and recovers when a selected day disappears", () => {
+  const { props } = assignmentFiltersFixture();
+  const app = harness("ResourceAssignment", props);
+  let tree = app.render();
+  const control = (label) => find(tree, (node) => node.type === "select" && node.props["aria-label"] === "Filter assignment " + label);
+  const values = (label) => nodes(control(label)).filter((node) => node.type === "option").map((node) => node.props.value);
+  const visible = () => nodes(tree).filter((node) => node.props.className === "resource-session");
+  assert.equal(control("day").props.value, "");
+  assert.deepEqual(values("day"), ["", "Monday", "Tuesday", "Wednesday", "Friday"]);
+  control("day").props.onChange({ target: { value: "Monday" } });
+  tree = app.render();
+  assert.equal(visible().length, 4, "Day filtering works across all weeks");
+  assert.ok(visible().every((node) => text(find(node, (child) => child.type === "h3")).includes("Monday")));
+  control("session").props.onChange({ target: { value: "720/780" } });
+  tree = app.render();
+  assert.equal(visible().length, 2);
+  control("week").props.onChange({ target: { value: "2" } });
+  tree = app.render();
+  assert.equal(control("day").props.value, "", "Changing week resets the day");
+  assert.equal(control("session").props.value, "");
+  assert.deepEqual(values("day"), ["", "Tuesday", "Wednesday", "Friday"]);
+  control("day").props.onChange({ target: { value: "Tuesday" } });
+  tree = app.render();
+  assert.equal(visible().length, 1);
+  assert.deepEqual(values("session"), ["", "540/630"]);
+  control("session").props.onChange({ target: { value: "540/630" } });
+  tree = app.render();
+  control("day").props.onChange({ target: { value: "Wednesday" } });
+  tree = app.render();
+  assert.equal(control("session").props.value, "", "Changing day resets the time range");
+  assert.deepEqual(values("session"), ["", "720/780"]);
+  control("session").props.onChange({ target: { value: "720/780" } });
+  tree = app.render();
+  assert.equal(visible().length, 1);
+  assert.match(text(find(visible()[0], (node) => node.type === "h3")), /Week 2 \/ 28 Oct \/ Wednesday \/ 12:00-13:00/);
+  button(tree, "Clear filters").props.onClick();
+  tree = app.render();
+  assert.equal(control("week").props.value, "");
+  assert.equal(control("day").props.value, "");
+  assert.equal(control("session").props.value, "");
+  assert.equal(visible().length, 8);
+  control("week").props.onChange({ target: { value: "2" } });
+  tree = app.render();
+  control("day").props.onChange({ target: { value: "Tuesday" } });
+  tree = app.render();
+  control("session").props.onChange({ target: { value: "540/630" } });
+  props.sessions = props.sessions.filter((session) => session.week !== 2 || session.day !== "Tuesday");
+  props.validation = { complete: false, issues: [] };
+  tree = app.render();
+  assert.equal(control("day").props.value, "");
+  assert.equal(control("session").props.value, "");
+  assert.equal(visible().length, 2);
+  control("session").props.onChange({ target: { value: "720/780" } });
+  tree = app.render();
+  assert.equal(control("session").props.value, "720/780", "Time filtering still works after the selected day disappears");
+  assert.equal(visible().length, 1);
+});
+
+test("filtered assignment cards still detect conflicts with hidden sessions and review links reveal hidden issues", () => {
+  const course = (id) => ({ id, code: id, title: id, crns: ["101", "102"], labSessions: [], students: [{ id: id + "-S", crn: "101", name: "Student" }] });
+  const sessions = resources.buildExamSessions({ 1: { Monday: { "09:00": ["A"], "09:30": ["B"] } }, 2: { Tuesday: { "12:00": ["A"] } } },
+    { A: course("A"), B: course("B") }, 60);
+  const catalog = { rooms: ["R0", "R1"].map((id) => ({ id, name: id, enabled: true, busy: [] })),
+    invigilators: Array.from({ length: 4 }, (_, i) => ({ id: "I" + i, name: "Staff " + i, enabled: true, busy: [] })) };
+  const plan = resources.emptyResourcePlan(sessions, catalog);
+  sessions.forEach((session, index) => {
+    plan.allocations[session.rooms[0].id] = { roomId: index === 1 ? "R1" : "R0", invigilatorIds: [index === 1 ? "I1" : "I0"] };
+    plan.backups[session.id] = [index === 1 ? "I3" : "I2"];
+  });
+  assert.equal(resources.validateResourcePlan(sessions, catalog, plan).complete, true);
+  const issue = { sessionId: sessions[2].id, roomId: sessions[2].rooms[0].id, context: "Week 2", exam: "Hidden exam", title: "Review needed", message: "Example issue", action: "Review the room" };
+  const app = harness("ResourceAssignment", { sessions, catalog, plan, validation: { complete: false, issues: [issue] }, startDate: "2026-10-19",
+    onAssign() {}, onPoolChange() {}, onAllocationChange() {}, onBackupChange() {}, onDistributionChange() {} });
+  let tree = app.render();
+  const control = (label) => find(tree, (node) => node.type === "select" && node.props["aria-label"] === label);
+  control("Filter assignment week").props.onChange({ target: { value: "1" } });
+  tree = app.render();
+  control("Filter assignment day").props.onChange({ target: { value: "Monday" } });
+  tree = app.render();
+  control("Filter assignment session").props.onChange({ target: { value: "540/600" } });
+  tree = app.render();
+  assert.equal(nodes(tree).filter((node) => node.props.className === "resource-session").length, 1);
+  const hiddenStaff = find(control("Invigilator 1 for " + sessions[0].rooms[0].id), (node) => node.type === "option" && node.props.value === "I1");
+  assert.equal(hiddenStaff.props.disabled, true);
+  assert.match(text(hiddenStaff), /Exam B 09:30-10:30/);
+  const hiddenRoom = find(control("Room for " + sessions[0].rooms[0].id), (node) => node.type === "option" && node.props.value === "R1");
+  assert.equal(hiddenRoom.props.disabled, true);
+  assert.match(text(tree), /1 issues to resolve/);
+  const link = find(tree, (node) => node.type === "a" && node.props["aria-label"] === "Review Hidden exam");
+  link.props.onClick();
+  tree = app.render();
+  assert.equal(control("Filter assignment week").props.value, "2");
+  assert.equal(control("Filter assignment day").props.value, "Tuesday");
+  assert.equal(control("Filter assignment session").props.value, "720/780");
+  assert.ok(nodes(tree).some((node) => node.props.id === resources.resourceAssignmentAnchor(issue.roomId)));
+  assert.equal(link.props.href, "#" + encodeURIComponent(resources.resourceAssignmentAnchor(issue.roomId)));
+});
+
+test("assignment filters recover from removed weeks and changed time ranges and handle an empty timetable", () => {
+  const { props } = assignmentFiltersFixture();
+  const app = harness("ResourceAssignment", props);
+  let tree = app.render();
+  const control = (label) => find(tree, (node) => node.type === "select" && node.props["aria-label"] === label);
+  control("Filter assignment week").props.onChange({ target: { value: "10" } });
+  tree = app.render();
+  control("Filter assignment session").props.onChange({ target: { value: "720/780" } });
+  props.sessions = props.sessions.filter((session) => session.week !== 10);
+  props.validation = { complete: false, issues: [] };
+  tree = app.render();
+  assert.equal(control("Filter assignment week").props.value, "");
+  assert.equal(control("Filter assignment session").props.value, "");
+  assert.equal(nodes(tree).filter((node) => node.props.className === "resource-session").length, 7);
+  control("Filter assignment session").props.onChange({ target: { value: "720/780" } });
+  tree = app.render();
+  assert.equal(control("Filter assignment session").props.value, "720/780", "Session filtering still works after the selected week disappears");
+  assert.equal(nodes(tree).filter((node) => node.props.className === "resource-session").length, 3);
+  control("Filter assignment week").props.onChange({ target: { value: "2" } });
+  tree = app.render();
+  control("Filter assignment session").props.onChange({ target: { value: "540/630" } });
+  props.sessions = props.sessions.map((session) => session.week === 2 && session.start === 540 ? { ...session, end: 600 } : session);
+  tree = app.render();
+  assert.equal(control("Filter assignment session").props.value, "");
+  assert.equal(nodes(tree).filter((node) => node.props.className === "resource-session").length, 3);
+  props.sessions = [];
+  tree = app.render();
+  assert.equal(control("Filter assignment week").props.disabled, true);
+  assert.equal(control("Filter assignment day").props.disabled, true);
+  assert.equal(control("Filter assignment session").props.disabled, true);
+  assert.equal(button(tree, "Clear filters").props.disabled, true);
+  assert.match(text(tree), /Showing 0 of 0 sessions/);
+  assert.match(text(tree), /No exam sessions scheduled/);
 });
 
 test("CyberSkills import in step 3 applies to assignments, matching, resource review and main save/load without exam load", async () => {

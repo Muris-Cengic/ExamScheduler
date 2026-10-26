@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { backupTarget, isTeachingTimeDuty, PREFERRED_STANDBY_COUNT, resourceAssignmentAnchor, resourceChoiceReason, resourceChoiceSummary, standbyAvailability } from "./resources.js";
-import { formatReportDate, reportDate, reportTimeRange } from "./exportReports.js";
+import { formatReportDate, reportDate, reportTimeRange, REPORT_DAYS } from "./exportReports.js";
 import ResourcePool from "./ResourcePool.jsx";
 
 function InvigilatorOptions({ people, session, sessions, plan, owner, fixedId = "", placeholder }) {
@@ -24,6 +25,24 @@ function InvigilatorOptions({ people, session, sessions, plan, owner, fixedId = 
 }
 
 export default function ResourceAssignment({ sessions, catalog, plan, validation, startDate, onAssign, onPoolChange, onAllocationChange, onBackupChange, onDistributionChange }) {
+  const [weekFilter, setWeekFilter] = useState("");
+  const [dayFilter, setDayFilter] = useState("");
+  const [sessionFilter, setSessionFilter] = useState("");
+  const weeks = [...new Set(sessions.map((session) => session.week))].sort((a, b) => a - b);
+  const activeWeek = weeks.some((week) => String(week) === weekFilter) ? weekFilter : "";
+  const weeklySessions = sessions.filter((session) => !activeWeek || String(session.week) === activeWeek);
+  const days = REPORT_DAYS.filter((day) => weeklySessions.some((session) => session.day === day));
+  const activeDay = activeWeek === weekFilter && days.includes(dayFilter) ? dayFilter : "";
+  const dailySessions = weeklySessions.filter((session) => !activeDay || session.day === activeDay);
+  const slotKey = (session) => `${session.start}/${session.end}`;
+  const slots = [...new Map(dailySessions.map((session) => [slotKey(session), session])).values()]
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+  const activeSession = activeWeek === weekFilter && activeDay === dayFilter && slots.some((session) => slotKey(session) === sessionFilter) ? sessionFilter : "";
+  const visibleSessions = dailySessions.filter((session) => !activeSession || slotKey(session) === activeSession);
+  const reviewSession = (id) => {
+    const session = sessions.find((item) => item.id === id);
+    if (session) { setWeekFilter(String(session.week)); setDayFilter(session.day); setSessionFilter(slotKey(session)); }
+  };
   const roomOptions = (session, owner, fixedId = "") => catalog.rooms.map((resource) => {
     const reason = fixedId && resource.id !== fixedId ? "Original lab resource required" : resourceChoiceReason(resource, "room", session, sessions, plan, owner);
     return <option key={resource.id} value={resource.id} disabled={Boolean(reason)}>{resource.name}{reason ? " - " + reason : ""}</option>;
@@ -47,6 +66,24 @@ export default function ResourceAssignment({ sessions, catalog, plan, validation
         <strong>{validation.complete ? "Ready to export" : `${validation.issues.length} issues to resolve`}</strong>
       </div>
       <ResourcePool catalog={catalog} sessions={sessions} plan={plan} onPoolChange={onPoolChange} />
+      <fieldset className="resource-session-filters"><legend>Filter sessions</legend>
+        <label>Week<select aria-label="Filter assignment week" value={activeWeek} disabled={!sessions.length}
+          onChange={(event) => { setWeekFilter(event.target.value); setDayFilter(""); setSessionFilter(""); }}>
+          <option value="">All weeks</option>{weeks.map((week) => <option key={week} value={String(week)}>Week {week}</option>)}
+        </select></label>
+        <label>Day<select aria-label="Filter assignment day" value={activeDay} disabled={!weeklySessions.length}
+          onChange={(event) => { setWeekFilter(activeWeek); setDayFilter(event.target.value); setSessionFilter(""); }}>
+          <option value="">All days</option>{days.map((day) => <option key={day} value={day}>{day}</option>)}
+        </select></label>
+        <label>Session<select aria-label="Filter assignment session" value={activeSession} disabled={!dailySessions.length}
+          onChange={(event) => { setWeekFilter(activeWeek); setDayFilter(activeDay); setSessionFilter(event.target.value); }}>
+          <option value="">All sessions</option>{slots.map((session) => <option key={slotKey(session)} value={slotKey(session)}>
+            {reportTimeRange(session.start, session.end)}</option>)}
+        </select></label>
+        <button type="button" disabled={!activeWeek && !activeDay && !activeSession} onClick={() => { setWeekFilter(""); setDayFilter(""); setSessionFilter(""); }}>Clear filters</button>
+        <span role="status">Showing {visibleSessions.length} of {sessions.length} sessions</span>
+        <small>Pool totals, issues and auto-assignment cover all sessions.</small>
+      </fieldset>
       {validation.issues.length > 0 ? <details className="resource-issues" open>
         <summary>Resource Issues ({validation.issues.length})</summary>
         <p>Resolve these issues before export. Teaching commitments come only from the CRN list's first sheet; replacing an exam's lab does not cancel other classes listed there.</p>
@@ -56,11 +93,13 @@ export default function ResourceAssignment({ sessions, catalog, plan, validation
           <strong>{issue.title}</strong>
           <p>{issue.message}</p>
           <p className="resource-issue__action"><strong>How to resolve: </strong>{issue.action}</p>
-          {issue.sessionId ? <a href={`#${encodeURIComponent(resourceAssignmentAnchor(issue.roomId || issue.sessionId))}`} aria-label={`Review ${issue.exam || issue.context}`}>Review assignment</a> : null}
+          {issue.sessionId ? <a href={`#${encodeURIComponent(resourceAssignmentAnchor(issue.roomId || issue.sessionId))}`} aria-label={`Review ${issue.exam || issue.context}`}
+            onClick={() => reviewSession(issue.sessionId)}>Review assignment</a> : null}
         </li>)}</ul>
       </details> : null}
       <div className="resource-sessions">
-        {sessions.map((session) => {
+        {!sessions.length ? <p>No exam sessions scheduled.</p> : null}
+        {visibleSessions.map((session) => {
           const standby = validation.complete ? standbyAvailability(session, sessions, catalog, plan) : null;
           return <section className="resource-session" key={session.id} id={resourceAssignmentAnchor(session.id)}>
             <h3>{`Week ${session.week} / ${formatReportDate(reportDate(startDate, session.week, session.day))} / ${session.day} / ${reportTimeRange(session.start, session.end)}`}</h3>

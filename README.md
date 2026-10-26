@@ -285,6 +285,13 @@ is highlighted without changing existing backup report rules.
   overlapping entries in the CRN list must be resolved or corrected, or another
   listed lab time used if available. Excluded resources can be included again in
   the resource pool. Flexible room/staff conflicts can use another available resource.
+- In **Step 6: Assignments**, filter sessions by **Week**, **Day** and **Session** time
+  range, or use **Clear filters** to show everything. Day choices follow the
+  selected week; session choices follow the selected week and day. Filters affect
+  only the assignment cards: availability checks,
+  pool totals, resource issues, auto-assignment and exports still use the full
+  schedule. **Review assignment** reveals the affected session even when hidden
+  by a filter.
 - Reports use the reviewed room names and invigilators, not generated placeholders.
   ASD exams remain excluded from resource reports. JSON saves retain the pool, availability and assignments;
   changing the timetable invalidates stale resource assignments.
