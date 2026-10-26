@@ -609,15 +609,15 @@ test("reports use reviewed resources and per-room student references, without an
   assert.ok(!inv.J4?.v, "The 15-student last room has only one invigilator");
   assert.equal(XLSX.utils.sheet_to_json(inv, { header: 1 }).slice(1).filter((row) => row[10]).length, 1);
   const daily = workbook.Sheets["Week 1 Monday"];
-  assert.equal(daily.F2.f, "'Week 1 Invigilators'!H2");
-  assert.equal(daily.F24.f, "'Week 1 Invigilators'!H2");
-  assert.equal(daily.F25.f, "'Week 1 Invigilators'!H3");
-  assert.equal(daily.F46.f, "'Week 1 Invigilators'!H3");
-  assert.equal(daily.F47.f, "'Week 1 Invigilators'!H4");
-  assert.equal(daily.F61.f, "'Week 1 Invigilators'!H4");
+  assert.equal(daily.G2.f, "'Week 1 Invigilators'!H2");
+  assert.equal(daily.G24.f, "'Week 1 Invigilators'!H2");
+  assert.equal(daily.G25.f, "'Week 1 Invigilators'!H3");
+  assert.equal(daily.G46.f, "'Week 1 Invigilators'!H3");
+  assert.equal(daily.G47.f, "'Week 1 Invigilators'!H4");
+  assert.equal(daily.G61.f, "'Week 1 Invigilators'!H4");
   assert.ok(!XLSX.utils.sheet_to_json(workbook.Sheets["Week 1 Invigilator Pool"], { header: 1 })[0].includes("Type"));
   const saved = XLSX.read(XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }), { type: "buffer" });
-  assert.equal(saved.Sheets["Week 1 Monday"].F25.f, "'Week 1 Invigilators'!H3");
+  assert.equal(saved.Sheets["Week 1 Monday"].G25.f, "'Week 1 Invigilators'!H3");
 });
 
 test("reports exclude teaching-hour duties from cached loads and recalculation formulas", () => {
@@ -732,7 +732,7 @@ test("capacity exceptions are recorded in reports and unapproved or excessive ro
   assert.match(inv.N2.v, /Approved up to 27.*staffing-aware distribution/);
   assert.equal(workbook.Sheets["Week 1 Room Pool"].C2.v, 25);
   assert.equal(workbook.Sheets["Week 1 Room Pool"].D2.v, 27);
-  assert.equal(workbook.Sheets["Week 1 Monday"].F28.f, "'Week 1 Invigilators'!H3");
+  assert.equal(workbook.Sheets["Week 1 Monday"].G28.f, "'Week 1 Invigilators'!H3");
   sessions[0].rooms[0].distributionChoice = "standard";
   plan.fingerprint = resourceFingerprint(sessions, resources);
   assert.ok(validateResourcePlan(sessions, resources, plan).issues.some((issue) => issue.title === "Room capacity exceeded"));

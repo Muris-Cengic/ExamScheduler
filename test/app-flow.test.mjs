@@ -1680,7 +1680,7 @@ test("export workspace previews audiences, combines or splits weeks, exports CSV
   assert.ok(combined.Sheets["Schedule Index"]);
   assert.deepEqual(combined.SheetNames, ["Schedule Index", "Invigilator Duties", "Invigilator Pool", "Room Pool", "Week 1 Monday", "Week 2 Tuesday"]);
   assert.match(combined.Sheets["Invigilator Duties"].E2.v, /19 Oct 2026/);
-  assert.equal(combined.Sheets["Week 2 Tuesday"].F2.f, "'Invigilator Duties'!H3");
+  assert.equal(combined.Sheets["Week 2 Tuesday"].G2.f, "'Invigilator Duties'!H3");
 
   radio("Separate weekly files").props.onChange();
   tree = app.render();

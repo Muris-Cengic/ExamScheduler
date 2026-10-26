@@ -4,6 +4,33 @@ import { invigilatorWorkloads, isTeachingTimeDuty, validateResourcePlan } from "
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const time = (minutes) => `${((Math.floor(minutes / 60) + 11) % 12) + 1}:${String(minutes % 60).padStart(2, "0")} ${minutes >= 720 ? "PM" : "AM"}`;
 
+function styleAttendanceSheet(sheet, rows, groups) {
+  const widths = [14, 16, 42, 26, 18, 34, 32, 20];
+  sheet["!cols"] = widths.map((wch) => ({ wch }));
+  sheet["!autofilter"] = { ref: sheet["!ref"] };
+  sheet["!rows"] = [];
+  let group = -1;
+  rows.forEach((values, row) => {
+    const header = row === 0;
+    const newRoom = !header && (row === 1 || groups[row - 1] !== groups[row - 2]);
+    if (newRoom) group += 1;
+    sheet["!rows"][row] = { hpt: header ? 28 : Math.max(24, ...values.map((value, column) => String(value?.v ?? value ?? "").split(/\r\n|\r|\n/)
+      .reduce((lines, line) => lines + Math.max(1, Math.ceil(line.length / (widths[column] - 3))), 0) * 15 + 6)) };
+    values.forEach((_, column) => {
+      const address = XLSX.utils.encode_cell({ r: row, c: column });
+      sheet[address] ??= { t: "s", v: "" };
+      sheet[address].s = {
+        font: { name: "Calibri", sz: 11, bold: header || (newRoom && column === 6), color: { rgb: "FF24374B" } },
+        fill: { patternType: "solid", fgColor: { rgb: header ? "FFDFE8F0" : group % 2 ? "FFF2F6FA" : "FFFFFFFF" } },
+        alignment: { vertical: "center", horizontal: column === 7 ? "center" : "left", wrapText: true },
+        numFmt: "@",
+        border: { bottom: { style: "thin", color: { rgb: header ? "FFAAB9C8" : "FFE4E7EB" } },
+          ...(newRoom && row > 1 ? { top: { style: "medium", color: { rgb: "FF94A3B8" } } } : {}) },
+      };
+    });
+  });
+}
+
 export function buildResourceWorkbookForWeek({ week, ...options }) {
   return buildResourceWorkbook(options, options.sessions.filter((session) => session.week === week), {
     invSheetName: `Week ${week} Invigilators`, staffSheetName: `Week ${week} Invigilator Pool`, roomSheetName: `Week ${week} Room Pool`,
@@ -31,6 +58,7 @@ function buildResourceWorkbook({ sessions, catalog, plan, startDate, templateHea
   const invRows = [[...templateHeaders.invigilatorHeader.slice(0, 8), "Invigilator 1", "Invigilator 2", "Backup Invigilator",
     "Invigilator 1 extra duty", "Invigilator 2 extra duty", "Room allocation decision"]];
   const daily = new Map();
+  const studentHeader = [...templateHeaders.studentHeader.slice(0, 3), "Time", ...templateHeaders.studentHeader.slice(3)];
   const formatter = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
   current.forEach((session) => {
     const date = new Date(`${startDate}T00:00:00Z`);
@@ -51,11 +79,15 @@ function buildResourceWorkbook({ sessions, catalog, plan, startDate, templateHea
         room.distributionChoice === "standard" ? `Normal limit: ${room.maxStudents}` : `Approved up to 27: ${room.distributionChoice === "merge" ? "merge overflow" : "staffing-aware distribution"}`,
       ]);
       const dailySheetName = `Week ${session.week} ${session.day}`;
-      if (!daily.has(dailySheetName)) daily.set(dailySheetName, [templateHeaders.studentHeader]);
-      room.students.forEach((student) => daily.get(dailySheetName).push([
-        student.crn || "", room.code, `${room.title} (${range})`, student.id, student.name,
-        { t: "s", v: assignedRoom.name, f: `'${invSheetName}'!H${rowNumber}` }, "",
-      ]));
+      if (!daily.has(dailySheetName)) daily.set(dailySheetName, { rows: [studentHeader], groups: [] });
+      const attendance = daily.get(dailySheetName);
+      room.students.forEach((student) => {
+        attendance.rows.push([
+          student.crn || "", room.code, room.title, range, student.id, student.name,
+          { t: "s", v: assignedRoom.name, f: `'${invSheetName}'!H${rowNumber}` }, "",
+        ]);
+        attendance.groups.push(JSON.stringify([session.id, assignedRoom.id]));
+      });
     });
   });
   const invSheet = XLSX.utils.aoa_to_sheet(invRows);
@@ -83,9 +115,9 @@ function buildResourceWorkbook({ sessions, catalog, plan, startDate, templateHea
   const roomSheet = XLSX.utils.aoa_to_sheet(roomData);
   roomSheet["!cols"] = [40, 18, 26, 28, 20].map((wch) => ({ wch }));
   XLSX.utils.book_append_sheet(workbook, roomSheet, roomSheetName);
-  daily.forEach((rows, name) => {
+  daily.forEach(({ rows, groups }, name) => {
     const sheet = XLSX.utils.aoa_to_sheet(rows);
-    sheet["!cols"] = [14, 16, 56, 18, 40, 40, 20].map((wch) => ({ wch }));
+    styleAttendanceSheet(sheet, rows, groups);
     XLSX.utils.book_append_sheet(workbook, sheet, name);
   });
   return workbook;

@@ -623,7 +623,7 @@ export function buildExportFiles({ report = "complete", format = "xlsx", packagi
       ? packaging === "weekly" ? buildResourceWorkbookForWeek({ ...options, week: weeks[0] }) : buildCombinedResourceWorkbook({ ...options, weeks })
       : report === "envelopes" ? envelopeWorkbook(scoped) : schedules ? staffScheduleWorkbook(people, layers) : focusedWorkbook(report, scoped, overviewMode);
     workbook.Props = { Title: filename.slice(0, -5), Subject: "Confirmed department exam schedule" };
-    const writer = schedules || report === "envelopes" || report === "overview" && overviewMode === "table" ? StyledXLSX : XLSX;
+    const writer = report === "complete" || schedules || report === "envelopes" || report === "overview" && overviewMode === "table" ? StyledXLSX : XLSX;
     return { filename, mimeType: XLSX_MIME, data: writer.write(workbook, { bookType: "xlsx", type: "array", compression: true }) };
   });
   return includeCalendars ? [...files, ...buildStaffCalendarFiles(model, { examStartDate: examStartDate ?? options.startDate, staffIds })] : files;

@@ -304,6 +304,11 @@ previews:
 - **Complete report**: the existing linked Excel report, including weekly
   invigilators, resource pools and daily student sheets. The preview includes a
   workbook-sheet map and searchable room ledger.
+  Daily attendance sheets have a separate **Time** column beside the course
+  title, with pale alternating room groups and a divider between groups. Room
+  references stay linked to the invigilator duties sheet, and the attendance
+  column remains blank for marking. Both combined and weekly workbooks use this
+  layout.
 - **Exam overview**: a shareable course timetable with assigned rooms and student
   counts, but no student names or IDs. Preview it as a five-day board or a
   compact chronological list. The board and its detailed Excel/CSV export include the primary

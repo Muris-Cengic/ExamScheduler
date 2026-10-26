@@ -319,9 +319,9 @@ test("combined complete report shares duties and pools with correct daily refere
   for (const week of [1, 2]) {
     const day = week === 1 ? "Monday" : "Tuesday";
     const daily = workbook.Sheets["Week " + week + " " + day];
-    assert.equal(daily.F2.f, "'Invigilator Duties'!H" + (week === 1 ? 2 : 3));
+    assert.equal(daily.G2.f, "'Invigilator Duties'!H" + (week === 1 ? 2 : 3));
   }
-  assert.equal(workbook.Sheets["Week 2 Tuesday"].F15.f, "'Invigilator Duties'!H4", "The second room links to its own global duty row");
+  assert.equal(workbook.Sheets["Week 2 Tuesday"].G15.f, "'Invigilator Duties'!H4", "The second room links to its own global duty row");
   const duties = workbook.Sheets["Invigilator Duties"];
   assert.equal(duties.I2.f, "'Invigilator Pool'!A2");
   assert.match(duties.H2.f, /^'Room Pool'!A\d+$/);
@@ -359,7 +359,7 @@ test("shared duties and pool totals include only selected non-contiguous weeks a
   assert.deepEqual(workbook.SheetNames, ["Schedule Index", "Invigilator Duties", "Invigilator Pool", "Room Pool", "Week 1 Monday", "Week 3 Monday"]);
   assert.deepEqual(rows(workbook, "Invigilator Duties").slice(1).map((row) => row[1]), ["A", "C"]);
   assert.equal(workbook.Sheets["Schedule Index"].F3.l.Target, "#'Invigilator Duties'!A3");
-  assert.equal(workbook.Sheets["Week 3 Monday"].F2.f, "'Invigilator Duties'!H3");
+  assert.equal(workbook.Sheets["Week 3 Monday"].G2.f, "'Invigilator Duties'!H3");
   const expected = buildExportModel(scoped);
   assert.deepEqual(rows(workbook, "Invigilator Pool").slice(1).map((row) => row.slice(0, 3)),
     expected.workloads.map((person) => [person.name, person.exam, person.teaching]));
@@ -381,6 +381,105 @@ test("complete Excel packaging supports one workbook, weekly files and non-conti
   assert.ok(!week2.SheetNames.some((name) => name.startsWith("Week 1 ")));
   assert.equal(week2.Sheets["Schedule Index"].A2.v, 2);
   assert.ok(!week2.SheetNames.some((name) => name.startsWith("Week 3 ")));
+});
+
+test("complete report attendance sheets separate time and title while preserving student rosters, room formulas and blank attendance", () => {
+  const options = fixture();
+  options.sessions.forEach((session) => session.rooms.forEach((room) => room.students.forEach((student, index) => {
+    student.id = "000" + session.week + "-" + room.id + "-" + index;
+  })));
+  options.plan = assignResources(options.sessions, options.catalog);
+  const before = JSON.stringify(options);
+  for (const packaging of ["combined", "weekly"]) {
+    for (const file of buildExportFiles({ ...options, report: "complete", packaging })) {
+      const workbook = read(file);
+      const invName = workbook.SheetNames.find((name) => name === "Invigilator Duties" || /^Week \d+ Invigilators$/.test(name));
+      const inv = workbook.Sheets[invName];
+      for (const name of workbook.SheetNames.filter((name) => /^Week \d+ (Monday|Tuesday)$/.test(name))) {
+        const sheet = workbook.Sheets[name];
+        const contents = rows(workbook, name);
+        assert.deepEqual(contents[0], ["CRN", "Code", "Title", "Time", "ID", "Name", "Room", "Notes"]);
+        const session = options.sessions.find((session) => name === `Week ${session.week} ${session.day}`);
+        assert.equal(contents.length - 1, session.rooms.reduce((count, room) => count + room.students.length, 0));
+        assert.deepEqual(contents.slice(1).map((row) => row[4]), session.rooms.flatMap((room) => room.students.map((student) => student.id)));
+        contents.slice(1).forEach((row, index) => {
+          const number = index + 2;
+          const target = sheet["G" + number].f.match(/^'([^']+)'!H(\d+)$/);
+          assert.equal(target[1], invName);
+          assert.equal(row[2], inv["C" + target[2]].v, "The title must not include an appended exam time");
+          assert.equal(row[3], inv["F" + target[2]].v);
+          assert.equal(row[6], inv["H" + target[2]].v);
+          assert.equal(sheet["E" + number].t, "s");
+          assert.ok(row[4].startsWith("000"), "Student IDs retain leading zeros");
+          assert.equal(row[7] ?? "", "");
+          assert.equal(sheet["H" + number]?.f, undefined);
+        });
+      }
+    }
+  }
+  assert.equal(JSON.stringify(options), before, "Export must not change rosters, allocations or the source template headers");
+});
+
+test("complete report attendance styling survives export and distinguishes room groups and later sessions in the same room", async () => {
+  const options = fixture();
+  options.sessions.push(...buildExamSessions({ 2: { Tuesday: { "17:00": ["C"] } } }, { C: course("C", 2) }, 60));
+  options.plan = assignResources(options.sessions, options.catalog);
+  const morningRooms = options.sessions[1].rooms;
+  const lateRoom = options.sessions[2].rooms[0];
+  options.plan.allocations[lateRoom.id].roomId = options.plan.allocations[morningRooms[1].id].roomId;
+  for (const packaging of ["combined", "weekly"]) {
+    const file = buildExportFiles({ ...options, report: "complete", packaging, weeks: [2] })[0];
+    const workbook = XLSX.read(file.data, { type: "array", cellStyles: true });
+    const zip = await JSZip.loadAsync(file.data);
+    const styleXml = await zip.file("xl/styles.xml").async("string");
+    const borders = styleXml.match(/<borders\b[^>]*>([\s\S]*?)<\/borders>/)[1].match(/<border\b[^>]*>[\s\S]*?<\/border>/g);
+    const name = "Week 2 Tuesday";
+    const xml = await zip.file("xl/worksheets/sheet" + (workbook.SheetNames.indexOf(name) + 1) + ".xml").async("string");
+    const styleAt = (address) => {
+      const cell = xml.match(new RegExp('<c\\b[^>]*\\br="' + address + '"[^>]*>'))[0];
+      const xf = workbook.Styles.CellXf[Number(cell.match(/\bs="(\d+)"/)[1])];
+      return { ...xf, font: workbook.Styles.Fonts[xf.fontId], fill: workbook.Styles.Fills[xf.fillId], border: borders[xf.borderId] };
+    };
+    for (const column of ["A", "B", "C", "D", "E", "F", "G", "H"]) {
+      assert.equal(styleAt(column + "1").fill.fgColor.rgb, "DFE8F0");
+      assert.equal(styleAt(column + "1").font.bold, 1);
+      assert.equal(styleAt(column + "2").font.sz, 11);
+      assert.equal(styleAt(column + "2").fill.fgColor.rgb, "FFFFFF");
+      assert.equal(styleAt(column + "14").fill.fgColor.rgb, "FFFFFF");
+      assert.equal(styleAt(column + "15").fill.fgColor.rgb, "F2F6FA");
+      assert.equal(styleAt(column + "27").fill.fgColor.rgb, "F2F6FA");
+      assert.equal(styleAt(column + "28").fill.fgColor.rgb, "FFFFFF");
+      assert.ok(!/<top style=/.test(styleAt(column + "3").border));
+      assert.match(styleAt(column + "15").border, /<top style="medium">/);
+      assert.match(styleAt(column + "28").border, /<top style="medium">/, "A later exam in the same physical room starts a new attendance group");
+      assert.match(styleAt(column + "3").border, /<bottom style="thin">/);
+      assert.equal(styleAt(column + "15").alignment.wrapText, true);
+    }
+    assert.equal(styleAt("G15").font.bold, 1);
+    assert.equal(styleAt("E2").numFmtId, 49);
+    assert.equal(styleAt("H15").alignment.horizontal, "center");
+    assert.equal(workbook.Sheets[name]["!autofilter"].ref, "A1:H29");
+    assert.equal(workbook.Sheets[name]["!merges"], undefined);
+  }
+});
+
+test("complete attendance sheets wrap long course titles, student names and rooms without dropping content or changing formulas", () => {
+  const options = fixture();
+  const title = "A long course title with security terminology ".repeat(4);
+  const name = "Long student name ".repeat(6);
+  options.sessions[1].rooms.forEach((room) => { room.title = title; room.students[0].name = name; });
+  options.catalog.rooms.forEach((room, index) => { room.name = "Campus / Long building and floor description ".repeat(3) + index; });
+  options.plan = assignResources(options.sessions, options.catalog);
+  const workbook = XLSX.read(buildExportFiles({ ...options, report: "complete", weeks: [2] })[0].data,
+    { type: "array", cellStyles: true });
+  const sheet = workbook.Sheets["Week 2 Tuesday"];
+  assert.equal(sheet.C2.v, title);
+  assert.equal(sheet.F2.v, name);
+  assert.ok(sheet["!rows"][1].hpt >= Math.ceil(title.length / 39) * 15 + 6);
+  assert.equal(sheet["!cols"].length, 8);
+  assert.ok(sheet["!cols"].every((column) => column.wch <= 42));
+  assert.equal(sheet.G2.f, "'Invigilator Duties'!H2");
+  assert.equal(sheet.D2.v, "12:00 PM - 1:00 PM");
 });
 
 test("focused workbooks contain the right audience's data and staff has a separate workload summary", () => {
@@ -631,8 +730,8 @@ test("overview room labels remove standalone PAD tokens and compact separators w
   assert.ok(!csv.includes("PAD"));
   const complete = read(buildExportFiles(options)[0]);
   assert.equal(complete.Sheets["Invigilator Duties"].H2.v, "PAD / P-B-4F / 13");
-  assert.equal(complete.Sheets["Week 1 Monday"].F2.f, "'Invigilator Duties'!H2");
-  assert.equal(complete.Sheets["Week 1 Monday"].F2.v, "PAD / P-B-4F / 13");
+  assert.equal(complete.Sheets["Week 1 Monday"].G2.f, "'Invigilator Duties'!H2");
+  assert.equal(complete.Sheets["Week 1 Monday"].G2.v, "PAD / P-B-4F / 13");
   assert.equal(JSON.stringify(options), before, "Display formatting cannot mutate saved resources or assignments");
 });
 
